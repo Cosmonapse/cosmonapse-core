@@ -1,0 +1,94 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "cosmonapse"
+version = "0.0.1"
+description = "Event-driven Agent-to-Agent protocol SDK and developer CLI"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+keywords = ["agents", "a2a", "protocol", "multi-agent"]
+dependencies = [
+    # --- core SDK runtime ---
+    "pydantic>=2.0",
+    "python-ulid>=2.0",
+    # --- bundled `cosmo` CLI runtime ---
+    # These ship in the core dependency set because `pip install cosmonapse`
+    # also installs the `cosmo` command, and the CLI imports them eagerly
+    # (rich for output, click for the command tree, aiohttp for `cosmo
+    # doppler`'s web server).
+    "click>=8.1",
+    "rich>=13.0",
+    "aiohttp>=3.9",
+]
+
+[project.optional-dependencies]
+# Synapse adapters
+nats = ["nats-py>=2.3"]
+kafka = ["aiokafka>=0.10"]
+# Storage backends
+postgres = ["asyncpg>=0.29"]
+# Flask / WSGI Neuron factory. The wrapper drives the app through
+# werkzeug's WSGI test client; installing Flask brings werkzeug with it.
+flask = ["flask>=3.0"]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.4",
+    "mypy>=1.9",
+    # so the test suite can exercise the optional code paths
+    "flask>=3.0",
+    "aiokafka>=0.10",
+    "asyncpg>=0.29",
+]
+
+# Installing this distribution (`pip install cosmonapse`, or `-e .` for dev)
+# puts the `cosmo` command on PATH and makes both `import cosmonapse` and
+# `import cosmo` work. The CLI source is now self-contained inside this
+# package (./cosmo), so there is no cross-directory build wiring.
+[project.scripts]
+cosmo = "cosmo.main:cli"
+# Helper command to push the active env's Scripts/bin dir onto the user's
+# persistent PATH so `cosmo` is callable from any new terminal. The top-level
+# installer (cosmonapse-core/install.py) invokes this automatically; users can
+# also run it themselves at any time with `cosmonapse-init-path`.
+cosmonapse-init-path = "cosmo._install:main"
+
+# ---------------------------------------------------------------------------
+# Build configuration
+# ---------------------------------------------------------------------------
+# This is a single, self-contained distribution that ships two top-level
+# import packages: the SDK (`cosmonapse`) and the developer CLI (`cosmo`).
+[tool.hatch.build.targets.wheel]
+packages = ["cosmonapse", "cosmo"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "cosmonapse",
+    "cosmo",
+    "README.md",
+    "pyproject.toml",
+]
+
+# Never ship compiled byte-code caches inside the distribution.
+[tool.hatch.build]
+exclude = [
+    "**/__pycache__",
+    "**/*.pyc",
+    "tests",
+]
+
+# ---------------------------------------------------------------------------
+# Tooling
+# ---------------------------------------------------------------------------
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.mypy]
+strict = true
