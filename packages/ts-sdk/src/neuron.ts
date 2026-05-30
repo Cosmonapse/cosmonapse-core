@@ -7,8 +7,9 @@
  * become a protocol participant with no modification.
  *
  * (The Python SDK additionally ships provider-backed Neuron factories for
- * Ollama / HuggingFace over httpx. Those HTTP wrappers are not part of this
- * TS port yet — bring your own async function.)
+ * Ollama / HuggingFace over httpx. Those HTTP wrappers are tracked in
+ * PORTING_STATUS.md and are not part of this TS port yet — for now, bring your
+ * own async function.)
  */
 
 import type { Json } from "./envelope.js";

@@ -3,7 +3,7 @@ cosmonapse.envelope
 ~~~~~~~~~~~~~~~~~~~
 Signal envelope types and codec.
 
-Every message crossing the Synapse is a Signal — a JSON object that conforms
+Every message crossing the Synapse is a Signal - a JSON object that conforms
 to this schema. The envelope carries the protocol mechanics (id, trace_id,
 type, ts). The payload carries the content specific to each Signal type.
 
@@ -11,7 +11,7 @@ Producer tags (who emits each type):
   [A]  Axon (skill/connector)
   [C]  Cortex (developer-built orchestrating component)
 
-See: ENVELOPE_SPEC.md §7
+See: ENVELOPE_SPEC.md sec 7
 """
 
 from __future__ import annotations
@@ -44,6 +44,15 @@ def new_trace_id() -> str:
     return f"trc_{_new_ulid()}"
 
 
+def new_engram_id() -> str:
+    """Return a prefixed Engram entry ULID: eng_<26-char ULID>.
+
+    Used by Engram backends for entry identifiers. See ENGRAM_DESIGN.md
+    §4.6.
+    """
+    return f"eng_{_new_ulid()}"
+
+
 def _now_utc() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -55,37 +64,46 @@ def _now_utc() -> datetime:
 
 class SignalType(str, Enum):
     # Lifecycle [A] / [C]
-    TASK = "TASK"                      # [C] Dispatch work to a Neuron
-    AGENT_OUTPUT = "AGENT_OUTPUT"      # [A] Neuron returned a result (neutral)
-    FINAL = "FINAL"                    # [C] Workflow concluded
-    ERROR = "ERROR"                    # [A][C] Something went wrong
+    TASK = "TASK"
+    AGENT_OUTPUT = "AGENT_OUTPUT"
+    FINAL = "FINAL"
+    ERROR = "ERROR"
 
     # Routing [C]
-    TASK_OFFER = "TASK_OFFER"          # [C] Broadcast task to candidate Neurons
-    BID = "BID"                        # [C] Cortex bids on behalf of a Neuron
-    TASK_AWARDED = "TASK_AWARDED"      # [C] Task assigned to winning Neuron
-    TASK_DECLINED = "TASK_DECLINED"    # [C] Cortex declines a task offer
+    TASK_OFFER = "TASK_OFFER"
+    BID = "BID"
+    TASK_AWARDED = "TASK_AWARDED"
+    TASK_DECLINED = "TASK_DECLINED"
 
     # Cognition [C]
-    THOUGHT_DELTA = "THOUGHT_DELTA"    # [C] Streaming reasoning chunk
-    PLAN = "PLAN"                      # [C] Structured plan before execution
-    TOOL_CALL = "TOOL_CALL"           # [C] Neuron invoking an external tool
-    TOOL_RESULT = "TOOL_RESULT"       # [C] Result returned from a tool
+    THOUGHT_DELTA = "THOUGHT_DELTA"
+    PLAN = "PLAN"
+    TOOL_CALL = "TOOL_CALL"
+    TOOL_RESULT = "TOOL_RESULT"
 
     # Memory [C]
-    MEMORY_APPEND = "MEMORY_APPEND"   # [C] Write to shared Engram
-    ESCALATION = "ESCALATION"         # [C] Task escalated to higher authority
+    MEMORY_APPEND = "MEMORY_APPEND"
+    ESCALATION = "ESCALATION"
+
+    # Engram [C]  — see ENGRAM_DESIGN.md
+    RECALL = "RECALL"
+    RECALLED = "RECALLED"
+    IMPRINT = "IMPRINT"
+    IMPRINTED = "IMPRINTED"
 
     # Coordination [C] / [A]
-    CONSENSUS = "CONSENSUS"            # [C] Multi-Neuron agreement reached
-    CONTEXT_SYNC = "CONTEXT_SYNC"     # [C] Engram sync across Neurons
-    CRITIQUE = "CRITIQUE"             # [C] Peer review of another Neuron's output
-    CLARIFICATION = "CLARIFICATION"   # [A] Neuron needs more information
+    CONSENSUS = "CONSENSUS"
+    CONTEXT_SYNC = "CONTEXT_SYNC"
+    CRITIQUE = "CRITIQUE"
+    CLARIFICATION = "CLARIFICATION"
 
     # Agent management [A]
-    REGISTER = "REGISTER"             # [A] Neuron connected to Synapse
-    DEREGISTER = "DEREGISTER"         # [A] Neuron disconnecting
-    HEARTBEAT = "HEARTBEAT"           # [A] Liveness signal
+    REGISTER = "REGISTER"
+    DEREGISTER = "DEREGISTER"
+    HEARTBEAT = "HEARTBEAT"
+
+    # Discovery [C]
+    DISCOVER = "DISCOVER"
 
 
 # Which types the Axon (skill) is allowed to produce
@@ -116,6 +134,15 @@ SYNAPSE_TYPES: frozenset[SignalType] = frozenset({
     SignalType.CONSENSUS,
     SignalType.CONTEXT_SYNC,
     SignalType.CRITIQUE,
+    SignalType.DISCOVER,
+    # Engram (see ENGRAM_DESIGN.md §4.7) — emitted by orchestrating
+    # Dendrites on behalf of Neurons (Axons hand off via EngramClient,
+    # they never publish these directly), and by Engram-hosting
+    # Dendrites on the response path.
+    SignalType.RECALL,
+    SignalType.RECALLED,
+    SignalType.IMPRINT,
+    SignalType.IMPRINTED,
 })
 
 
@@ -125,23 +152,7 @@ SYNAPSE_TYPES: frozenset[SignalType] = frozenset({
 
 
 class Signal(BaseModel):
-    """
-    The universal envelope for every message crossing the Synapse.
-
-    Fields
-    ------
-    v          Protocol version. Always "1" for this release.
-    id         Unique event ID. Format: evt_<26-char ULID>.
-    trace_id   Groups all Signals belonging to one logical workflow.
-               Format: trc_<26-char ULID>.
-    parent_id  The id of the Signal that caused this one. Optional.
-    type       One of the SignalType enum values.
-    neuron     Identifier of the Neuron that produced this Signal.
-               Required for Axon-produced types; optional for Cortex types.
-    ts         UTC timestamp of emission.
-    payload    Type-specific content. Arbitrary JSON object.
-    meta       Non-semantic annotations: model name, token counts, cost, etc.
-    """
+    """The universal envelope for every message crossing the Synapse."""
 
     model_config = {"populate_by_name": True}
 
@@ -177,12 +188,10 @@ class Signal(BaseModel):
         return v
 
     def encode(self) -> bytes:
-        """Serialise to UTF-8 JSON bytes for wire transmission."""
         return self.model_dump_json(exclude_none=False).encode("utf-8")
 
     @classmethod
     def decode(cls, data: bytes | str) -> "Signal":
-        """Deserialise from JSON bytes or string."""
         if isinstance(data, bytes):
             data = data.decode("utf-8")
         return cls.model_validate_json(data)
@@ -194,10 +203,6 @@ class Signal(BaseModel):
         neuron: str | None = None,
         meta: dict[str, Any] | None = None,
     ) -> "Signal":
-        """
-        Construct a reply Signal that shares this Signal's trace_id
-        and sets parent_id to this Signal's id.
-        """
         return Signal(
             type=type,
             trace_id=self.trace_id,
@@ -211,8 +216,6 @@ class Signal(BaseModel):
 # ---------------------------------------------------------------------------
 # Typed payload helpers
 # ---------------------------------------------------------------------------
-# These are convenience constructors — not required by the protocol.
-# The protocol only requires a valid Signal with the correct type and payload.
 
 
 def task_signal(
@@ -225,13 +228,6 @@ def task_signal(
     capabilities: list[str] | None = None,
     meta: dict[str, Any] | None = None,
 ) -> Signal:
-    """
-    [C] Dispatch a unit of work to a Neuron.
-
-    payload.input         — the task data the Neuron receives
-    payload.context_ref   — optional Engram reference; Axon fetches embeddings
-    payload.capabilities  — optional capability hints for routing
-    """
     payload: dict[str, Any] = {"input": input}
     if context_ref:
         payload["context_ref"] = context_ref
@@ -255,10 +251,6 @@ def agent_output_signal(
     output: dict[str, Any],
     meta: dict[str, Any] | None = None,
 ) -> Signal:
-    """
-    [A] Wrap a Neuron's raw output in a neutral AGENT_OUTPUT envelope.
-    The Cortex decides what this becomes (FINAL, MEMORY_APPEND, next TASK…).
-    """
     return Signal(
         type=SignalType.AGENT_OUTPUT,
         trace_id=trace_id,
@@ -278,10 +270,6 @@ def clarification_signal(
     context: dict[str, Any] | None = None,
     meta: dict[str, Any] | None = None,
 ) -> Signal:
-    """
-    [A] The Neuron needs more information before it can complete the task.
-    Emitted by the Axon when it detects a clarification signal in the agent's output.
-    """
     payload: dict[str, Any] = {"question": question}
     if context:
         payload["context"] = context
@@ -304,10 +292,6 @@ def final_signal(
     cost: dict[str, Any] | None = None,
     meta: dict[str, Any] | None = None,
 ) -> Signal:
-    """
-    [C] Workflow concluded. result carries the terminal output.
-    cost (optional) rolls up total token/compute cost for the trace.
-    """
     payload: dict[str, Any] = {"result": result}
     if cost:
         payload["cost"] = cost
@@ -331,10 +315,6 @@ def error_signal(
     recoverable: bool = False,
     meta: dict[str, Any] | None = None,
 ) -> Signal:
-    """
-    [A][C] Something went wrong.
-    recoverable=True means the Cortex may retry or reroute.
-    """
     return Signal(
         type=SignalType.ERROR,
         trace_id=trace_id,
@@ -352,16 +332,12 @@ def register_signal(
     version: str | None = None,
     meta: dict[str, Any] | None = None,
 ) -> Signal:
-    """
-    [A] Neuron connecting to the Synapse and declaring its capabilities.
-    Emitted once by the Axon on startup.
-    """
     payload: dict[str, Any] = {"capabilities": capabilities}
     if version:
         payload["version"] = version
     return Signal(
         type=SignalType.REGISTER,
-        trace_id=new_trace_id(),  # management signals get their own trace
+        trace_id=new_trace_id(),
         neuron=neuron,
         payload=payload,
         meta=meta or {},
@@ -374,7 +350,6 @@ def deregister_signal(
     reason: str | None = None,
     meta: dict[str, Any] | None = None,
 ) -> Signal:
-    """[A] Neuron disconnecting from the Synapse."""
     payload: dict[str, Any] = {}
     if reason:
         payload["reason"] = reason
@@ -393,7 +368,6 @@ def heartbeat_signal(
     status: str = "ok",
     meta: dict[str, Any] | None = None,
 ) -> Signal:
-    """[A] Periodic liveness signal from a Neuron."""
     return Signal(
         type=SignalType.HEARTBEAT,
         trace_id=new_trace_id(),
@@ -412,7 +386,6 @@ def memory_append_signal(
     value: Any,
     meta: dict[str, Any] | None = None,
 ) -> Signal:
-    """[C] Write a value to the shared Engram under the given key."""
     return Signal(
         type=SignalType.MEMORY_APPEND,
         trace_id=trace_id,
@@ -432,10 +405,6 @@ def task_offer_signal(
     deadline_ms: int | None = None,
     meta: dict[str, Any] | None = None,
 ) -> Signal:
-    """
-    [C] Broadcast a task to candidate Neurons for competitive bidding.
-    Neurons reply with BID signals.
-    """
     payload: dict[str, Any] = {"input": input}
     if capabilities:
         payload["capabilities"] = capabilities
@@ -460,7 +429,6 @@ def bid_signal(
     confidence: float | None = None,
     meta: dict[str, Any] | None = None,
 ) -> Signal:
-    """[C] Cortex bids on behalf of a Neuron in response to a TASK_OFFER."""
     payload: dict[str, Any] = {"cost": cost}
     if eta_ms is not None:
         payload["eta_ms"] = eta_ms
@@ -476,6 +444,82 @@ def bid_signal(
     )
 
 
+def task_awarded_signal(
+    *,
+    trace_id: str,
+    parent_id: str,
+    neuron: str,
+    input: dict[str, Any],
+    winning_bid: dict[str, Any] | None = None,
+    context_ref: str | None = None,
+    meta: dict[str, Any] | None = None,
+) -> Signal:
+    """[C] Award a TASK_OFFER to one bidder. The winning Axon should treat
+    this exactly like a TASK: ``input`` is the work payload, ``neuron``
+    is the addressee. ``winning_bid`` carries the bid the producer
+    accepted (cost / eta_ms / confidence) for observability."""
+    payload: dict[str, Any] = {"input": input}
+    if winning_bid is not None:
+        payload["winning_bid"] = winning_bid
+    if context_ref is not None:
+        payload["context_ref"] = context_ref
+    return Signal(
+        type=SignalType.TASK_AWARDED,
+        trace_id=trace_id,
+        parent_id=parent_id,
+        neuron=neuron,
+        payload=payload,
+        meta=meta or {},
+    )
+
+
+def task_declined_signal(
+    *,
+    trace_id: str,
+    parent_id: str,
+    neuron: str | None = None,
+    reason: str | None = None,
+    meta: dict[str, Any] | None = None,
+) -> Signal:
+    """[C/A] Decline a TASK_OFFER. Producers emit this for losing bidders
+    after picking a winner (informational); workers may emit it
+    proactively to signal they will not bid on this offer."""
+    payload: dict[str, Any] = {}
+    if reason is not None:
+        payload["reason"] = reason
+    return Signal(
+        type=SignalType.TASK_DECLINED,
+        trace_id=trace_id,
+        parent_id=parent_id,
+        neuron=neuron,
+        payload=payload,
+        meta=meta or {},
+    )
+
+
+def discover_signal(
+    *,
+    neuron: str | None = None,
+    capabilities: list[str] | None = None,
+    trace_id: str | None = None,
+    parent_id: str | None = None,
+    meta: dict[str, Any] | None = None,
+) -> Signal:
+    """Solicit a REGISTER snapshot from peers on a namespace."""
+    payload: dict[str, Any] = {}
+    if neuron is not None:
+        payload["neuron"] = neuron
+    if capabilities is not None:
+        payload["capabilities"] = list(capabilities)
+    return Signal(
+        type=SignalType.DISCOVER,
+        trace_id=trace_id or new_trace_id(),
+        parent_id=parent_id,
+        payload=payload,
+        meta=meta or {},
+    )
+
+
 def critique_signal(
     *,
     trace_id: str,
@@ -486,11 +530,7 @@ def critique_signal(
     verdict: str,
     meta: dict[str, Any] | None = None,
 ) -> Signal:
-    """
-    [C] Peer review of another Neuron's output.
-    target_event_id is the id of the AGENT_OUTPUT being critiqued.
-    verdict: 'pass' | 'fail' | 'revise'
-    """
+    """Peer review of another Neuron's output."""
     return Signal(
         type=SignalType.CRITIQUE,
         trace_id=trace_id,
@@ -502,4 +542,747 @@ def critique_signal(
             "verdict": verdict,
         },
         meta=meta or {},
+    )
+
+
+def plan_signal(
+    *,
+    trace_id: str,
+    parent_id: str,
+    neuron: str | None = None,
+    steps: list[dict[str, Any]],
+    rationale: str | None = None,
+    meta: dict[str, Any] | None = None,
+) -> Signal:
+    """Structured plan emitted before execution."""
+    payload: dict[str, Any] = {"steps": steps}
+    if rationale is not None:
+        payload["rationale"] = rationale
+    return Signal(
+        type=SignalType.PLAN,
+        trace_id=trace_id,
+        parent_id=parent_id,
+        neuron=neuron,
+        payload=payload,
+        meta=meta or {},
+    )
+
+
+def thought_delta_signal(
+    *,
+    trace_id: str,
+    parent_id: str,
+    neuron: str | None = None,
+    delta: str,
+    seq: int | None = None,
+    meta: dict[str, Any] | None = None,
+) -> Signal:
+    """Streaming reasoning chunk."""
+    payload: dict[str, Any] = {"delta": delta}
+    if seq is not None:
+        payload["seq"] = seq
+    return Signal(
+        type=SignalType.THOUGHT_DELTA,
+        trace_id=trace_id,
+        parent_id=parent_id,
+        neuron=neuron,
+        payload=payload,
+        meta=meta or {},
+    )
+
+
+def tool_call_signal(
+    *,
+    trace_id: str,
+    parent_id: str,
+    neuron: str | None = None,
+    tool: str,
+    args: dict[str, Any],
+    call_id: str | None = None,
+    meta: dict[str, Any] | None = None,
+) -> Signal:
+    """Neuron invoking an external tool."""
+    payload: dict[str, Any] = {"tool": tool, "args": args}
+    if call_id is not None:
+        payload["call_id"] = call_id
+    return Signal(
+        type=SignalType.TOOL_CALL,
+        trace_id=trace_id,
+        parent_id=parent_id,
+        neuron=neuron,
+        payload=payload,
+        meta=meta or {},
+    )
+
+
+def tool_result_signal(
+    *,
+    trace_id: str,
+    parent_id: str,
+    neuron: str | None = None,
+    tool: str,
+    result: Any = None,
+    error: str | None = None,
+    call_id: str | None = None,
+    meta: dict[str, Any] | None = None,
+) -> Signal:
+    """Result returned from a tool. Exactly one of result/error should be set."""
+    payload: dict[str, Any] = {"tool": tool}
+    if result is not None:
+        payload["result"] = result
+    if error is not None:
+        payload["error"] = error
+    if call_id is not None:
+        payload["call_id"] = call_id
+    return Signal(
+        type=SignalType.TOOL_RESULT,
+        trace_id=trace_id,
+        parent_id=parent_id,
+        neuron=neuron,
+        payload=payload,
+        meta=meta or {},
+    )
+
+
+def escalation_signal(
+    *,
+    trace_id: str,
+    parent_id: str,
+    neuron: str | None = None,
+    reason: str,
+    target: str | None = None,
+    context: dict[str, Any] | None = None,
+    meta: dict[str, Any] | None = None,
+) -> Signal:
+    """[C] Escalate a task or sub-decision to a higher authority Neuron."""
+    payload: dict[str, Any] = {"reason": reason}
+    if target is not None:
+        payload["target"] = target
+    if context is not None:
+        payload["context"] = context
+    return Signal(
+        type=SignalType.ESCALATION,
+        trace_id=trace_id,
+        parent_id=parent_id,
+        neuron=neuron,
+        payload=payload,
+        meta=meta or {},
+    )
+
+
+def consensus_signal(
+    *,
+    trace_id: str,
+    parent_id: str,
+    neuron: str | None = None,
+    members: list[str],
+    verdict: str,
+    votes: dict[str, Any] | None = None,
+    meta: dict[str, Any] | None = None,
+) -> Signal:
+    """[C] Record a consensus outcome among multiple Neurons."""
+    payload: dict[str, Any] = {"members": members, "verdict": verdict}
+    if votes is not None:
+        payload["votes"] = votes
+    return Signal(
+        type=SignalType.CONSENSUS,
+        trace_id=trace_id,
+        parent_id=parent_id,
+        neuron=neuron,
+        payload=payload,
+        meta=meta or {},
+    )
+
+
+def context_sync_signal(
+    *,
+    trace_id: str,
+    parent_id: str,
+    neuron: str | None = None,
+    snapshot: dict[str, Any],
+    version: str | None = None,
+    meta: dict[str, Any] | None = None,
+) -> Signal:
+    """[C] Share/synchronise Engram context across Neurons."""
+    payload: dict[str, Any] = {"snapshot": snapshot}
+    if version is not None:
+        payload["version"] = version
+    return Signal(
+        type=SignalType.CONTEXT_SYNC,
+        trace_id=trace_id,
+        parent_id=parent_id,
+        neuron=neuron,
+        payload=payload,
+        meta=meta or {},
+    )
+
+
+# ---------------------------------------------------------------------------
+# Engram signal builders (see ENGRAM_DESIGN.md S4)
+# ---------------------------------------------------------------------------
+
+
+_RECALL_MODES: frozenset[str] = frozenset({"first", "merge", "all"})
+_IMPRINT_OPS: frozenset[str] = frozenset({
+    "add", "append", "merge", "upsert", "delete",
+})
+
+
+def recall_signal(
+    *,
+    trace_id: str,
+    parent_id: str,
+    neuron: str | None = None,
+    engram_id: str | None = None,
+    engram_kind: str | None = None,
+    query: dict[str, Any],
+    filters: dict[str, Any] | None = None,
+    context_ref: str | None = None,
+    deadline_ms: int | None = None,
+    min_confidence: float | None = None,
+    recall_mode: str = "first",
+    meta: dict[str, Any] | None = None,
+) -> Signal:
+    """[D] Memory-recall request. Inherits trace_id from the containing TASK.
+
+    Routing is addressed by default: at least one of ``engram_id`` or
+    ``engram_kind`` MUST be set. ``engram_id`` beats ``engram_kind`` on
+    the receiving side. ``recall_mode`` controls fan-out semantics:
+
+    - ``"first"``  (default) - one responder wins, others drop the request.
+    - ``"merge"``  - caller merges every RECALLED arriving by deadline.
+    - ``"all"``    - caller treats each RECALLED as a separate stream item.
+    """
+    if not engram_id and not engram_kind:
+        raise ValueError(
+            "recall_signal requires engram_id= or engram_kind= (or both); "
+            "addressed routing is the default per ENGRAM_DESIGN.md S4.1"
+        )
+    if recall_mode not in _RECALL_MODES:
+        raise ValueError(
+            f"recall_mode must be one of {sorted(_RECALL_MODES)}, "
+            f"got {recall_mode!r}"
+        )
+    payload: dict[str, Any] = {"query": query, "recall_mode": recall_mode}
+    if engram_id is not None:
+        payload["engram_id"] = engram_id
+    if engram_kind is not None:
+        payload["engram_kind"] = engram_kind
+    if filters is not None:
+        payload["filters"] = filters
+    if context_ref is not None:
+        payload["context_ref"] = context_ref
+    if deadline_ms is not None:
+        payload["deadline_ms"] = deadline_ms
+    if min_confidence is not None:
+        payload["min_confidence"] = min_confidence
+    return Signal(
+        type=SignalType.RECALL,
+        trace_id=trace_id,
+        parent_id=parent_id,
+        neuron=neuron,
+        payload=payload,
+        meta=meta or {},
+    )
+
+
+def recalled_signal(
+    *,
+    trace_id: str,
+    parent_id: str,
+    engram_id: str,
+    hits: list[dict[str, Any]],
+    truncated: bool = False,
+    took_ms: int | None = None,
+    neuron: str | None = None,
+    meta: dict[str, Any] | None = None,
+) -> Signal:
+    """[D] Response from one Engram to a RECALL.
+
+    ``parent_id`` MUST be the RECALL's id. Multiple Engrams may emit
+    RECALLED for the same RECALL when ``recall_mode`` is ``"merge"`` or
+    ``"all"``.
+    """
+    payload: dict[str, Any] = {
+        "engram_id": engram_id,
+        "hits": list(hits),
+        "truncated": bool(truncated),
+    }
+    if took_ms is not None:
+        payload["took_ms"] = took_ms
+    return Signal(
+        type=SignalType.RECALLED,
+        trace_id=trace_id,
+        parent_id=parent_id,
+        neuron=neuron,
+        payload=payload,
+        meta=meta or {},
+    )
+
+
+def imprint_signal(
+    *,
+    trace_id: str,
+    parent_id: str,
+    neuron: str | None = None,
+    engram_id: str | None = None,
+    engram_kind: str | None = None,
+    op: str,
+    entry: dict[str, Any],
+    merge_key: str | None = None,
+    meta: dict[str, Any] | None = None,
+) -> Signal:
+    """[D] Memory-write request. Inherits trace_id from the containing TASK.
+
+    ``op`` is one of ``add | append | merge | upsert | delete``.
+    ``merge_key`` is required when ``op`` is ``merge`` or ``upsert``.
+    Addressed by default - at least one of ``engram_id`` or ``engram_kind``
+    MUST be set.
+    """
+    if op not in _IMPRINT_OPS:
+        raise ValueError(
+            f"imprint op must be one of {sorted(_IMPRINT_OPS)}, got {op!r}"
+        )
+    if not engram_id and not engram_kind:
+        raise ValueError(
+            "imprint_signal requires engram_id= or engram_kind= (or both)"
+        )
+    if op in ("merge", "upsert") and not merge_key:
+        raise ValueError(
+            f"imprint op={op!r} requires merge_key="
+        )
+    payload: dict[str, Any] = {"op": op, "entry": entry}
+    if engram_id is not None:
+        payload["engram_id"] = engram_id
+    if engram_kind is not None:
+        payload["engram_kind"] = engram_kind
+    if merge_key is not None:
+        payload["merge_key"] = merge_key
+    return Signal(
+        type=SignalType.IMPRINT,
+        trace_id=trace_id,
+        parent_id=parent_id,
+        neuron=neuron,
+        payload=payload,
+        meta=meta or {},
+    )
+
+
+def imprinted_signal(
+    *,
+    trace_id: str,
+    parent_id: str,
+    engram_id: str,
+    op: str,
+    id: str | None = None,
+    version: int | None = None,
+    took_ms: int | None = None,
+    error: str | None = None,
+    neuron: str | None = None,
+    meta: dict[str, Any] | None = None,
+) -> Signal:
+    """[D] Receipt of a completed IMPRINT.
+
+    ``parent_id`` MUST be the IMPRINT's id. ``id`` is the resulting Engram
+    entry id when applicable (``eng_<ULID>``); absent for ``op="delete"``
+    of a non-existent key. ``error`` is set when the imprint failed but
+    the Engram chose to respond rather than emit a separate ERROR.
+    """
+    payload: dict[str, Any] = {"engram_id": engram_id, "op": op}
+    if id is not None:
+        payload["id"] = id
+    if version is not None:
+        payload["version"] = version
+    if took_ms is not None:
+        payload["took_ms"] = took_ms
+    if error is not None:
+        payload["error"] = error
+    return Signal(
+        type=SignalType.IMPRINTED,
+        trace_id=trace_id,
+        parent_id=parent_id,
+        neuron=neuron,
+        payload=payload,
+        meta=meta or {},
+    )
+
+
+# ---------------------------------------------------------------------------
+# Engram signal builders (see ENGRAM_DESIGN.md §4)
+# ---------------------------------------------------------------------------
+
+
+_RECALL_MODES: frozenset[str] = frozenset({"first", "merge", "all"})
+_IMPRINT_OPS: frozenset[str] = frozenset({
+    "add", "append", "merge", "upsert", "delete",
+})
+
+
+def recall_signal(
+    *,
+    trace_id: str,
+    parent_id: str,
+    neuron: str | None = None,
+    engram_id: str | None = None,
+    engram_kind: str | None = None,
+    query: dict[str, Any],
+    filters: dict[str, Any] | None = None,
+    context_ref: str | None = None,
+    deadline_ms: int | None = None,
+    min_confidence: float | None = None,
+    recall_mode: str = "first",
+    meta: dict[str, Any] | None = None,
+) -> Signal:
+    """[D] Memory-recall request. Inherits trace_id from the containing TASK.
+
+    Routing is addressed by default: at least one of ``engram_id`` or
+    ``engram_kind`` MUST be set. ``engram_id`` beats ``engram_kind`` on
+    the receiving side. ``recall_mode`` controls fan-out semantics:
+
+    - ``"first"``  (default) - one responder wins, others drop the request.
+    - ``"merge"``  - caller merges every RECALLED arriving by deadline.
+    - ``"all"``    - caller treats each RECALLED as a separate stream item.
+    """
+    if not engram_id and not engram_kind:
+        raise ValueError(
+            "recall_signal requires engram_id= or engram_kind= (or both); "
+            "addressed routing is the default per ENGRAM_DESIGN.md S4.1"
+        )
+    if recall_mode not in _RECALL_MODES:
+        raise ValueError(
+            f"recall_mode must be one of {sorted(_RECALL_MODES)}, "
+            f"got {recall_mode!r}"
+        )
+    payload: dict[str, Any] = {"query": query, "recall_mode": recall_mode}
+    if engram_id is not None:
+        payload["engram_id"] = engram_id
+    if engram_kind is not None:
+        payload["engram_kind"] = engram_kind
+    if filters is not None:
+        payload["filters"] = filters
+    if context_ref is not None:
+        payload["context_ref"] = context_ref
+    if deadline_ms is not None:
+        payload["deadline_ms"] = deadline_ms
+    if min_confidence is not None:
+        payload["min_confidence"] = min_confidence
+    return Signal(
+        type=SignalType.RECALL,
+        trace_id=trace_id,
+        parent_id=parent_id,
+        neuron=neuron,
+        payload=payload,
+        meta=meta or {},
+    )
+
+
+def recalled_signal(
+    *,
+    trace_id: str,
+    parent_id: str,
+    engram_id: str,
+    hits: list[dict[str, Any]],
+    truncated: bool = False,
+    took_ms: int | None = None,
+    neuron: str | None = None,
+    meta: dict[str, Any] | None = None,
+) -> Signal:
+    """[D] Response from one Engram to a RECALL.
+
+    ``parent_id`` MUST be the RECALL's id. Multiple Engrams may emit
+    RECALLED for the same RECALL when ``recall_mode`` is ``"merge"`` or
+    ``"all"``.
+    """
+    payload: dict[str, Any] = {
+        "engram_id": engram_id,
+        "hits": list(hits),
+        "truncated": bool(truncated),
+    }
+    if took_ms is not None:
+        payload["took_ms"] = took_ms
+    return Signal(
+        type=SignalType.RECALLED,
+        trace_id=trace_id,
+        parent_id=parent_id,
+        neuron=neuron,
+        payload=payload,
+        meta=meta or {},
+    )
+
+
+def imprint_signal(
+    *,
+    trace_id: str,
+    parent_id: str,
+    neuron: str | None = None,
+    engram_id: str | None = None,
+    engram_kind: str | None = None,
+    op: str,
+    entry: dict[str, Any],
+    merge_key: str | None = None,
+    meta: dict[str, Any] | None = None,
+) -> Signal:
+    """[D] Memory-write request. Inherits trace_id from the containing TASK.
+
+    ``op`` is one of ``add | append | merge | upsert | delete``.
+    ``merge_key`` is required when ``op`` is ``merge`` or ``upsert``.
+    Addressed by default - at least one of ``engram_id`` or ``engram_kind``
+    MUST be set.
+    """
+    if op not in _IMPRINT_OPS:
+        raise ValueError(
+            f"imprint op must be one of {sorted(_IMPRINT_OPS)}, got {op!r}"
+        )
+    if not engram_id and not engram_kind:
+        raise ValueError(
+            "imprint_signal requires engram_id= or engram_kind= (or both)"
+        )
+    if op in ("merge", "upsert") and not merge_key:
+        raise ValueError(
+            f"imprint op={op!r} requires merge_key="
+        )
+    payload: dict[str, Any] = {"op": op, "entry": entry}
+    if engram_id is not None:
+        payload["engram_id"] = engram_id
+    if engram_kind is not None:
+        payload["engram_kind"] = engram_kind
+    if merge_key is not None:
+        payload["merge_key"] = merge_key
+    return Signal(
+        type=SignalType.IMPRINT,
+        trace_id=trace_id,
+        parent_id=parent_id,
+        neuron=neuron,
+        payload=payload,
+        meta=meta or {},
+    )
+
+
+def imprinted_signal(
+    *,
+    trace_id: str,
+    parent_id: str,
+    engram_id: str,
+    op: str,
+    id: str | None = None,
+    version: int | None = None,
+    took_ms: int | None = None,
+    error: str | None = None,
+    neuron: str | None = None,
+    meta: dict[str, Any] | None = None,
+) -> Signal:
+    """[D] Receipt of a completed IMPRINT.
+
+    ``parent_id`` MUST be the IMPRINT's id. ``id`` is the resulting Engram
+    entry id when applicable (``eng_<ULID>``); absent for ``op="delete"``
+    of a non-existent key. ``error`` is set when the imprint failed but
+    the Engram chose to respond rather than emit a separate ERROR.
+    """
+    payload: dict[str, Any] = {"engram_id": engram_id, "op": op}
+    if id is not None:
+        payload["id"] = id
+    if version is not None:
+        payload["version"] = version
+    if took_ms is not None:
+        payload["took_ms"] = took_ms
+    if error is not None:
+        payload["error"] = error
+    return Signal(
+        type=SignalType.IMPRINTED,
+        trace_id=trace_id,
+        parent_id=parent_id,
+        neuron=neuron,
+        payload=payload,
+        meta=meta or {},
+    )
+
+
+# ---------------------------------------------------------------------------
+# Engram signal builders (see ENGRAM_DESIGN.md S4)
+# ---------------------------------------------------------------------------
+
+
+_RECALL_MODES: frozenset[str] = frozenset({"first", "merge", "all"})
+_IMPRINT_OPS: frozenset[str] = frozenset({
+    "add", "append", "merge", "upsert", "delete",
+})
+
+
+def recall_signal(
+    *,
+    trace_id: str,
+    parent_id: str,
+    neuron: str | None = None,
+    engram_id: str | None = None,
+    engram_kind: str | None = None,
+    query: dict[str, Any],
+    filters: dict[str, Any] | None = None,
+    context_ref: str | None = None,
+    deadline_ms: int | None = None,
+    min_confidence: float | None = None,
+    recall_mode: str = "first",
+    meta: dict[str, Any] | None = None,
+) -> Signal:
+    """[D] Memory-recall request. Inherits trace_id from the containing TASK.
+
+    Routing is addressed by default: at least one of ``engram_id`` or
+    ``engram_kind`` MUST be set. ``engram_id`` beats ``engram_kind`` on
+    the receiving side. ``recall_mode`` controls fan-out semantics:
+
+    - ``"first"`` (default) - one responder wins, others drop the request.
+    - ``"merge"`` - caller merges every RECALLED arriving by deadline.
+    - ``"all"``   - caller treats each RECALLED as a separate stream item.
+    """
+    if not engram_id and not engram_kind:
+        raise ValueError(
+            "recall_signal requires engram_id= or engram_kind= (or both); "
+            "addressed routing is the default per ENGRAM_DESIGN.md S4.1"
+        )
+    if recall_mode not in _RECALL_MODES:
+        raise ValueError(
+            f"recall_mode must be one of {sorted(_RECALL_MODES)}, "
+            f"got {recall_mode!r}"
+        )
+    payload: dict[str, Any] = {"query": query, "recall_mode": recall_mode}
+    if engram_id is not None:
+        payload["engram_id"] = engram_id
+    if engram_kind is not None:
+        payload["engram_kind"] = engram_kind
+    if filters is not None:
+        payload["filters"] = filters
+    if context_ref is not None:
+        payload["context_ref"] = context_ref
+    if deadline_ms is not None:
+        payload["deadline_ms"] = deadline_ms
+    if min_confidence is not None:
+        payload["min_confidence"] = min_confidence
+    return Signal(
+        type=SignalType.RECALL,
+        trace_id=trace_id,
+        parent_id=parent_id,
+        neuron=neuron,
+        payload=payload,
+        meta=meta or {},
+    )
+
+
+def recalled_signal(
+    *,
+    trace_id: str,
+    parent_id: str,
+    engram_id: str,
+    hits: list[dict[str, Any]],
+    truncated: bool = False,
+    took_ms: int | None = None,
+    neuron: str | None = None,
+    meta: dict[str, Any] | None = None,
+) -> Signal:
+    """[D] Response from one Engram to a RECALL.
+
+    ``parent_id`` MUST be the RECALL's id. Multiple Engrams may emit
+    RECALLED for the same RECALL when ``recall_mode`` is ``"merge"`` or
+    ``"all"``.
+    """
+    payload: dict[str, Any] = {
+        "engram_id": engram_id,
+        "hits": list(hits),
+        "truncated": bool(truncated),
+    }
+    if took_ms is not None:
+        payload["took_ms"] = took_ms
+    return Signal(
+        type=SignalType.RECALLED,
+        trace_id=trace_id,
+        parent_id=parent_id,
+        neuron=neuron,
+        payload=payload,
+        meta=meta or {},
+    )
+
+
+def imprint_signal(
+    *,
+    trace_id: str,
+    parent_id: str,
+    neuron: str | None = None,
+    engram_id: str | None = None,
+    engram_kind: str | None = None,
+    op: str,
+    entry: dict[str, Any],
+    merge_key: str | None = None,
+    meta: dict[str, Any] | None = None,
+) -> Signal:
+    """[D] Memory-write request. Inherits trace_id from the containing TASK.
+
+    ``op`` is one of ``add | append | merge | upsert | delete``.
+    ``merge_key`` is required when ``op`` is ``merge`` or ``upsert``.
+    Addressed by default - at least one of ``engram_id`` or ``engram_kind``
+    MUST be set.
+    """
+    if op not in _IMPRINT_OPS:
+        raise ValueError(
+            f"imprint op must be one of {sorted(_IMPRINT_OPS)}, got {op!r}"
+        )
+    if not engram_id and not engram_kind:
+        raise ValueError(
+            "imprint_signal requires engram_id= or engram_kind= (or both)"
+        )
+    if op in ("merge", "upsert") and not merge_key:
+        raise ValueError(
+            f"imprint op={op!r} requires merge_key="
+        )
+    payload: dict[str, Any] = {"op": op, "entry": entry}
+    if engram_id is not None:
+        payload["engram_id"] = engram_id
+    if engram_kind is not None:
+        payload["engram_kind"] = engram_kind
+    if merge_key is not None:
+        payload["merge_key"] = merge_key
+    return Signal(
+        type=SignalType.IMPRINT,
+        trace_id=trace_id,
+        parent_id=parent_id,
+        neuron=neuron,
+        payload=payload,
+        meta=meta or {},
+    )
+
+
+def imprinted_signal(
+    *,
+    trace_id: str,
+    parent_id: str,
+    engram_id: str,
+    op: str,
+    id: str | None = None,
+    version: int | None = None,
+    took_ms: int | None = None,
+    error: str | None = None,
+    neuron: str | None = None,
+    meta: dict[str, Any] | None = None,
+) -> Signal:
+    """[D] Receipt of a completed IMPRINT.
+
+    ``parent_id`` MUST be the IMPRINT's id. ``id`` is the resulting Engram
+    entry id when applicable (``eng_<ULID>``); absent for ``op="delete"``
+    of a non-existent key. ``error`` is set when the imprint failed but
+    the Engram chose to respond rather than emit a separate ERROR.
+    """
+    payload: dict[str, Any] = {"engram_id": engram_id, "op": op}
+    if id is not None:
+        payload["id"] = id
+    if version is not None:
+        payload["version"] = version
+    if took_ms is not None:
+        payload["took_ms"] = took_ms
+    if error is not None:
+        payload["error"] = error
+    return Signal(
+        type=SignalType.IMPRINTED,
+        trace_id=trace_id,
+        parent_id=parent_id,
+        neuron=neuron,
+        payload=payload,
+        meta=meta or {},
+    )
     )

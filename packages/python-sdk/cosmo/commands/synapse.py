@@ -17,91 +17,30 @@ import asyncio
 import json
 import os
 import signal as _signal
-import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 import click
 
-try:
-    from rich.console import Console
-    from rich.table import Table
-    from rich.text import Text
-
-    _HAS_RICH = True
-except ImportError:
-    _HAS_RICH = False
-
 from cosmonapse import Signal
 
-# ---------------------------------------------------------------------------
-# Pretty-printing helpers (shared with dev.py)
-# ---------------------------------------------------------------------------
+# Signal pretty-printing helpers live in one place now (see _shared.py).
+from cosmo.commands._shared import (
+    _HAS_RICH,
+    _banner_line,
+    _err,
+    _hr,
+    _print_signal,
+)
 
-_TYPE_COLOURS: dict[str, str] = {
-    "TASK": "cyan",
-    "AGENT_OUTPUT": "green",
-    "FINAL": "bold green",
-    "ERROR": "bold red",
-    "CLARIFICATION": "yellow",
-    "REGISTER": "blue",
-    "DEREGISTER": "blue",
-    "HEARTBEAT": "dim blue",
-    "TASK_OFFER": "magenta",
-    "BID": "magenta",
-    "TASK_AWARDED": "bold magenta",
-    "TASK_DECLINED": "dim magenta",
-    "THOUGHT_DELTA": "dim white",
-    "PLAN": "white",
-    "TOOL_CALL": "bright_white",
-    "TOOL_RESULT": "bright_white",
-    "MEMORY_APPEND": "bright_cyan",
-    "ESCALATION": "bold yellow",
-    "CONSENSUS": "bold cyan",
-    "CONTEXT_SYNC": "cyan",
-    "CRITIQUE": "yellow",
-}
-
+# `synapse view` renders a rich Table of its own; keep a Console + Table handle
+# here when rich is available. Everything else comes from _shared.
 if _HAS_RICH:
+    from rich.console import Console
+    from rich.table import Table
+
     _console = Console()
-
-    def _print_signal(subject: str, sig: Signal) -> None:
-        colour = _TYPE_COLOURS.get(sig.type.value, "white")
-        ts = sig.ts.strftime("%H:%M:%S.%f")[:-3]
-        neuron = sig.neuron or "—"
-        trace = sig.trace_id[4:12]
-        t = Text()
-        t.append(f"  {ts}  ", style="dim")
-        t.append(f"{sig.type.value:<14}", style=colour)
-        t.append(f"  {trace}  ", style="dim")
-        t.append(f"{neuron:<18}", style="italic")
-        t.append(f"  {subject}", style="dim")
-        _console.print(t)
-
-    def _hr() -> None:
-        _console.print("  " + "─" * 64)
-
-    def _banner_line(text: str, style: str = "") -> None:
-        _console.print(text, style=style)
-
-    def _err(text: str) -> None:
-        _console.print(text, style="bold red")
-
-else:
-    def _print_signal(subject: str, sig: Signal) -> None:
-        ts = sig.ts.strftime("%H:%M:%S")
-        print(f"  {ts}  {sig.type.value:<14}  {sig.trace_id[4:12]}  "
-              f"{(sig.neuron or '—'):<18}  {subject}")
-
-    def _hr() -> None:
-        print("  " + "─" * 64)
-
-    def _banner_line(text: str, style: str = "") -> None:
-        print(text)
-
-    def _err(text: str) -> None:
-        print(text, file=sys.stderr)
 
 
 # ---------------------------------------------------------------------------
@@ -319,8 +258,10 @@ async def _start_memory(namespace: str, host: str, port: int, quiet: bool) -> No
     _banner_line("  Transport:  TCP + NDJSON  (single-host dev only)",
                  "dim" if _HAS_RICH else "")
     _banner_line("")
-    _banner_line("  Connect a Dendrite or Cortex with:", "dim" if _HAS_RICH else "")
-    _banner_line(f"    await Cortex.connect('cosmo://{server.host}:{server.port}', ...)",
+    _banner_line("  Connect a Dendrite with:", "dim" if _HAS_RICH else "")
+    _banner_line(f"    synapse = await connect_synapse('cosmo://{server.host}:{server.port}')",
+                 "dim" if _HAS_RICH else "")
+    _banner_line(f"    dendrite = Dendrite(synapse=synapse, namespace='{namespace}')",
                  "dim" if _HAS_RICH else "")
     _banner_line("")
     _banner_line("  Ctrl-C  or  cosmo synapse stop  to stop.", "dim" if _HAS_RICH else "")
@@ -507,19 +448,23 @@ async def _start_kafka(namespace: str, broker: str | None, quiet: bool) -> None:
 @click.option("--namespace", "-n", default=None, metavar="NS",
               help="Show info + stream Signals for this namespace. "
                    "Omit to list all namespaces.")
-def view(url: str, namespace: str | None) -> None:
+@click.option("--json", "output_json", is_flag=True, default=False,
+              help="Emit machine-readable JSON instead of formatted tables. "
+                   "Suppresses the live signal stream for a single namespace.")
+def view(url: str, namespace: str | None, output_json: bool) -> None:
     """List all namespaces on a synapse, or stream Signals for one namespace.
 
     \b
     Examples:
       cosmo synapse view --url=cosmo://127.0.0.1:7070
       cosmo synapse view --url=cosmo://127.0.0.1:7070 --namespace=dev
+      cosmo synapse view --url=cosmo://127.0.0.1:7070 --json
       cosmo synapse view --url=nats://localhost:4222
     """
-    asyncio.run(_run_view(url=url, namespace=namespace))
+    asyncio.run(_run_view(url=url, namespace=namespace, output_json=output_json))
 
 
-async def _run_view(url: str, namespace: str | None) -> None:
+async def _run_view(url: str, namespace: str | None, output_json: bool = False) -> None:
     scheme = _url_scheme(url)
 
     if scheme == "cosmo":
@@ -533,12 +478,16 @@ async def _run_view(url: str, namespace: str | None) -> None:
                 _err(f"  Cannot connect to {url}. Is a synapse running there?")
                 raise SystemExit(1)
             if resp.get("op") == "mgmt_ns_list":
-                _display_ns_list(resp["namespaces"], url)
+                if output_json:
+                    print(json.dumps({"url": url, "namespaces": resp["namespaces"]},
+                                     indent=2))
+                else:
+                    _display_ns_list(resp["namespaces"], url)
             else:
                 _err(f"  Unexpected response: {resp}")
                 raise SystemExit(1)
         else:
-            # Show info then stream signals for the namespace
+            # Show info then (unless --json) stream signals for the namespace
             try:
                 info_resp = await _mgmt_send_recv(host, port, {"op": "mgmt_info",
                                                                "namespace": namespace})
@@ -548,6 +497,10 @@ async def _run_view(url: str, namespace: str | None) -> None:
             if info_resp.get("op") == "err":
                 _err(f"  {info_resp.get('message')}")
                 raise SystemExit(1)
+            if output_json:
+                info_out = {k: v for k, v in info_resp.items() if k != "op"}
+                print(json.dumps(info_out, indent=2))
+                return
             _display_ns_info(info_resp)
 
             # Live signal stream via raw subscription on a new connection

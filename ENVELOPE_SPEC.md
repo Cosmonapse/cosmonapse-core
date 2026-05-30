@@ -445,7 +445,7 @@ Produced by the **Dendrite** on behalf of each attached Axon. The Axon owns the 
 }
 ```
 
-The Dendrite re-emits REGISTER alongside each HEARTBEAT so a late-joining Cortex catches up without a separate sync mechanism.
+The Dendrite re-emits REGISTER alongside each HEARTBEAT so a late-joining Cortex catches up without a separate sync mechanism. A `DISCOVER` (§7.7) gives the same snapshot on demand.
 
 #### `DEREGISTER`
 
@@ -466,6 +466,49 @@ The Dendrite re-emits REGISTER alongside each HEARTBEAT so a late-joining Cortex
   "payload": { "status": "healthy", "load": 0.4, "in_flight": 2 }
 }
 ```
+
+### 7.7 Discovery  `[D]`
+
+#### `DISCOVER`
+
+A synapse-side control signal that solicits a REGISTER snapshot from
+participants on a namespace. Emitted by anyone that wants a current view
+of who's online — a Doppler attaching to a running namespace, a new
+orchestrator Dendrite populating its `registry_store` on startup, or a
+reconnecting peer re-verifying a specific worker. Both the broadcast
+and directed forms share the same envelope; the optional `payload`
+fields select which.
+
+```json
+{
+  "type": "DISCOVER",
+  "payload": {
+    "neuron":       "claude-debug",
+    "capabilities": ["python", "debugging"]
+  }
+}
+```
+
+| Payload field   | Required | Description |
+|---|---|---|
+| `neuron`        | no       | Directed mode: only the Axon with this `neuron_id` responds. Omit for broadcast (every Axon responds). |
+| `capabilities`  | no       | Restrict the response to Axons whose capabilities are a superset of this list. Combinable with `neuron`. |
+
+**Response.** A DISCOVER has no dedicated response type. Every Dendrite
+with attached Axons that satisfy the filter re-emits a standard
+`REGISTER` (§7.6) for each matching Axon. The registry machinery that
+already consumes REGISTER handles these identically.
+
+**Thundering-herd mitigation.** Each responding Dendrite waits a small
+random jitter (0–100 ms) before emitting REGISTER, so on a namespace
+with many participants the responses spread rather than spike.
+
+**Relation to other discovery mechanisms.** DISCOVER complements the
+re-register-on-heartbeat behaviour, which catches late joiners within
+one heartbeat interval. DISCOVER gives the same snapshot on demand —
+useful on `MemorySynapse` / `DevSynapse` (which have no broker-level
+replay) and for the directed re-verify case which broker replay does
+not address.
 
 ---
 

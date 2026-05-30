@@ -13,7 +13,8 @@
  *       thrown error         -> ERROR
  *
  * (The Python Axon also mixes in LifecycleHooks for on_connect / on_schedule /
- * on_refresh. Those scheduling hooks are not part of this port yet.)
+ * on_refresh. Those scheduling hooks are tracked in PORTING_STATUS.md and are
+ * not part of this port yet.)
  */
 
 import {
@@ -23,6 +24,21 @@ import {
 } from "./signals.js";
 import { isClarification, type ContextFetcher, type NeuronFn } from "./neuron.js";
 import type { Json, Signal } from "./envelope.js";
+// Type-only import: erased at runtime under verbatimModuleSyntax, so this does
+// NOT introduce a runtime import cycle with dendrite.ts. It restores type
+// safety on the back-reference from an Axon to its hosting Dendrite.
+import type { Dendrite } from "./dendrite.js";
+
+/**
+ * Package-internal keys for the attach/detach handshake. These are deliberately
+ * NOT re-exported from index.ts, so only same-package code (the Dendrite) can
+ * name them and invoke the methods. This enforces "internal" at the language
+ * level — which a `@internal` JSDoc tag on a `public` method does not. External
+ * consumers have no way to reference these symbols, so `axon[ATTACH](...)` is
+ * effectively private to the package.
+ */
+export const ATTACH: unique symbol = Symbol("cosmonapse.axon.attach");
+export const DETACH: unique symbol = Symbol("cosmonapse.axon.detach");
 
 export interface AxonOptions {
   neuronId: string;
@@ -40,7 +56,7 @@ export class Axon {
   readonly version: string | undefined;
   private readonly fn: NeuronFn;
   private readonly contextFetcher: ContextFetcher;
-  private dendrite: unknown = null;
+  private dendrite: Dendrite | null = null;
 
   constructor(opts: AxonOptions) {
     this.neuronId = opts.neuronId;
@@ -50,16 +66,21 @@ export class Axon {
     this.contextFetcher = opts.contextFetcher ?? noopContextFetcher;
   }
 
-  /** @internal — set by Dendrite.attachAxon. */
-  attachTo(dendrite: unknown): void {
+  /**
+   * Package-internal: invoked by Dendrite.attachAxon via the {@link ATTACH}
+   * symbol. Not callable by external consumers (the symbol is not exported from
+   * index.ts), so this replaces the previous `@internal`-comment-only contract
+   * with real, enforced encapsulation.
+   */
+  [ATTACH](dendrite: Dendrite): void {
     if (this.dendrite !== null && this.dendrite !== dendrite) {
       throw new Error(`Axon '${this.neuronId}' is already attached to a different Dendrite`);
     }
     this.dendrite = dendrite;
   }
 
-  /** @internal */
-  detach(): void {
+  /** Package-internal: invoked via the {@link DETACH} symbol. */
+  [DETACH](): void {
     this.dendrite = null;
   }
 

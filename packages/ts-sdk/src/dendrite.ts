@@ -16,11 +16,16 @@
  * emitFinal / emitError / emit plus the inbound-handler hooks. `Cortex` is
  * kept as a back-compat alias.
  *
- * (Not yet ported from Python: the optional RegistryStore mirror and the
- * LifecycleHooks scheduler. Handlers and routing are fully functional.)
+ * Lifecycle: call `await dendrite.start()` / `await dendrite.stop()`, or use
+ * `await using dendrite = new Dendrite({...}); await dendrite.start();` — the
+ * Symbol.asyncDispose implementation calls stop() automatically when the scope
+ * exits. This is the TS counterpart to Python's `async with dendrite:`.
+ *
+ * (Still-to-port parity items — the LifecycleHooks scheduler (on_connect /
+ * on_refresh / on_schedule) and other gaps — are tracked in PORTING_STATUS.md.)
  */
 
-import { Axon } from "./axon.js";
+import { Axon, ATTACH } from "./axon.js";
 import {
   AXON_TYPES,
   SignalType,
@@ -44,6 +49,20 @@ import {
   type NeuronStatus,
   type RegistryStore,
 } from "./storage.js";
+
+// --- explicit resource management (`await using`) ------------------------
+//
+// `Symbol.asyncDispose` lands in the standard lib only from the esnext.disposable
+// definitions (TS 5.2+) and exists at runtime on Node 20+. This package targets
+// `lib: ["ES2022"]` and `node >= 18`, so we (a) augment the type and (b) install
+// a runtime shim if the symbol is missing. The `??=` makes both idempotent and
+// non-destructive on runtimes that already provide it.
+declare global {
+  interface SymbolConstructor {
+    readonly asyncDispose: unique symbol;
+  }
+}
+(Symbol as { asyncDispose?: symbol }).asyncDispose ??= Symbol.for("Symbol.asyncDispose");
 
 export type SignalHandler = (signal: Signal) => void | Promise<void>;
 
@@ -81,7 +100,10 @@ export class Dendrite {
   private readonly handlers = new Map<SignalType, SignalHandler[]>();
   private taskSub: Subscription | null = null;
   private readonly inboundSubs = new Map<SignalType, Subscription>();
-  private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  // Self-scheduling setTimeout handle (not setInterval — see startHeartbeatLoop).
+  private heartbeatTimer: ReturnType<typeof setTimeout> | null = null;
+  // Set true by stop() so an in-flight tick won't re-arm the loop.
+  private heartbeatStopped = true;
   private running = false;
 
   constructor(opts: DendriteOptions) {
@@ -112,7 +134,7 @@ export class Dendrite {
       throw new Error(`Dendrite already has an Axon for neuronId='${axon.neuronId}'`);
     }
     this._axons.set(axon.neuronId, axon);
-    axon.attachTo(this);
+    axon[ATTACH](this);
   }
 
   // -- inbound handler registration ----------------------------------
@@ -182,20 +204,56 @@ export class Dendrite {
     this.running = true;
 
     if (this._axons.size > 0 && this.heartbeatMs > 0) {
-      this.heartbeatTimer = setInterval(() => {
-        void this.heartbeatTick();
+      this.startHeartbeatLoop();
+    }
+  }
+
+  /**
+   * Heartbeat as a self-scheduling async loop rather than `setInterval`.
+   *
+   * Why not setInterval: it fires on a fixed wall-clock cadence regardless of
+   * whether the previous tick finished, so under load ticks overlap and the
+   * effective interval drifts; and because the callback is sync, any rejection
+   * from the async work inside is an unhandled rejection that setInterval
+   * silently drops. Here each tick is fully awaited, its errors are caught, and
+   * only then is the next tick scheduled — matching the Python SDK's
+   * asyncio.Task semantics (structured error handling + clean cancellation).
+   */
+  private startHeartbeatLoop(): void {
+    this.heartbeatStopped = false;
+
+    const schedule = (): void => {
+      this.heartbeatTimer = setTimeout(() => {
+        void tick();
       }, this.heartbeatMs);
       // Don't keep the event loop alive solely for heartbeats.
       (this.heartbeatTimer as { unref?: () => void }).unref?.();
-    }
+    };
+
+    const tick = async (): Promise<void> => {
+      if (this.heartbeatStopped || !this.running) return;
+      try {
+        await this.heartbeatTick();
+      } catch {
+        // Structured handling: a throw must never kill the loop or surface as
+        // an unhandled rejection. heartbeatTick is already best-effort per Axon;
+        // this is the backstop.
+      }
+      if (!this.heartbeatStopped && this.running) schedule();
+    };
+
+    schedule();
   }
 
   async stop(reason?: string): Promise<void> {
     if (!this.running) return;
     this.running = false;
 
+    // Cancel the heartbeat loop: flag first so an in-flight tick won't re-arm,
+    // then clear any pending timer.
+    this.heartbeatStopped = true;
     if (this.heartbeatTimer !== null) {
-      clearInterval(this.heartbeatTimer);
+      clearTimeout(this.heartbeatTimer);
       this.heartbeatTimer = null;
     }
 
@@ -225,6 +283,24 @@ export class Dendrite {
     }
     // NOTE: the Dendrite does NOT own the Synapse (nor the registry store).
     // The caller closes them.
+  }
+
+  /**
+   * Explicit-resource-management hook so a Dendrite can be used with
+   * `await using` — the TS equivalent of Python's `async with dendrite:`.
+   *
+   * ```ts
+   * await using dendrite = new Dendrite({ synapse });
+   * dendrite.attachAxon(axon);
+   * await dendrite.start();
+   * // ... stop() runs automatically when this scope exits, even on throw.
+   * ```
+   *
+   * Idempotent: stop() is a no-op if the Dendrite was never started or already
+   * stopped. As with stop(), the caller still owns the Synapse/registry store.
+   */
+  async [Symbol.asyncDispose](): Promise<void> {
+    await this.stop();
   }
 
   // -- registry helpers ----------------------------------------------

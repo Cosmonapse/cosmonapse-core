@@ -6,7 +6,8 @@
  *
  * MemorySynapse is NOT a throwaway test double — it is the adapter that backs
  * the local dev experience, and any code written against it works unchanged
- * against a networked adapter (NATS/Kafka, not yet ported to TS).
+ * against a networked adapter. NatsSynapse is ported (synapse-nats.ts); the
+ * Kafka adapter is still outstanding — see PORTING_STATUS.md.
  *
  * Subject convention (ENVELOPE_SPEC.md §10):
  *   cosmonapse.<namespace>.<type>     e.g. cosmonapse.team_a.TASK

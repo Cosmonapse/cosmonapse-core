@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "cosmonapse"
-version = "0.0.1"
+version = "0.1.0"
 description = "Event-driven Agent-to-Agent protocol SDK and developer CLI"
 readme = "README.md"
 requires-python = ">=3.11"

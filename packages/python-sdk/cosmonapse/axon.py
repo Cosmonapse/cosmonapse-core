@@ -31,6 +31,7 @@ from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
 from cosmonapse._hooks import LifecycleHooks, RefreshEvent
+from cosmonapse.engram.base import EngramBinding, EngramNotBound
 from cosmonapse.envelope import (
     Signal,
     agent_output_signal,
@@ -63,6 +64,7 @@ class Axon(LifecycleHooks):
         capabilities: list[str] | None = None,
         version: str | None = None,
         context_fetcher: ContextFetcher | None = None,
+        engrams: list[EngramBinding] | None = None,
     ) -> None:
         LifecycleHooks.__init__(self)
         self.neuron_id = neuron_id
@@ -71,6 +73,42 @@ class Axon(LifecycleHooks):
         self._fn = neuron_fn
         self._context_fetcher = context_fetcher or _noop_context_fetcher
         self._dendrite: "Dendrite | None" = None
+
+        # Engram bindings the Neuron may address. Keyed by binding.name —
+        # the Neuron passes that name to recall(...) / imprint(...). The
+        # Axon enforces the whitelist so a Neuron cannot hit an Engram it
+        # was not declared to depend on.
+        self._engram_bindings: dict[str, EngramBinding] = {}
+        for b in (engrams or []):
+            if b.name in self._engram_bindings:
+                raise ValueError(
+                    f"Axon {neuron_id!r}: duplicate EngramBinding name "
+                    f"{b.name!r}"
+                )
+            self._engram_bindings[b.name] = b
+
+        # Whether the wrapped neuron_fn declares recall/imprint kwargs.
+        # Detected once at construction; cached for hot-path use.
+        self._fn_accepts_recall: bool = False
+        self._fn_accepts_imprint: bool = False
+        self._fn_accepts_kwargs: bool = False
+        try:
+            import inspect as _inspect
+            sig = _inspect.signature(neuron_fn)
+            for _pname, _p in sig.parameters.items():
+                if _p.kind is _inspect.Parameter.VAR_KEYWORD:
+                    self._fn_accepts_kwargs = True
+                    self._fn_accepts_recall = True
+                    self._fn_accepts_imprint = True
+                    break
+                if _pname == "recall":
+                    self._fn_accepts_recall = True
+                if _pname == "imprint":
+                    self._fn_accepts_imprint = True
+        except (ValueError, TypeError):
+            # Builtins / C functions have no inspectable signature. Skip
+            # helper injection and fall back to the 2-arg legacy call.
+            pass
 
     # -- attachment ----------------------------------------------------
 
@@ -133,8 +171,22 @@ class Axon(LifecycleHooks):
                     self.neuron_id, context_ref, exc,
                 )
 
+        # Build helpers bound to this TASK's trace/parent context. The
+        # helpers are no-ops (raise EngramNotBound) when no bindings are
+        # declared, so a misconfigured Neuron fails loudly.
+        kwargs: dict[str, Any] = {}
+        if self._fn_accepts_recall:
+            kwargs["recall"] = self._build_recall_helper(trace_id, parent_id)
+        if self._fn_accepts_imprint:
+            kwargs["imprint"] = self._build_imprint_helper(trace_id, parent_id)
+
         try:
-            raw_output: dict[str, Any] = await self._fn(input_data, context)
+            if kwargs:
+                raw_output: dict[str, Any] = await self._fn(
+                    input_data, context, **kwargs,
+                )
+            else:
+                raw_output = await self._fn(input_data, context)
         except Exception as exc:
             logger.exception("Axon %s: Neuron raised", self.neuron_id)
             return error_signal(
@@ -161,3 +213,85 @@ class Axon(LifecycleHooks):
             neuron=self.neuron_id,
             output=raw_output if isinstance(raw_output, dict) else {"value": raw_output},
         )
+
+
+    # ------------------------------------------------------------------
+    # Engram helper plumbing (called from handle_task)
+    # ------------------------------------------------------------------
+
+    def _engram_client(self):
+        if self._dendrite is None:
+            raise RuntimeError(
+                f"Axon {self.neuron_id!r}: not attached to a Dendrite; "
+                f"engram helpers require a hosting Dendrite"
+            )
+        return self._dendrite.engram_client
+
+    def _resolve_binding(self, name: str) -> EngramBinding:
+        binding = self._engram_bindings.get(name)
+        if binding is None:
+            raise EngramNotBound(
+                f"Axon {self.neuron_id!r}: no Engram binding named {name!r}; "
+                f"available: {sorted(self._engram_bindings)}"
+            )
+        return binding
+
+    def _build_recall_helper(self, trace_id: str, parent_id: str):
+        async def _recall(
+            name: str,
+            *,
+            query: dict[str, Any],
+            filters: dict[str, Any] | None = None,
+            context_ref: str | None = None,
+            deadline_ms: int | None = None,
+            recall_mode: str | None = None,
+            min_confidence: float | None = None,
+            meta: dict[str, Any] | None = None,
+        ):
+            binding = self._resolve_binding(name)
+            client = self._engram_client()
+            return await client.recall(
+                binding=binding,
+                query=query,
+                filters=filters,
+                context_ref=context_ref,
+                deadline_ms=deadline_ms,
+                recall_mode=recall_mode,
+                min_confidence=min_confidence,
+                trace_id=trace_id,
+                parent_id=parent_id,
+                neuron=self.neuron_id,
+                meta=meta,
+            )
+        return _recall
+
+    def _build_imprint_helper(self, trace_id: str, parent_id: str):
+        async def _imprint(
+            name: str,
+            *,
+            op: str,
+            entry: dict[str, Any],
+            merge_key: str | None = None,
+            await_ack: bool = False,
+            deadline_ms: int | None = None,
+            meta: dict[str, Any] | None = None,
+        ):
+            binding = self._resolve_binding(name)
+            client = self._engram_client()
+            return await client.imprint(
+                binding=binding,
+                op=op,
+                entry=entry,
+                merge_key=merge_key,
+                await_ack=await_ack,
+                deadline_ms=deadline_ms,
+                trace_id=trace_id,
+                parent_id=parent_id,
+                neuron=self.neuron_id,
+                meta=meta,
+            )
+        return _imprint
+
+    @property
+    def engram_bindings(self) -> dict[str, EngramBinding]:
+        return dict(self._engram_bindings)

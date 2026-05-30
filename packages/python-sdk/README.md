@@ -2,7 +2,7 @@
 
 Event-driven Agent-to-Agent protocol SDK for Python.
 
-**v0.0.1** — Python 3.11+ · MIT
+**v0.1.0** — Python 3.11+ · MIT
 
 ---
 

@@ -4,9 +4,9 @@ cosmonapse.synapse.dev
 Local dev Synapse — a tiny TCP + NDJSON broker.
 
 `cosmo synapse start memory` boots a `DevSynapseServer` and prints a URL like
-`cosmo://127.0.0.1:7070`. Any process can then point a Dendrite or
-Cortex at that URL via `Dendrite.connect(...)` / `Cortex.connect(...)`
-and start exchanging Signals.
+`cosmo://127.0.0.1:7070`. Any process can then connect to that URL with
+`synapse = await connect_synapse('cosmo://...')` and hand the result to a
+`Dendrite(synapse=synapse, namespace=...)` to start exchanging Signals.
 
 This is **not** a production synapse. It is the equivalent of
 `MemorySynapse` for the case where Axons, Dendrites and Cortices

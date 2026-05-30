@@ -12,6 +12,14 @@
  * new Axon({ neuronId: "api",   neuronFn: neuron("express", { app }) });
  * new Axon({ neuronId: "files", neuronFn: neuron("mcp", { server: "filesystem", args: ["/data"] }) });
  * ```
+ *
+ * WHICH TO USE — `neuron(source, opts)` is the recommended, source-agnostic
+ * entry point and the one mirrored from the Python SDK; prefer it in app code.
+ * The standalone `expressNeuron(...)` / `mcpNeuron(...)` exports are the
+ * lower-level primitives `neuron()` delegates to: reach for them only when you
+ * want a single source's exact option type without the union, or to tree-shake
+ * away the other source. They are not a second, parallel API — same behaviour,
+ * narrower surface.
  */
 
 import { expressNeuron, type CloseableNeuronFn, type ExpressNeuronOptions } from "./neuron-express.js";

@@ -8,13 +8,30 @@
  * serialise cleanly to JSON. A backend is conformant iff it behaves like
  * MemoryRegistryStore (the reference implementation).
  *
+ * NAMING — snake_case is deliberate. NeuronRecord fields (`neuron_id`,
+ * `last_heartbeat`, `registered_at`) intentionally use snake_case rather than
+ * the usual TS camelCase because a record IS the on-the-wire / on-disk shape:
+ * it round-trips verbatim through JSON and across the Python and TS SDKs, which
+ * share one registry schema. Renaming to camelCase here would force a
+ * translation layer at every Synapse and storage boundary and break
+ * cross-language parity. Treat these field names as part of the wire contract,
+ * not as a TS style choice. (See PORTING_STATUS.md if a camelCase view/adapter
+ * is ever added on top.)
+ *
  * (Python additionally ships sqlite/postgres backends; only the in-memory
- * backend is ported here. Implement the RegistryStore interface for others.)
+ * backend is ported here — see PORTING_STATUS.md. Implement the RegistryStore
+ * interface for others.)
  */
 
 export type NeuronStatus = "registered" | "draining" | "deregistered";
 
-/** A live view of one Neuron the namespace has seen. */
+/**
+ * A live view of one Neuron the namespace has seen.
+ *
+ * Fields are snake_case on purpose — this is the serialised wire/registry
+ * shape shared with the Python SDK, not an idiomatic TS object. See the file
+ * header for the rationale.
+ */
 export interface NeuronRecord {
   neuron_id: string;
   capabilities: string[];

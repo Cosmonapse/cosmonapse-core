@@ -5,66 +5,100 @@ Event-driven Agent-to-Agent protocol primitives.
 
 Layers
 ------
-  Neuron        Factory that wraps *anything that interacts with the real
-                world* behind the NeuronFn signature — an LLM/agent (Ollama,
-                HuggingFace TGI), an API (a Flask app or any WSGI callable),
-                or an MCP server (any stdio MCP server). Also the conceptual
-                name for any pure async function used as an agent — zero
-                protocol knowledge.
-  Axon          Agent-side tool. Validates output into a Signal.
-  Dendrite      Synapse-side participant. Synapse required; everything
-                else opt-in (attach Axons to enable TASK routing,
-                register handlers to enable inbound subscriptions,
-                pass a registry_store to enable persistence).
-  Synapse       Synapse. Built and closed by the caller via
-                connect_synapse(url).
+  Neuron        A pure async function - the agent itself, zero protocol
+                knowledge. Optionally constructed via Neuron(source=...)
+                provider factories (Ollama, HuggingFace TGI / vLLM /
+                OpenAI-compat, Flask/WSGI app, MCP server).
+  Axon          Agent-side interface. Declares capabilities and validates
+                the Neuron's raw output into a Signal envelope. The
+                Neuron is unaware of Axon, Dendrite, or Synapse.
+  Dendrite      Synapse-side participant. Owns routing decisions and
+                exposes the aggregate of its Axons' capabilities. Has a
+                ``role`` ("orchestrator" can dispatch; "worker" hosts
+                Axons only). Synapse is the only required constructor
+                argument; everything else is opt-in.
+  Synapse       Message bus adapter (memory / dev / NATS / Kafka).
+                Caller-owned; built and closed externally.
 
 Cortex
 ------
-`Cortex` is now a back-compat alias for `Dendrite`. There is no
-separate orchestrator class — every Dendrite has dispatch_task /
-emit_final / emit_error / on_agent_output / on_clarification /
-on_error / etc. Use Dendrite directly in new code.
+``Cortex`` is a back-compat alias for ``Dendrite``. There is no
+separate orchestrator class - any orchestrator-role Dendrite has the
+full dispatch / emit / handler surface.
 
-Quick start
------------
-    import asyncio
-    from cosmonapse import (
-        Axon, Dendrite, MemoryRegistryStore,
-        connect_synapse,
-    )
+Dispatch shapes (orchestrator-role only)
+----------------------------------------
+* ``dispatch_task(neuron=..., input=...)`` - fire-and-forget addressed
+  TASK; returns the emitted Signal.
+* ``dispatch(neuron|capabilities=..., input=..., scope=...)`` - returns
+  a :class:`Pathway` scoped to the new trace.
+* ``dispatch_and_wait(...)`` - sugar: dispatch, block until first
+  terminal Signal (AGENT_OUTPUT / CLARIFICATION / ERROR / FINAL),
+  close, return the Signal.
+* ``dispatch_and_subscribe(...)`` - sugar: dispatch, return the live
+  Pathway so the caller can attach ``@pw.on(SignalType.X)`` handlers
+  without awaiting.
+* ``dispatch_offer(input=..., capabilities=..., deadline_ms=..., select=...)``
+  - competitive bidding via TASK_OFFER / BID / TASK_AWARDED. Returns a
+  Pathway scoped to the awarded workflow. Selection: ``"first_bid"``,
+  ``"lowest_cost"``, ``"highest_confidence"``.
 
-    async def main():
-        synapse = await connect_synapse("cosmo://127.0.0.1:7070")
-        try:
-            async def my_neuron(input, context):
-                return {"answer": input["q"]}
+Capability-routed dispatch publishes on a separate subject
+(``cosmonapse.<ns>.TASK.routed``) with a queue group keyed on each
+Dendrite's aggregate capabilities - identical-cap-profile Dendrites
+load-balance and the broker delivers each TASK exactly once within
+the group. Addressed TASKs continue to broadcast on
+``cosmonapse.<ns>.TASK``.
 
-            # Worker Dendrite: hosts an Axon
-            worker = Dendrite(synapse=synapse, namespace="demo")
-            worker.attach_axon(Axon(neuron_id="answerer", neuron_fn=my_neuron))
+Cognition surface
+-----------------
+Every cognition signal type (PLAN, THOUGHT_DELTA, TOOL_CALL,
+TOOL_RESULT, MEMORY_APPEND, CRITIQUE, ESCALATION, CONSENSUS,
+CONTEXT_SYNC) has a matching ``emit_*`` method and ``on_*`` decorator
+on Dendrite. Decorators accept optional filter kwargs - ``neuron=``,
+``capability=``, ``trace_id=`` - so a handler can be scoped without
+manual filtering inside the body. ``on_trace(trace_id, *types)``
+narrows a handler to one workflow across whichever signal types are
+listed.
 
-            # Orchestrator Dendrite: drives a workflow
-            orch = Dendrite(synapse=synapse, registry_store=MemoryRegistryStore(),
-                            namespace="demo")
+The role guard sits on ``emit()`` itself, so every cognition emitter
+funnels through it and worker-role Dendrites are blocked from
+emitting orchestration signals (except ``bid()`` which uses the
+private publish path - bidding is how workers participate in
+capability routing).
 
-            @orch.on_agent_output
-            async def done(sig):
-                await orch.emit_final(trace_id=sig.trace_id, parent_id=sig.id,
-                                      result=sig.payload["output"])
+Pathway
+-------
+``dendrite.dispatch(...)`` returns a :class:`Pathway` - a per-trace
+event handle with three consumption shapes on the same primitive:
+``await pw.wait()`` for sequential request/reply, ``@pw.on(...)`` for
+reactive trace-scoped callbacks, and ``async for sig in pw:`` for
+streaming iteration. ``observe_pathway(trace_id)`` opens a Pathway
+in observer role for a trace another peer started.
 
-            async with orch, worker:
-                await orch.dispatch_task(neuron="answerer", input={"q": "hi"})
-                await asyncio.sleep(0.5)
-        finally:
-            await synapse.close()
+``Pathway(scope=...)`` filters which Signal types are delivered:
+``"all"`` (default) sees every PATHWAY_TYPES Signal on the trace;
+``"terminal"`` delivers only FINAL / ERROR / CLARIFICATION - the
+decentralised pattern where intermediate orchestration is handled
+peer-to-peer and the Cortex only wakes for things that demand
+attention. FINAL / ERROR always reach auto-close regardless of
+scope.
 
-    asyncio.run(main())
+Pathways auto-close on FINAL or ERROR, are closed by
+``Dendrite.stop()``, and never alter what crosses the wire. The
+entire surface is opt-in additive sugar over the existing
+``dispatch_task`` / ``on_agent_output`` API.
 """
 
 from cosmonapse.axon import Axon, NeuronFn, ContextFetcher
 from cosmonapse.neuron import Neuron, STANDARD_MCP_SERVERS
-from cosmonapse.dendrite import Dendrite, DendriteProtocolError, Cortex, CortexProtocolError
+from cosmonapse.dendrite import (
+    Dendrite,
+    DendriteProtocolError,
+    Cortex,
+    CortexProtocolError,
+)
+from cosmonapse.pathway import PATHWAY_TYPES, Pathway, PathwayClosedError
 from cosmonapse.storage import (
     NeuronRecord,
     RegistryStore,
@@ -79,6 +113,7 @@ from cosmonapse.envelope import (
     SYNAPSE_TYPES,
     new_event_id,
     new_trace_id,
+    new_engram_id,
     task_signal,
     agent_output_signal,
     clarification_signal,
@@ -91,6 +126,34 @@ from cosmonapse.envelope import (
     task_offer_signal,
     bid_signal,
     critique_signal,
+    discover_signal,
+    plan_signal,
+    thought_delta_signal,
+    tool_call_signal,
+    tool_result_signal,
+    escalation_signal,
+    consensus_signal,
+    context_sync_signal,
+    recall_signal,
+    recalled_signal,
+    imprint_signal,
+    imprinted_signal,
+)
+from cosmonapse.engram import (
+    Engram,
+    EngramBinding,
+    EngramCancelled,
+    EngramClient,
+    EngramError,
+    EngramNotBound,
+    EngramOverloaded,
+    EngramTimeout,
+    Hit,
+    ImprintReceipt,
+    InMemoryEngram,
+    PostgresEngram,
+    RecallResult,
+    SqliteEngram,
 )
 from cosmonapse.synapse import (
     Synapse,
@@ -102,7 +165,7 @@ from cosmonapse.synapse import (
 )
 from cosmonapse._url import synapse_from_url, connect_synapse
 
-__version__ = "0.0.1"
+__version__ = "0.1.0"
 
 __all__ = [
     "Signal",
@@ -123,6 +186,14 @@ __all__ = [
     "task_offer_signal",
     "bid_signal",
     "critique_signal",
+    "discover_signal",
+    "plan_signal",
+    "thought_delta_signal",
+    "tool_call_signal",
+    "tool_result_signal",
+    "escalation_signal",
+    "consensus_signal",
+    "context_sync_signal",
     "Neuron",
     "STANDARD_MCP_SERVERS",
     "Axon",
@@ -132,6 +203,9 @@ __all__ = [
     "DendriteProtocolError",
     "Cortex",
     "CortexProtocolError",
+    "Pathway",
+    "PathwayClosedError",
+    "PATHWAY_TYPES",
     "NeuronRecord",
     "Synapse",
     "MemorySynapse",
@@ -145,4 +219,24 @@ __all__ = [
     "PostgresRegistryStore",
     "synapse_from_url",
     "connect_synapse",
+    # Engram
+    "new_engram_id",
+    "recall_signal",
+    "recalled_signal",
+    "imprint_signal",
+    "imprinted_signal",
+    "Engram",
+    "EngramBinding",
+    "EngramClient",
+    "EngramError",
+    "EngramCancelled",
+    "EngramNotBound",
+    "EngramOverloaded",
+    "EngramTimeout",
+    "Hit",
+    "RecallResult",
+    "ImprintReceipt",
+    "InMemoryEngram",
+    "SqliteEngram",
+    "PostgresEngram",
 ]

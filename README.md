@@ -48,9 +48,9 @@ cosmonapse-core/
 │   ├── python-sdk/      The cosmonapse SDK + bundled `cosmo` CLI (see its README)
 │   └── ts-sdk/          TypeScript SDK
 ├── examples/            Runnable end-to-end examples
-├── spec/                Protocol specification
 ├── SDK_DESIGN.md        Design rationale
 ├── ENVELOPE_SPEC.md     Signal envelope / wire-format spec
+├── ENGRAM_DESIGN.md     Engram (shared memory) design
 └── DECISIONS.md         Architecture decision log
 ```
 

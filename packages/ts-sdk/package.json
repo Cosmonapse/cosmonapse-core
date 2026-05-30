@@ -1,6 +1,6 @@
 {
   "name": "@cosmonapse/sdk",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "Event-driven Agent-to-Agent protocol SDK — TypeScript surface of the Cosmonapse envelope spec",
   "license": "MIT",
   "type": "module",

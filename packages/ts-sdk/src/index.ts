@@ -7,9 +7,11 @@
  *
  * Status: v0.2 — envelope, builders, MemorySynapse, NatsSynapse, the
  * RegistryStore (in-memory) + Dendrite registry mirror, Neuron, Axon and
- * Dendrite are ported and functional. Still to port: the Kafka adapter,
- * sqlite/postgres RegistryStore backends, and provider-backed Neuron
- * factories (see SDK_DESIGN.md).
+ * Dendrite are ported and functional. The remaining parity gaps (Kafka adapter,
+ * sqlite/postgres RegistryStore backends, provider-backed Neuron factories,
+ * DevSynapse, connectSynapse, LifecycleHooks) are tracked — with Python
+ * references and status — in PORTING_STATUS.md, not in scattered source
+ * comments.
  */
 
 export const VERSION = "0.0.1";
@@ -88,6 +90,11 @@ export {
 } from "./dendrite.js";
 
 // --- neuron sources: wrap anything that interacts with the real world ---
+//
+// Prefer the unified `neuron(source, opts)` factory below in application code.
+// The standalone `expressNeuron` / `mcpNeuron` exports are the lower-level
+// primitives it delegates to — use them only when you want one source's exact
+// option type or to tree-shake the other. See neuron-factory.ts for guidance.
 
 export {
   expressNeuron,
@@ -101,4 +108,5 @@ export {
   type McpNeuronOptions,
 } from "./neuron-mcp.js";
 
+/** Recommended entry point for building Neurons (see note above). */
 export { neuron, type NeuronSource, type ExpressSourceOptions } from "./neuron-factory.js";

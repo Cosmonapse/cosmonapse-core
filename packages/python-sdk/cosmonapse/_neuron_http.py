@@ -160,8 +160,10 @@ class _HttpAppNeuron(_BaseNeuron):
 
         resp = client.open(path, **open_kwargs)
 
-        raw = resp.get_data()
-        text = raw.decode(resp.charset or "utf-8", errors="replace") if raw else ""
+        # Werkzeug >= 3 removed Response.charset. get_data(as_text=True) decodes
+        # the body using the response's Content-Type charset (defaulting to
+        # utf-8) and works across Werkzeug 2.x and 3.x.
+        text = resp.get_data(as_text=True)
 
         parsed: Any = None
         ctype = resp.headers.get("Content-Type", "")
