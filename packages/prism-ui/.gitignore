@@ -1,0 +1,8 @@
+node_modules/
+# dist/ is intentionally NOT ignored: CI (or a local build) writes it and the
+# Python wheel bundles it. If you build locally and want to keep the repo
+# clean, rely on CI to produce the committed artifact instead.
+*.local
+.vite/
+.vite-tsbuild/
+*.tsbuildinfo

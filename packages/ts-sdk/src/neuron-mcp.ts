@@ -190,7 +190,7 @@ export function mcpNeuron(opts: McpNeuronOptions): CloseableNeuronFn {
       const res = await c.listTools();
       const names = (res.tools ?? []).map((t) => t.name);
       if (names.length === 1) {
-        tool = names[0];
+        tool = names[0]!;
       } else {
         throw new Error(
           `MCP Neuron could not determine which tool to call. Pass tool=... (server exposes: ${JSON.stringify(names)}).`,
@@ -198,7 +198,7 @@ export function mcpNeuron(opts: McpNeuronOptions): CloseableNeuronFn {
       }
     }
 
-    const res = await c.callTool({ name: tool, arguments: toolArgs });
+    const res = await c.callTool({ name: tool!, arguments: toolArgs });
     const content = res.content ?? [];
     const texts = content.filter((x) => x?.text != null).map((x) => x.text as string);
 
@@ -206,7 +206,7 @@ export function mcpNeuron(opts: McpNeuronOptions): CloseableNeuronFn {
       response: texts.join("\n"),
       result: (res.structuredContent as Json) ?? null,
       is_error: Boolean(res.isError),
-      content: content as Json,
+      content: content as unknown as Json,
       meta: { tool, server: opts.server ?? null, command },
     } as Json;
   }) as CloseableNeuronFn;

@@ -1285,4 +1285,3 @@ def imprinted_signal(
         payload=payload,
         meta=meta or {},
     )
-    )

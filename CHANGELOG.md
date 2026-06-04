@@ -21,7 +21,7 @@ Python are tracked in `packages/ts-sdk/PORTING_STATUS.md`.
   with matching signal builders (`recall_signal`, `recalled_signal`,
   `imprint_signal`, `imprinted_signal`) and `new_engram_id()` ULID helper.
   Errors: `EngramTimeout`, `EngramCancelled`, `EngramNotBound`,
-  `EngramOverloaded`. See `ENGRAM_DESIGN.md`.
+  `EngramOverloaded`. See `design/ENGRAM_DESIGN.md`.
 - **Pathway** — `cosmonapse.pathway` exposes `Pathway` and `PathwayClosedError`.
   `Dendrite.dispatch(...)` and `observe_pathway(trace_id)` return a per-trace
   event handle supporting three consumption shapes on one primitive:
@@ -62,7 +62,7 @@ Python are tracked in `packages/ts-sdk/PORTING_STATUS.md`.
   `[flask]` (Flask/WSGI Neuron factory), alongside the existing `[nats]`.
 - `ContextFetcher` is now exported from the top-level package and `__all__`.
 - Top-level `README.md`, `CONTRIBUTING.md`, `CHANGELOG.md`, `LICENSE`, and
-  `ENGRAM_DESIGN.md`.
+  `design/ENGRAM_DESIGN.md`.
 - A real test suite covering storage backends, the in-memory and dev synapses,
   Dendrite protocol behaviour, the cognition API, event-driven flows, Pathway,
   Engram, and the Neuron factories. Adapter tests that require live

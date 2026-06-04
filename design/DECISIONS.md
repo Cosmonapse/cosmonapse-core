@@ -209,25 +209,39 @@ These three hooks cover all three needs without baking in a particular discovery
 
 ## 16. Version roadmap
 
-**v0.2 (current):** Manual SDK. Developer reads the spec, builds Dendrites and Cortices by hand. Full control, full complexity, appropriate for early adopters.
+**v0.1.0 (current):** First public release. Manual SDK — developer reads the spec
+and builds Dendrites by hand. Ships the Python SDK (reference implementation), a
+preview TypeScript SDK, the `cosmo` CLI, Engram shared memory, Pathways,
+capability-routed dispatch, and competitive bidding. Full control, full
+complexity, appropriate for early adopters. The detailed, milestone-by-milestone
+path from here to **1.0.0** (stabilisation: CI, machine-readable schema, broker
+integration tests, TS parity) lives in [`ROADMAP.md`](./ROADMAP.md).
 
-**v0.3:** Axon as installable MCP server. Agents on EC2 / inside Claude / inside Cursor can be wired in without any Python dependency.
+**Post-1.0 direction (indicative, not committed):**
 
-**v0.4:** Declarative router. Higher-level config compiles to a Cortex. Manual Cortex remains available.
-
-**v0.5:** Router-as-Neuron. A Cosmonapse agent that builds and tunes routers from the Doppler stream. Only possible because the protocol is self-describing.
+- *Axon as installable MCP server.* Agents on EC2 / inside Claude / inside Cursor
+  wired in without any Python dependency.
+- *Declarative router.* Higher-level config compiles to an orchestrator Dendrite.
+  The manual surface remains available.
+- *Router-as-Neuron.* A Cosmonapse agent that builds and tunes routers from the
+  Doppler stream. Only possible because the protocol is self-describing.
 
 ---
 
-## 17. Things deliberately excluded from v0.2
+## 17. Things deliberately excluded from the 0.x line
+
+The TypeScript SDK was previously listed here as excluded ("post Python
+stabilisation"). It now ships as a preview alongside the Python SDK in 0.1.0;
+its remaining parity gaps are tracked in
+[`packages/ts-sdk/PORTING_STATUS.md`](./packages/ts-sdk/PORTING_STATUS.md), not
+here.
 
 | Excluded                          | Reason                                            |
 |---|---|
 | Hosted platform / cloud control plane | Adds operational complexity before the protocol is proven |
 | Reference router implementation   | Would bake in routing assumptions the developer should own |
-| Federation across namespaces      | Post-v0.2                                         |
-| Billing / chargeback beyond cost annotation | Post-v0.2                              |
-| TypeScript SDK                    | Post Python stabilisation                         |
+| Federation across namespaces      | Post-1.0                                          |
+| Billing / chargeback beyond cost annotation | Post-1.0                               |
 | GUI for the Doppler               | Developer's own visualisation — not Cosmonapse's job |
 | `CostStore` / `LatencyStore` / etc. | Developer-specific schemas; the SDK exposes the raw envelope stream and stops there |
 

@@ -24,8 +24,22 @@
 
 import { expressNeuron, type CloseableNeuronFn, type ExpressNeuronOptions } from "./neuron-express.js";
 import { mcpNeuron, type McpNeuronOptions } from "./neuron-mcp.js";
+import {
+  huggingFaceNeuron,
+  ollamaNeuron,
+  type HuggingFaceNeuronOptions,
+  type OllamaNeuronOptions,
+} from "./neuron-http.js";
+import type { NeuronFn } from "./neuron.js";
 
-export type NeuronSource = "express" | "http" | "api" | "mcp";
+export type NeuronSource =
+  | "express"
+  | "http"
+  | "api"
+  | "mcp"
+  | "ollama"
+  | "huggingface"
+  | "hf";
 
 export interface ExpressSourceOptions extends ExpressNeuronOptions {
   /** The Express app / Node request listener to serve in-process. */
@@ -34,7 +48,16 @@ export interface ExpressSourceOptions extends ExpressNeuronOptions {
 
 export function neuron(source: "express" | "http" | "api", opts: ExpressSourceOptions): CloseableNeuronFn;
 export function neuron(source: "mcp", opts: McpNeuronOptions): CloseableNeuronFn;
-export function neuron(source: NeuronSource, opts: ExpressSourceOptions | McpNeuronOptions): CloseableNeuronFn {
+export function neuron(source: "ollama", opts: OllamaNeuronOptions): NeuronFn;
+export function neuron(source: "huggingface" | "hf", opts: HuggingFaceNeuronOptions): NeuronFn;
+export function neuron(
+  source: NeuronSource,
+  opts:
+    | ExpressSourceOptions
+    | McpNeuronOptions
+    | OllamaNeuronOptions
+    | HuggingFaceNeuronOptions,
+): CloseableNeuronFn | NeuronFn {
   switch (source) {
     case "express":
     case "http":
@@ -45,8 +68,13 @@ export function neuron(source: NeuronSource, opts: ExpressSourceOptions | McpNeu
     }
     case "mcp":
       return mcpNeuron(opts as McpNeuronOptions);
+    case "ollama":
+      return ollamaNeuron(opts as OllamaNeuronOptions);
+    case "huggingface":
+    case "hf":
+      return huggingFaceNeuron(opts as HuggingFaceNeuronOptions);
     default: {
-      const available = `"express", "http", "api", "mcp"`;
+      const available = `"express", "http", "api", "mcp", "ollama", "huggingface", "hf"`;
       throw new Error(`Unknown neuron source '${String(source)}'. Available: ${available}`);
     }
   }

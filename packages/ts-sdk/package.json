@@ -28,7 +28,7 @@
     "node": ">=18"
   },
   "scripts": {
-    "build": "tsup src/index.ts --format esm,cjs --dts --clean --external @modelcontextprotocol/sdk",
+    "build": "tsup src/index.ts --format esm,cjs --dts --clean --external @modelcontextprotocol/sdk --external nats --external kafkajs --external better-sqlite3 --external pg",
     "typecheck": "tsc --noEmit",
     "test": "node --test"
   },
@@ -36,8 +36,11 @@
     "ulid": "^2.3.0"
   },
   "optionalDependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "better-sqlite3": "^11.0.0",
+    "kafkajs": "^2.2.4",
     "nats": "^2.28.0",
-    "@modelcontextprotocol/sdk": "^1.0.0"
+    "pg": "^8.11.0"
   },
   "peerDependenciesMeta": {
     "nats": {
@@ -45,12 +48,21 @@
     },
     "@modelcontextprotocol/sdk": {
       "optional": true
+    },
+    "kafkajs": {
+      "optional": true
+    },
+    "better-sqlite3": {
+      "optional": true
+    },
+    "pg": {
+      "optional": true
     }
   },
   "devDependencies": {
+    "@types/node": "^20.0.0",
     "tsup": "^8.0.0",
-    "typescript": "^5.4.0",
-    "@types/node": "^20.0.0"
+    "typescript": "^5.4.0"
   },
   "publishConfig": {
     "access": "public"

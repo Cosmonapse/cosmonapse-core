@@ -48,10 +48,12 @@ cosmonapse-core/
 │   ├── python-sdk/      The cosmonapse SDK + bundled `cosmo` CLI (see its README)
 │   └── ts-sdk/          TypeScript SDK
 ├── examples/            Runnable end-to-end examples
-├── SDK_DESIGN.md        Design rationale
-├── ENVELOPE_SPEC.md     Signal envelope / wire-format spec
-├── ENGRAM_DESIGN.md     Engram (shared memory) design
-└── DECISIONS.md         Architecture decision log
+└── design/              Design docs & specs
+    ├── SDK_DESIGN.md        Design rationale
+    ├── ENVELOPE_SPEC.md     Signal envelope / wire-format spec
+    ├── ENGRAM_DESIGN.md     Engram (shared memory) design
+    ├── ROADMAP.md           Roadmap & milestones
+    └── DECISIONS.md         Architecture decision log
 ```
 
 ## Install (Python)
@@ -68,8 +70,8 @@ and CLI documentation.
 ## Documentation
 
 - [Python SDK README](packages/python-sdk/README.md) — install, quick start, API, CLI
-- [SDK_DESIGN.md](SDK_DESIGN.md) — design rationale
-- [ENVELOPE_SPEC.md](ENVELOPE_SPEC.md) — the Signal wire format
+- [SDK_DESIGN.md](design/SDK_DESIGN.md) — design rationale
+- [ENVELOPE_SPEC.md](design/ENVELOPE_SPEC.md) — the Signal wire format
 - [CONTRIBUTING.md](CONTRIBUTING.md) — how to set up and contribute
 - [CHANGELOG.md](CHANGELOG.md) — release notes
 

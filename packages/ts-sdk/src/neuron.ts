@@ -6,10 +6,10 @@
  * Any existing LLM-driven agent can be wrapped to satisfy this signature and
  * become a protocol participant with no modification.
  *
- * (The Python SDK additionally ships provider-backed Neuron factories for
- * Ollama / HuggingFace over httpx. Those HTTP wrappers are tracked in
- * PORTING_STATUS.md and are not part of this TS port yet — for now, bring your
- * own async function.)
+ * Provider-backed Neuron factories (Ollama / HuggingFace over `fetch`) are
+ * available via `ollamaNeuron` / `huggingFaceNeuron` (see neuron-http.ts) or the
+ * unified `neuron("ollama" | "huggingface", …)` factory — or bring your own
+ * async function that satisfies this signature.
  */
 
 import type { Json } from "./envelope.js";

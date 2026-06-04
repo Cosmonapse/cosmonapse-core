@@ -12,9 +12,10 @@
  *       clarification marker -> CLARIFICATION
  *       thrown error         -> ERROR
  *
- * (The Python Axon also mixes in LifecycleHooks for on_connect / on_schedule /
- * on_refresh. Those scheduling hooks are tracked in PORTING_STATUS.md and are
- * not part of this port yet.)
+ * Like the Python Axon, this one carries LifecycleHooks (onConnect /
+ * onRefresh / onSchedule). The hosting Dendrite drives them: it fires the
+ * connect hooks and launches the schedule loops once the Axon is attached and
+ * registered, and stops them when the Dendrite stops.
  */
 
 import {
@@ -23,6 +24,12 @@ import {
   errorSignal,
 } from "./signals.js";
 import { isClarification, type ContextFetcher, type NeuronFn } from "./neuron.js";
+import {
+  LifecycleHooks,
+  type ConnectHook,
+  type RefreshHook,
+  type ScheduleHook,
+} from "./hooks.js";
 import type { Json, Signal } from "./envelope.js";
 // Type-only import: erased at runtime under verbatimModuleSyntax, so this does
 // NOT introduce a runtime import cycle with dendrite.ts. It restores type
@@ -58,12 +65,28 @@ export class Axon {
   private readonly contextFetcher: ContextFetcher;
   private dendrite: Dendrite | null = null;
 
+  /** @internal — lifecycle hooks, driven by the hosting Dendrite. */
+  readonly hooks: LifecycleHooks<Axon> = new LifecycleHooks<Axon>(this);
+
   constructor(opts: AxonOptions) {
     this.neuronId = opts.neuronId;
     this.capabilities = opts.capabilities ?? [];
     this.version = opts.version;
     this.fn = opts.neuronFn;
     this.contextFetcher = opts.contextFetcher ?? noopContextFetcher;
+  }
+
+  /** Register a fire-once handler called after this Axon connects (attaches + registers). */
+  onConnect(fn: ConnectHook<Axon>): ConnectHook<Axon> {
+    return this.hooks.onConnect(fn);
+  }
+  /** Register a handler called whenever this Axon's observable state refreshes. */
+  onRefresh(fn: RefreshHook<Axon>): RefreshHook<Axon> {
+    return this.hooks.onRefresh(fn);
+  }
+  /** Register a periodic handler that runs every `everyMs` while the host runs. */
+  onSchedule(everyMs: number, fn: ScheduleHook<Axon>): ScheduleHook<Axon> {
+    return this.hooks.onSchedule(everyMs, fn);
   }
 
   /**

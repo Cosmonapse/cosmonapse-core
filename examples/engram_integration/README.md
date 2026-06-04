@@ -64,4 +64,4 @@ the binding via `EngramBinding(default_recall_mode="merge")`.
 
 - [`building_a_neuron/`](../building_a_neuron/) — the same shape without the Engram.
 - [`parallel_build/`](../parallel_build/) — multiple Neurons sharing an Engram.
-- `ENGRAM_DESIGN.md` (repo root) — full design rationale and signal semantics.
+- `design/ENGRAM_DESIGN.md` (repo root) — full design rationale and signal semantics.

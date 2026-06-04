@@ -143,11 +143,11 @@ export function expressNeuron(
     }
 
     const noBody = method === "GET" || method === "HEAD";
-    const resp = await fetch(url, {
-      method,
-      headers,
-      body: noBody ? undefined : fetchBody,
-    });
+    // Under exactOptionalPropertyTypes, `body` must be omitted entirely rather
+    // than set to `undefined`, so build the init conditionally.
+    const init: RequestInit = { method, headers };
+    if (!noBody && fetchBody !== undefined) init.body = fetchBody;
+    const resp = await fetch(url, init);
 
     const text = await resp.text();
     const ctype = resp.headers.get("content-type") ?? "";

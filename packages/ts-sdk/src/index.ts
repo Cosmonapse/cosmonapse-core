@@ -5,16 +5,14 @@
  * re-exports the envelope types/codec and the typed signal builders. It is the
  * 1:1 counterpart to the Python `cosmonapse` package's envelope module.
  *
- * Status: v0.2 — envelope, builders, MemorySynapse, NatsSynapse, the
- * RegistryStore (in-memory) + Dendrite registry mirror, Neuron, Axon and
- * Dendrite are ported and functional. The remaining parity gaps (Kafka adapter,
- * sqlite/postgres RegistryStore backends, provider-backed Neuron factories,
- * DevSynapse, connectSynapse, LifecycleHooks) are tracked — with Python
- * references and status — in PORTING_STATUS.md, not in scattered source
- * comments.
+ * Status: v0.3 — envelope, builders, MemorySynapse, NatsSynapse, DevSynapse,
+ * KafkaSynapse, the RegistryStore (in-memory + sqlite + postgres) + Dendrite
+ * registry mirror, LifecycleHooks, connectSynapse, Neuron (Express / MCP /
+ * Ollama / HuggingFace), Axon and Dendrite are ported and functional. Any
+ * remaining intentional differences are documented in PORTING_STATUS.md.
  */
 
-export const VERSION = "0.0.1";
+export const VERSION = "0.1.0";
 
 export {
   SignalType,
@@ -61,6 +59,17 @@ export {
 export { NatsSynapse, type NatsSynapseOptions } from "./synapse-nats.js";
 
 export {
+  DevSynapse,
+  DevSynapseServer,
+  type DevSynapseOptions,
+  type DevSynapseServerOptions,
+} from "./synapse-dev.js";
+
+export { KafkaSynapse, type KafkaSynapseOptions } from "./synapse-kafka.js";
+
+export { synapseFromUrl, connectSynapse } from "./url.js";
+
+export {
   MemoryRegistryStore,
   neuronRecord,
   type RegistryStore,
@@ -69,6 +78,17 @@ export {
   type NeuronStatus,
   type ListOptions,
 } from "./storage.js";
+
+export { SqliteRegistryStore } from "./storage-sqlite.js";
+export { PostgresRegistryStore, type PostgresRegistryStoreOptions } from "./storage-postgres.js";
+
+export {
+  LifecycleHooks,
+  type RefreshEvent,
+  type ConnectHook,
+  type RefreshHook,
+  type ScheduleHook,
+} from "./hooks.js";
 
 export {
   clarify,
@@ -107,6 +127,13 @@ export {
   standardMcpServers,
   type McpNeuronOptions,
 } from "./neuron-mcp.js";
+
+export {
+  ollamaNeuron,
+  huggingFaceNeuron,
+  type OllamaNeuronOptions,
+  type HuggingFaceNeuronOptions,
+} from "./neuron-http.js";
 
 /** Recommended entry point for building Neurons (see note above). */
 export { neuron, type NeuronSource, type ExpressSourceOptions } from "./neuron-factory.js";

@@ -21,11 +21,20 @@
  * Symbol.asyncDispose implementation calls stop() automatically when the scope
  * exits. This is the TS counterpart to Python's `async with dendrite:`.
  *
- * (Still-to-port parity items — the LifecycleHooks scheduler (on_connect /
- * on_refresh / on_schedule) and other gaps — are tracked in PORTING_STATUS.md.)
+ * LifecycleHooks (onConnect / onRefresh / onSchedule) are wired in: connect
+ * hooks fire and schedule loops launch at the end of start(); refresh hooks
+ * fire on every heartbeat tick and whenever a REGISTER / DEREGISTER / HEARTBEAT
+ * updates the registry; all loops stop in stop(). Attached Axons' hooks are
+ * driven alongside the Dendrite's own.
  */
 
 import { Axon, ATTACH } from "./axon.js";
+import {
+  LifecycleHooks,
+  type ConnectHook,
+  type RefreshHook,
+  type ScheduleHook,
+} from "./hooks.js";
 import {
   AXON_TYPES,
   SignalType,
@@ -106,6 +115,9 @@ export class Dendrite {
   private heartbeatStopped = true;
   private running = false;
 
+  /** @internal — lifecycle hooks for this Dendrite. */
+  readonly hooks: LifecycleHooks<Dendrite> = new LifecycleHooks<Dendrite>(this);
+
   constructor(opts: DendriteOptions) {
     if (!opts.synapse) throw new TypeError("Dendrite requires a synapse");
     this.synapse = opts.synapse;
@@ -170,6 +182,27 @@ export class Dendrite {
     return this.on(SignalType.HEARTBEAT, fn);
   }
 
+  // -- lifecycle hooks ----------------------------------------------
+
+  /** Register a fire-once handler called after start() completes. */
+  onConnect(fn: ConnectHook<Dendrite>): ConnectHook<Dendrite> {
+    return this.hooks.onConnect(fn);
+  }
+  /** Register a handler called whenever this Dendrite's state refreshes. */
+  onRefresh(fn: RefreshHook<Dendrite>): RefreshHook<Dendrite> {
+    return this.hooks.onRefresh(fn);
+  }
+  /** Register a periodic handler that runs every `everyMs` until stop(). */
+  onSchedule(everyMs: number, fn: ScheduleHook<Dendrite>): ScheduleHook<Dendrite> {
+    return this.hooks.onSchedule(everyMs, fn);
+  }
+  /** Manually fire a refresh event (reason defaults to "manual"). */
+  async refresh(
+    opts: { reason?: string; neuronId?: string | null; extra?: Record<string, unknown> } = {},
+  ): Promise<void> {
+    await this.hooks.refresh(opts);
+  }
+
   // -- lifecycle -----------------------------------------------------
 
   async start(): Promise<void> {
@@ -205,6 +238,15 @@ export class Dendrite {
 
     if (this._axons.size > 0 && this.heartbeatMs > 0) {
       this.startHeartbeatLoop();
+    }
+
+    // Lifecycle hooks: fire connect handlers and launch schedule loops, for the
+    // Dendrite and every attached Axon, now that everything is wired.
+    await this.hooks._fireConnect();
+    this.hooks._launchSchedule();
+    for (const axon of this._axons.values()) {
+      await axon.hooks._fireConnect();
+      axon.hooks._launchSchedule();
     }
   }
 
@@ -248,6 +290,10 @@ export class Dendrite {
   async stop(reason?: string): Promise<void> {
     if (!this.running) return;
     this.running = false;
+
+    // Stop all lifecycle-hook schedule loops (Dendrite + Axons).
+    this.hooks._stopHooks();
+    for (const axon of this._axons.values()) axon.hooks._stopHooks();
 
     // Cancel the heartbeat loop: flag first so an in-flight tick won't re-arm,
     // then clear any pending timer.
@@ -486,6 +532,8 @@ export class Dendrite {
           /* best-effort */
         }
       }
+      await this.hooks._fireRefresh({ reason: "heartbeat", neuronId: axon.neuronId, extra: {} });
+      await axon.hooks._fireRefresh({ reason: "heartbeat", neuronId: axon.neuronId, extra: {} });
     }
   }
 
@@ -524,6 +572,7 @@ export class Dendrite {
     if (this.registryStore === null) return;
     const neuronId = signal.neuron;
     if (!neuronId) return;
+    let reason: string | null = null;
     if (signal.type === SignalType.REGISTER) {
       await this.registryStore.upsert(
         neuronRecord({
@@ -534,12 +583,18 @@ export class Dendrite {
           last_heartbeat: signal.ts,
         }),
       );
+      reason = "register";
     } else if (signal.type === SignalType.DEREGISTER) {
       await this.registryStore.markDeregistered(neuronId);
+      reason = "deregister";
     } else if (signal.type === SignalType.HEARTBEAT) {
       const status = signal.payload["status"] as NeuronStatus | undefined;
       if (status) await this.registryStore.touchHeartbeat(neuronId, signal.ts, status);
       else await this.registryStore.touchHeartbeat(neuronId, signal.ts);
+      reason = "heartbeat";
+    }
+    if (reason !== null) {
+      await this.hooks._fireRefresh({ reason, neuronId, extra: {} });
     }
   }
 }

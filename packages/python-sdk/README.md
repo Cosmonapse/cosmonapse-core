@@ -199,4 +199,4 @@ cosmo validate --url=cosmo://127.0.0.1:7070 --namespace=dev
 | **Signal** | An envelope crossing the Synapse |
 | **RegistryStore** | Live view of Neurons seen on a namespace |
 
-See `SDK_DESIGN.md` for the full design document and `ENVELOPE_SPEC.md` for the wire protocol.
+See `design/SDK_DESIGN.md` for the full design document and `design/ENVELOPE_SPEC.md` for the wire protocol.

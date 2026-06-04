@@ -5,22 +5,25 @@ Prism — the browser visualization for the Doppler.
 
 Architecture
 ------------
-Two-stage flow served by an aiohttp app on a single port (default 7071):
+An aiohttp app on a single port (default 7071) serves the Prism single-page
+app and a WebSocket bridge:
 
-    GET  /          → hero page with one form (synapse URL + namespace)
-    GET  /view      → animated visualization page
-    WS   /ws        → per-connection Synapse subscriber; broadcasts every
-                      Signal on the wildcard subject as one JSON line
+    GET  /          -> the Prism SPA (index.html)
+    GET  /view      -> back-compat redirect to /?<query> (old two-page flow)
+    GET  /assets/*  -> the SPA's static JS/CSS bundle
+    WS   /ws        -> per-connection Synapse subscriber; broadcasts every
+                       Signal on the wildcard subject as one JSON line
 
 Every WebSocket connection opens its own Synapse client so the user can switch
-URLs/namespaces from the hero form without restarting the server. The client
+URLs/namespaces from the SPA's form without restarting the server. The client
 is closed on WS disconnect.
 
-The HTML/JS templates live in sibling modules so this file stays focused on
-the server wiring:
-
-    _prism_hero    HERO_HTML  — landing form
-    _prism_view    VIEW_HTML  — animated React visualization
+The frontend is a Vite + React + TypeScript app that lives in
+``packages/prism-ui`` and is built to static assets bundled into this wheel at
+``cosmo/commands/prism_dist`` (see that package's README). This module no longer
+templates HTML — it serves the prebuilt SPA and the ``/ws`` bridge. The bridge
+streams one JSON Signal envelope per message; that WS contract is the entire API
+between this server and the SPA.
 """
 
 from __future__ import annotations
@@ -29,19 +32,55 @@ import asyncio
 import json
 import signal as _signal
 import webbrowser
+from importlib.resources import files as _pkg_files
+from pathlib import Path
 
 import click
 
 from cosmonapse import Signal, SignalType, discover_signal
 
 from cosmo.commands._shared import _HAS_RICH
-from cosmo.commands._prism_hero import HERO_HTML
-from cosmo.commands._prism_view import VIEW_HTML
 
 if _HAS_RICH:
     from rich.console import Console
 
     console = Console()
+
+
+# ---------------------------------------------------------------------------
+# Bundled SPA build location
+# ---------------------------------------------------------------------------
+
+def _prism_dist_dir() -> Path | None:
+    """Locate the bundled Prism SPA build, or None if it was never built.
+
+    The static assets are produced by ``npm run build:into-wheel`` in
+    packages/prism-ui and shipped inside this package as ``prism_dist/``.
+    Released wheels always contain it; a source checkout only has it after the
+    UI has been built.
+    """
+    try:
+        root = Path(str(_pkg_files("cosmo.commands"))) / "prism_dist"
+    except (ModuleNotFoundError, TypeError):
+        return None
+    return root if (root / "index.html").is_file() else None
+
+
+_MISSING_BUILD_HTML = """<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>Prism - not built</title>
+<style>body{background:#07080c;color:#e6e7ec;font-family:ui-monospace,Menlo,monospace;
+display:flex;align-items:center;justify-content:center;height:100vh;margin:0}
+.box{max-width:560px;padding:32px;border:1px solid rgba(255,255,255,.12);border-radius:14px}
+code{color:#22d3ee} h1{font-size:18px;margin:0 0 12px}</style></head>
+<body><div class="box">
+<h1>Prism UI is not bundled in this install</h1>
+<p>The static frontend was not found at <code>cosmo/commands/prism_dist</code>.</p>
+<p>Build it from the repo with:</p>
+<p><code>cd packages/prism-ui &amp;&amp; npm install &amp;&amp; npm run build:into-wheel</code></p>
+<p>then reinstall the SDK (<code>pip install -e .</code>). Released wheels ship
+the prebuilt UI, so this only appears for source checkouts that have not built
+the UI yet.</p>
+</div></body></html>"""
 
 
 # ---------------------------------------------------------------------------
@@ -91,7 +130,7 @@ async def run_prism(
     initial_namespace: str | None,
     port: int,
 ) -> None:
-    """Start the aiohttp server that hosts Prism (hero + visualization)."""
+    """Start the aiohttp server that hosts Prism (SPA + WS bridge)."""
     try:
         from aiohttp import web
     except ImportError:
@@ -102,23 +141,33 @@ async def run_prism(
         )
         raise SystemExit(1)
 
-    # Pre-render hero with any CLI-supplied URL/namespace so the form is
-    # pre-filled (the user can still edit before submitting).
-    initial_url_safe = (initial_base_url or "").replace('"', "&quot;")
-    initial_ns_safe = (initial_namespace or "").replace('"', "&quot;")
-    hero_page = (
-        HERO_HTML
-        .replace("__INITIAL_URL__", initial_url_safe)
-        .replace("__INITIAL_NS__", initial_ns_safe)
-    )
+    dist = _prism_dist_dir()
+
+    # If the CLI was given a synapse URL, send the browser straight to the
+    # visualization by pre-seeding the query string the SPA reads on load.
+    initial_qs = ""
+    if initial_base_url:
+        from urllib.parse import urlencode
+        initial_qs = "?" + urlencode({
+            "url": initial_base_url,
+            "namespace": initial_namespace or "dev",
+        })
 
     async def handle_index(request):
-        return web.Response(text=hero_page, content_type="text/html")
+        if dist is None:
+            return web.Response(text=_MISSING_BUILD_HTML, content_type="text/html")
+        # Honour a CLI-seeded target on the bare path only (no query yet) so a
+        # reload or manual edit of the query string still works.
+        if initial_qs and not request.query_string:
+            raise web.HTTPFound("/" + initial_qs)
+        return web.FileResponse(dist / "index.html")
 
     async def handle_view(request):
-        ns = request.query.get("namespace") or "dev"
-        page = VIEW_HTML.replace("__NAMESPACE__", ns)
-        return web.Response(text=page, content_type="text/html")
+        # Back-compat with the old two-page flow (/view?url=&namespace=): the
+        # SPA now lives at the root and reads the same query params, so just
+        # redirect preserving the query string.
+        qs = request.query_string
+        raise web.HTTPFound("/" + (("?" + qs) if qs else ""))
 
     async def handle_ws(request):
         """
@@ -187,7 +236,7 @@ async def run_prism(
             return ws
 
         # Keep the connection open until the client disconnects. We don't
-        # read meaningful messages; the WS is one-way (server → browser).
+        # read meaningful messages; the WS is one-way (server -> browser).
         try:
             async for _ in ws:
                 pass
@@ -202,6 +251,8 @@ async def run_prism(
     app.router.add_get("/", handle_index)
     app.router.add_get("/view", handle_view)
     app.router.add_get("/ws", handle_ws)
+    if dist is not None:
+        app.router.add_static("/assets", str(dist / "assets"))
 
     runner = web.AppRunner(app)
     await runner.setup()
@@ -211,24 +262,24 @@ async def run_prism(
     ui_url = f"http://127.0.0.1:{port}"
     if _HAS_RICH:
         console.print()
-        console.print(f"  [bold cyan]cosmo doppler[/bold cyan]  [dim]--prism[/dim]")
+        console.print("  [bold cyan]cosmo doppler[/bold cyan]  [dim]--prism[/dim]")
         if initial_base_url:
             console.print(
                 f"  Synapse:   [cyan]{initial_base_url}/{initial_namespace or 'dev'}[/cyan]"
             )
         else:
-            console.print(f"  Synapse:   [dim](enter URL in the form)[/dim]")
+            console.print("  Synapse:   [dim](enter URL in the form)[/dim]")
         console.print(f"  Prism:     [underline cyan]{ui_url}[/underline cyan]")
         console.print()
         console.print("  [dim]Ctrl-C to stop[/dim]")
-        console.print("  " + "─" * 60)
+        console.print("  " + "-" * 60)
         console.print()
     else:
-        print(f"\n  cosmo doppler --prism")
+        print("\n  cosmo doppler --prism")
         if initial_base_url:
             print(f"  Synapse: {initial_base_url}/{initial_namespace or 'dev'}")
         else:
-            print(f"  Synapse: (enter URL in the form)")
+            print("  Synapse: (enter URL in the form)")
         print(f"  Prism:   {ui_url}")
         print("  Ctrl-C to stop\n")
 
