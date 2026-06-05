@@ -727,18 +727,6 @@ _IMPRINT_OPS: frozenset[str] = frozenset({
 })
 
 
-_RECALL_MODES: frozenset[str] = frozenset({"first", "merge", "all"})
-_IMPRINT_OPS: frozenset[str] = frozenset({
-    "add", "append", "merge", "upsert", "delete",
-})
-
-
-_RECALL_MODES: frozenset[str] = frozenset({"first", "merge", "all"})
-_IMPRINT_OPS: frozenset[str] = frozenset({
-    "add", "append", "merge", "upsert", "delete",
-})
-
-
 def recall_signal(
     *,
     trace_id: str,

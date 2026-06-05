@@ -97,7 +97,7 @@ class RecallResult:
     truncated: bool = False
     took_ms: int | None = None
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[Hit]:
         return iter(self.hits)
 
     def __len__(self) -> int:

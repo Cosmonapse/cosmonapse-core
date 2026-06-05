@@ -267,7 +267,7 @@ class InMemoryEngram(Engram):
                 version = new.version
 
             elif op == "delete":
-                target_id: str | None = None
+                target_id = None
                 if entry.get("id"):
                     target_id = entry["id"]
                 elif merge_key:

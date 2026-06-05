@@ -119,7 +119,7 @@ class LifecycleHooks:
         self._refresh_hooks.append(fn)
         return fn
 
-    def on_schedule(self, *, every_s: float):
+    def on_schedule(self, *, every_s: float) -> Any:
         """
         Register a periodic handler. Background task runs every
         `every_s` seconds for the lifetime of the component.

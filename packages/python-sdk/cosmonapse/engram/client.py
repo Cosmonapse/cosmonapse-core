@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import cast, TYPE_CHECKING, Any
 
 from cosmonapse.engram.base import (
     EngramCancelled,
@@ -53,7 +53,7 @@ logger = logging.getLogger(__name__)
 class _PendingRecall:
     __slots__ = ("future", "mode", "deadline_handle", "hits_so_far", "engrams")
 
-    def __init__(self, future: asyncio.Future, mode: str) -> None:
+    def __init__(self, future: asyncio.Future[Any], mode: str) -> None:
         self.future = future
         self.mode = mode
         self.deadline_handle: asyncio.TimerHandle | None = None
@@ -64,7 +64,7 @@ class _PendingRecall:
 class _PendingImprint:
     __slots__ = ("future", "deadline_handle")
 
-    def __init__(self, future: asyncio.Future) -> None:
+    def __init__(self, future: asyncio.Future[Any]) -> None:
         self.future = future
         self.deadline_handle: asyncio.TimerHandle | None = None
 
@@ -132,7 +132,7 @@ class EngramClient:
         )
 
         loop = asyncio.get_running_loop()
-        fut: asyncio.Future = loop.create_future()
+        fut: asyncio.Future[Any] = loop.create_future()
         pending = _PendingRecall(fut, mode=recall_mode)
         self._pending_recalls[sig.id] = pending
         self._by_trace.setdefault(trace_id, set()).add(sig.id)
@@ -201,7 +201,7 @@ class EngramClient:
             return None
 
         loop = asyncio.get_running_loop()
-        fut: asyncio.Future = loop.create_future()
+        fut: asyncio.Future[Any] = loop.create_future()
         pending = _PendingImprint(fut)
         self._pending_imprints[sig.id] = pending
         self._by_trace.setdefault(trace_id, set()).add(sig.id)
@@ -263,11 +263,11 @@ class EngramClient:
                 if engram_id:
                     pending.engrams.append(engram_id)
         elif sig.type is SignalType.IMPRINTED:
-            pending = self._pending_imprints.get(pid)
-            if pending is None:
+            pending_imp = self._pending_imprints.get(pid)
+            if pending_imp is None:
                 return
-            if not pending.future.done():
-                pending.future.set_result(
+            if not pending_imp.future.done():
+                pending_imp.future.set_result(
                     ImprintReceipt(
                         engram_id=sig.payload.get("engram_id") or "",
                         op=sig.payload.get("op") or "",
@@ -310,10 +310,10 @@ class EngramClient:
 
     def _on_recall_deadline(self, event_id: str) -> None:
         pending = self._pending_recalls.get(event_id)
-        if pending is None or pending.future.done():
+        if pending is None or pending_imp.future.done():
             return
-        if pending.mode == "first":
-            pending.future.set_exception(EngramTimeout(
+        if pending_imp.mode == "first":
+            pending_imp.future.set_exception(EngramTimeout(
                 f"RECALL {event_id} elapsed deadline without any responder"
             ))
         else:
@@ -351,7 +351,7 @@ def _hits_from_payload(raw_hits: list[dict[str, Any]]) -> list[Hit]:
             continue
         out.append(Hit(
             id=str(h.get("id", "")),
-            entry=h.get("entry") if isinstance(h.get("entry"), dict) else {"value": h.get("entry")},
+            entry=cast(dict[str, Any], h.get("entry") if isinstance(h.get("entry"), dict) else {"value": h.get("entry")}),
             score=float(h.get("score", 1.0)),
         ))
     return out

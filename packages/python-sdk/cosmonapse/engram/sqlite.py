@@ -62,7 +62,7 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _row_to_entry_dict(row: tuple) -> dict[str, Any]:
+def _row_to_entry_dict(row: tuple[Any, ...]) -> dict[str, Any]:
     (eid, kind, merge_key, content, tags, meta, version,
      created_at, updated_at, _deleted_at) = row
     out: dict[str, Any] = {
@@ -115,7 +115,7 @@ class SqliteEngram(Engram):
         self._conn: sqlite3.Connection | None = None
         self._lock = asyncio.Lock()
 
-    async def _run(self, fn, *args):
+    async def _run(self, fn: Any, *args: Any) -> Any:
         return await asyncio.get_running_loop().run_in_executor(None, fn, *args)
 
     # ------------------------------------------------------------------
@@ -155,6 +155,7 @@ class SqliteEngram(Engram):
         min_confidence: float | None = None,
     ) -> list[Hit]:
         assert self._conn is not None, "SqliteEngram.connect() not called"
+        conn = self._conn
 
         query = query or {}
         filters = filters or {}
@@ -222,6 +223,7 @@ class SqliteEngram(Engram):
         imprint_id: str | None = None,
     ) -> ImprintReceipt:
         assert self._conn is not None, "SqliteEngram.connect() not called"
+        conn = self._conn
         t0 = time.monotonic()
 
         async with self._lock:

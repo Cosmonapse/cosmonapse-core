@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, Any
 from cosmonapse.storage.base import NeuronRecord, RegistryStore
 
 if TYPE_CHECKING:
-    import asyncpg  # noqa: F401
+    import asyncpg  # noqa: F401  # type: ignore[import-untyped]
 
 logger = logging.getLogger(__name__)
 
@@ -85,7 +85,7 @@ class PostgresRegistryStore(RegistryStore):
         if self._pool is not None:
             return
         try:
-            import asyncpg
+            import asyncpg  # type: ignore[import-untyped]
         except ImportError as exc:
             raise ImportError(
                 "PostgresRegistryStore requires 'asyncpg'. "

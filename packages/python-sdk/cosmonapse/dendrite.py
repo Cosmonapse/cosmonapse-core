@@ -386,44 +386,44 @@ class Dendrite(LifecycleHooks):
     def _decorator_or_call(
         fn: SignalHandler | None,
         decorator: Callable[[SignalHandler], SignalHandler],
-    ):
+    ) -> Any:
         if fn is None:
             return decorator
         return decorator(fn)
 
     # -- Lifecycle decorators --------------------------------------------
 
-    def on_agent_output(self, fn=None, *, neuron=None, capability=None, trace_id=None):
+    def on_agent_output(self, fn: SignalHandler | None = None, *, neuron=None, capability=None, trace_id=None) -> Any:
         return self._decorator_or_call(fn, self._on(
             SignalType.AGENT_OUTPUT,
             neuron=neuron, capability=capability, trace_id=trace_id,
         ))
 
-    def on_clarification(self, fn=None, *, neuron=None, capability=None, trace_id=None):
+    def on_clarification(self, fn: SignalHandler | None = None, *, neuron=None, capability=None, trace_id=None) -> Any:
         return self._decorator_or_call(fn, self._on(
             SignalType.CLARIFICATION,
             neuron=neuron, capability=capability, trace_id=trace_id,
         ))
 
-    def on_error_signal(self, fn=None, *, neuron=None, capability=None, trace_id=None):
+    def on_error_signal(self, fn: SignalHandler | None = None, *, neuron=None, capability=None, trace_id=None) -> Any:
         return self._decorator_or_call(fn, self._on(
             SignalType.ERROR,
             neuron=neuron, capability=capability, trace_id=trace_id,
         ))
 
-    def on_register_signal(self, fn=None, *, neuron=None, capability=None, trace_id=None):
+    def on_register_signal(self, fn: SignalHandler | None = None, *, neuron=None, capability=None, trace_id=None) -> Any:
         return self._decorator_or_call(fn, self._on(
             SignalType.REGISTER,
             neuron=neuron, capability=capability, trace_id=trace_id,
         ))
 
-    def on_deregister_signal(self, fn=None, *, neuron=None, capability=None, trace_id=None):
+    def on_deregister_signal(self, fn: SignalHandler | None = None, *, neuron=None, capability=None, trace_id=None) -> Any:
         return self._decorator_or_call(fn, self._on(
             SignalType.DEREGISTER,
             neuron=neuron, capability=capability, trace_id=trace_id,
         ))
 
-    def on_heartbeat_signal(self, fn=None, *, neuron=None, capability=None, trace_id=None):
+    def on_heartbeat_signal(self, fn: SignalHandler | None = None, *, neuron=None, capability=None, trace_id=None) -> Any:
         return self._decorator_or_call(fn, self._on(
             SignalType.HEARTBEAT,
             neuron=neuron, capability=capability, trace_id=trace_id,
@@ -431,55 +431,55 @@ class Dendrite(LifecycleHooks):
 
     # -- Cognition decorators --------------------------------------------
 
-    def on_plan(self, fn=None, *, neuron=None, capability=None, trace_id=None):
+    def on_plan(self, fn: SignalHandler | None = None, *, neuron=None, capability=None, trace_id=None) -> Any:
         return self._decorator_or_call(fn, self._on(
             SignalType.PLAN,
             neuron=neuron, capability=capability, trace_id=trace_id,
         ))
 
-    def on_thought_delta(self, fn=None, *, neuron=None, capability=None, trace_id=None):
+    def on_thought_delta(self, fn: SignalHandler | None = None, *, neuron=None, capability=None, trace_id=None) -> Any:
         return self._decorator_or_call(fn, self._on(
             SignalType.THOUGHT_DELTA,
             neuron=neuron, capability=capability, trace_id=trace_id,
         ))
 
-    def on_tool_call(self, fn=None, *, neuron=None, capability=None, trace_id=None):
+    def on_tool_call(self, fn: SignalHandler | None = None, *, neuron=None, capability=None, trace_id=None) -> Any:
         return self._decorator_or_call(fn, self._on(
             SignalType.TOOL_CALL,
             neuron=neuron, capability=capability, trace_id=trace_id,
         ))
 
-    def on_tool_result(self, fn=None, *, neuron=None, capability=None, trace_id=None):
+    def on_tool_result(self, fn: SignalHandler | None = None, *, neuron=None, capability=None, trace_id=None) -> Any:
         return self._decorator_or_call(fn, self._on(
             SignalType.TOOL_RESULT,
             neuron=neuron, capability=capability, trace_id=trace_id,
         ))
 
-    def on_memory_append(self, fn=None, *, neuron=None, capability=None, trace_id=None):
+    def on_memory_append(self, fn: SignalHandler | None = None, *, neuron=None, capability=None, trace_id=None) -> Any:
         return self._decorator_or_call(fn, self._on(
             SignalType.MEMORY_APPEND,
             neuron=neuron, capability=capability, trace_id=trace_id,
         ))
 
-    def on_critique(self, fn=None, *, neuron=None, capability=None, trace_id=None):
+    def on_critique(self, fn: SignalHandler | None = None, *, neuron=None, capability=None, trace_id=None) -> Any:
         return self._decorator_or_call(fn, self._on(
             SignalType.CRITIQUE,
             neuron=neuron, capability=capability, trace_id=trace_id,
         ))
 
-    def on_escalation(self, fn=None, *, neuron=None, capability=None, trace_id=None):
+    def on_escalation(self, fn: SignalHandler | None = None, *, neuron=None, capability=None, trace_id=None) -> Any:
         return self._decorator_or_call(fn, self._on(
             SignalType.ESCALATION,
             neuron=neuron, capability=capability, trace_id=trace_id,
         ))
 
-    def on_consensus(self, fn=None, *, neuron=None, capability=None, trace_id=None):
+    def on_consensus(self, fn: SignalHandler | None = None, *, neuron=None, capability=None, trace_id=None) -> Any:
         return self._decorator_or_call(fn, self._on(
             SignalType.CONSENSUS,
             neuron=neuron, capability=capability, trace_id=trace_id,
         ))
 
-    def on_context_sync(self, fn=None, *, neuron=None, capability=None, trace_id=None):
+    def on_context_sync(self, fn: SignalHandler | None = None, *, neuron=None, capability=None, trace_id=None) -> Any:
         return self._decorator_or_call(fn, self._on(
             SignalType.CONTEXT_SYNC,
             neuron=neuron, capability=capability, trace_id=trace_id,
@@ -536,19 +536,19 @@ class Dendrite(LifecycleHooks):
             stacklevel=3,
         )
 
-    def on_error(self, fn):
+    def on_error(self, fn) -> Any:
         self._deprecated_alias("on_error", "on_error_signal")
         return self.on_error_signal(fn)
 
-    def on_register(self, fn):
+    def on_register(self, fn) -> Any:
         self._deprecated_alias("on_register", "on_register_signal")
         return self.on_register_signal(fn)
 
-    def on_deregister(self, fn):
+    def on_deregister(self, fn) -> Any:
         self._deprecated_alias("on_deregister", "on_deregister_signal")
         return self.on_deregister_signal(fn)
 
-    def on_heartbeat(self, fn):
+    def on_heartbeat(self, fn) -> Any:
         self._deprecated_alias("on_heartbeat", "on_heartbeat_signal")
         return self.on_heartbeat_signal(fn)
 
@@ -1118,7 +1118,7 @@ class Dendrite(LifecycleHooks):
         # _on_task_awarded -> Axon.handle_task.
         awarded = task_awarded_signal(
             trace_id=tid, parent_id=winner.id,
-            neuron=winner.neuron, input=input,
+            neuron=winner.neuron or self.dendrite_id, input=input,
             winning_bid={
                 k: winner.payload.get(k)
                 for k in ("cost", "eta_ms", "confidence")
@@ -1861,6 +1861,7 @@ class Dendrite(LifecycleHooks):
                     neuron=self.dendrite_id,
                 )
             else:
+                assert receipt is not None
                 reply = imprinted_signal(
                     trace_id=signal.trace_id,
                     parent_id=signal.id,
@@ -1905,7 +1906,7 @@ class Dendrite(LifecycleHooks):
         trace_id: str | None = None,
         parent_id: str | None = None,
         meta: dict[str, Any] | None = None,
-    ):
+    ) -> Any:
         """Emit RECALL and await RECALLED.
 
         When ``trace_id`` is omitted a new trace is minted  -  use this for
@@ -1949,7 +1950,7 @@ class Dendrite(LifecycleHooks):
         trace_id: str | None = None,
         parent_id: str | None = None,
         meta: dict[str, Any] | None = None,
-    ):
+    ) -> Any:
         """Emit IMPRINT. Returns None unless ``await_ack=True``."""
         tid = trace_id or new_trace_id()
         pid = parent_id

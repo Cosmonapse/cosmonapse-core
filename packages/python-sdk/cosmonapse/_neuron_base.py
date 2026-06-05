@@ -20,10 +20,11 @@ import it without creating an import cycle back through the public
 
 from __future__ import annotations
 
+import types
 from typing import Any
 
 
-def _require_httpx():
+def _require_httpx() -> types.ModuleType:
     """Import httpx lazily so it stays a soft dependency."""
     try:
         import httpx  # noqa: F401
@@ -45,7 +46,7 @@ class _BaseNeuron:
     # Input helpers (shared by every source)
     # ------------------------------------------------------------------
 
-    def _prompt(self, input: dict) -> str | None:
+    def _prompt(self, input: dict[str, Any]) -> str | None:
         """Return a plain-text prompt from common input keys."""
         return (
             input.get("prompt")
@@ -54,11 +55,11 @@ class _BaseNeuron:
             or input.get("content")
         )
 
-    def _messages(self, input: dict) -> list[dict] | None:
+    def _messages(self, input: dict[str, Any]) -> list[dict[str, Any]] | None:
         """Return OpenAI-style messages if present."""
         return input.get("messages")
 
-    def _require_input(self, input: dict, provider: str) -> tuple[str | None, list | None]:
+    def _require_input(self, input: dict[str, Any], provider: str) -> tuple[str | None, list[dict[str, Any]] | None]:
         prompt = self._prompt(input)
         messages = self._messages(input)
         if not prompt and not messages:

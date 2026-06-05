@@ -219,7 +219,7 @@ class Axon(LifecycleHooks):
     # Engram helper plumbing (called from handle_task)
     # ------------------------------------------------------------------
 
-    def _engram_client(self):
+    def _engram_client(self) -> Any:
         if self._dendrite is None:
             raise RuntimeError(
                 f"Axon {self.neuron_id!r}: not attached to a Dendrite; "
@@ -236,7 +236,7 @@ class Axon(LifecycleHooks):
             )
         return binding
 
-    def _build_recall_helper(self, trace_id: str, parent_id: str):
+    def _build_recall_helper(self, trace_id: str, parent_id: str) -> Any:
         async def _recall(
             name: str,
             *,
@@ -265,7 +265,7 @@ class Axon(LifecycleHooks):
             )
         return _recall
 
-    def _build_imprint_helper(self, trace_id: str, parent_id: str):
+    def _build_imprint_helper(self, trace_id: str, parent_id: str) -> Any:
         async def _imprint(
             name: str,
             *,

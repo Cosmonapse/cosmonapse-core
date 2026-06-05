@@ -69,6 +69,7 @@ core dependency so projects that don't use MCP neurons don't pull it in.
 """
 
 from __future__ import annotations
+import types
 
 import asyncio
 from typing import Any
@@ -121,9 +122,9 @@ STANDARD_MCP_SERVERS: dict[str, dict[str, Any]] = {
 _CONTROL_KEYS = {"tool", "arguments", "args", "__list_tools__"}
 
 
-def _require_mcp():
+def _require_mcp() -> types.ModuleType:
     try:
-        import mcp  # noqa: F401
+        import mcp  # type: ignore[import-not-found]
         return mcp
     except ImportError:
         raise ImportError(
@@ -285,8 +286,8 @@ class _MCPNeuron(_BaseNeuron):
             await started  # propagates startup errors (e.g. command not found)
 
     async def _run(self, started: asyncio.Future[None]) -> None:
-        from mcp import ClientSession, StdioServerParameters
-        from mcp.client.stdio import stdio_client
+        from mcp import ClientSession, StdioServerParameters  # type: ignore[import-not-found]
+        from mcp.client.stdio import stdio_client  # type: ignore[import-not-found]
 
         params = StdioServerParameters(
             command=self.command,

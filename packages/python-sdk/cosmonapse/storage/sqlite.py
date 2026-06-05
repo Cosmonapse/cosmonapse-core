@@ -17,6 +17,8 @@ import json
 import sqlite3
 from datetime import datetime, timezone
 
+from typing import Any
+
 from cosmonapse.storage.base import NeuronRecord, RegistryStore
 
 
@@ -39,7 +41,7 @@ def _parse_ts(value: str | None) -> datetime | None:
     return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
 
 
-def _record_from_row(row: tuple) -> NeuronRecord:
+def _record_from_row(row: tuple[Any, ...]) -> NeuronRecord:
     return NeuronRecord(
         neuron_id=row[0],
         capabilities=json.loads(row[1]) if row[1] else [],
@@ -66,7 +68,7 @@ class SqliteRegistryStore(RegistryStore):
         self._conn: sqlite3.Connection | None = None
         self._lock = asyncio.Lock()
 
-    async def _run(self, fn, *args):
+    async def _run(self, fn: Any, *args: Any) -> Any:
         return await asyncio.get_running_loop().run_in_executor(None, fn, *args)
 
     # ------------------------------------------------------------------
@@ -98,9 +100,10 @@ class SqliteRegistryStore(RegistryStore):
 
     async def upsert(self, record: NeuronRecord) -> None:
         assert self._conn is not None, "SqliteRegistryStore.connect() not called"
+        conn = self._conn
 
         def _write():
-            cur = self._conn.cursor()
+            cur = conn.cursor()
             existing = cur.execute(
                 "SELECT registered_at FROM neurons WHERE neuron_id = ?",
                 (record.neuron_id,),
@@ -129,20 +132,21 @@ class SqliteRegistryStore(RegistryStore):
                     registered_at,
                 ),
             )
-            self._conn.commit()
+            conn.commit()
 
         async with self._lock:
             await self._run(_write)
 
     async def mark_deregistered(self, neuron_id: str) -> None:
         assert self._conn is not None
+        conn = self._conn
 
         def _write():
-            self._conn.execute(
+            conn.execute(
                 "UPDATE neurons SET status = 'deregistered' WHERE neuron_id = ?",
                 (neuron_id,),
             )
-            self._conn.commit()
+            conn.commit()
 
         async with self._lock:
             await self._run(_write)
@@ -154,11 +158,12 @@ class SqliteRegistryStore(RegistryStore):
         status: str | None = None,
     ) -> None:
         assert self._conn is not None
+        conn = self._conn
         ts_iso = ts.isoformat()
         now_iso = datetime.now(timezone.utc).isoformat()
 
         def _write():
-            cur = self._conn.cursor()
+            cur = conn.cursor()
             existing = cur.execute(
                 "SELECT neuron_id FROM neurons WHERE neuron_id = ?", (neuron_id,)
             ).fetchone()
@@ -183,7 +188,7 @@ class SqliteRegistryStore(RegistryStore):
                     "UPDATE neurons SET last_heartbeat = ? WHERE neuron_id = ?",
                     (ts_iso, neuron_id),
                 )
-            self._conn.commit()
+            conn.commit()
 
         async with self._lock:
             await self._run(_write)
@@ -194,9 +199,10 @@ class SqliteRegistryStore(RegistryStore):
 
     async def get(self, neuron_id: str) -> NeuronRecord | None:
         assert self._conn is not None
+        conn = self._conn
 
         def _read():
-            row = self._conn.execute(
+            row = conn.execute(
                 "SELECT neuron_id, capabilities, version, status, "
                 "last_heartbeat, registered_at FROM neurons WHERE neuron_id = ?",
                 (neuron_id,),
@@ -212,19 +218,20 @@ class SqliteRegistryStore(RegistryStore):
         include_deregistered: bool = False,
     ) -> list[NeuronRecord]:
         assert self._conn is not None
+        conn = self._conn
 
         def _read():
             sql = (
                 "SELECT neuron_id, capabilities, version, status, "
                 "last_heartbeat, registered_at FROM neurons"
             )
-            params: list = []
+            params: list[Any] = []
             clauses: list[str] = []
             if not include_deregistered:
                 clauses.append("status != 'deregistered'")
             if clauses:
                 sql += " WHERE " + " AND ".join(clauses)
-            rows = self._conn.execute(sql, params).fetchall()
+            rows = conn.execute(sql, params).fetchall()
             out = [_record_from_row(r) for r in rows]
             if capability is not None:
                 out = [r for r in out if capability in r.capabilities]

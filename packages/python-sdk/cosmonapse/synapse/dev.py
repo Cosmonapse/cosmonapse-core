@@ -155,7 +155,7 @@ class DevSynapseServer:
         # to stream to stdout.
         self.on_signal: Callable[[str, str], None] | None = None
         # Namespace registry: namespace -> {transport, started_at, signal_count, owner}
-        self._namespaces: dict[str, dict[str, Any]] = {}
+        self._namespaces: dict[str, Any][str, dict[str, Any]] = {}
 
     # -- properties ---------------------------------------------------
 
@@ -201,6 +201,7 @@ class DevSynapseServer:
     async def serve_forever(self) -> None:
         if self._server is None:
             await self.start()
+        assert self._server is not None
         await self._server.serve_forever()
 
     # -- client handling ----------------------------------------------
@@ -243,7 +244,7 @@ class DevSynapseServer:
                 logger.debug("DevSynapseServer: namespace %r removed (owner disconnected)", ns)
             logger.debug("DevSynapseServer: client %s disconnected", peer_str)
 
-    async def _handle_op(self, session: _ClientSession, msg: dict) -> None:
+    async def _handle_op(self, session: _ClientSession, msg: dict[str, Any]) -> None:
         op = msg.get("op")
         if op == "pub":
             subject = msg.get("subject")
@@ -418,9 +419,9 @@ class DevSynapse(Synapse):
 
         self._reader: asyncio.StreamReader | None = None
         self._writer: asyncio.StreamWriter | None = None
-        self._reader_task: asyncio.Task | None = None
+        self._reader_task: asyncio.Task[Any] | None = None
         self._send_lock = asyncio.Lock()
-        self._handlers: dict[str, MessageHandler] = {}
+        self._handlers: dict[str, Any][str, MessageHandler] = {}
         self._connected = False
 
     @property

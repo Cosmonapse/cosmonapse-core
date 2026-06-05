@@ -1,3 +1,4 @@
+from typing import Any
 """
 cosmonapse.synapse.memory
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -128,14 +129,14 @@ class MemorySynapse(Synapse):
                 else:
                     queue_groups[group].append(handler)
 
-        def _ensure_coro(handler: MessageHandler, sig: Signal):
+        def _ensure_coro(handler: MessageHandler, sig: Signal) -> Any:
             """Call handler and return a coroutine regardless of whether it's async or sync."""
             import inspect
             result = handler(sig)
             if inspect.iscoroutine(result):
                 return result
             # Sync handler  -  wrap in a coroutine
-            async def _wrap():
+            async def _wrap() -> Any:
                 return result
             return _wrap()
 

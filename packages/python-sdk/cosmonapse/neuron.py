@@ -10,7 +10,7 @@ A Neuron is not just an LLM agent. It is any unit of real-world behaviour:
 * an **MCP server**      – any stdio MCP server, wrapped as a tool surface.
 
 ``Neuron(source=...)`` returns a callable that satisfies ``NeuronFn``
-(``async (input: dict, context: list) -> dict``), so it slots directly into
+(``async (input: dict[str, Any], context: list) -> dict``), so it slots directly into
 ``Axon.neuron_fn`` with no extra wiring  -  the rest of the protocol never knows
 what kind of thing is behind the Neuron.
 
@@ -103,15 +103,15 @@ class _OllamaNeuron(_BaseNeuron):
             return await self._chat(messages)
         return await self._generate(prompt)  # type: ignore[arg-type]
 
-    def _options(self) -> dict:
-        opts: dict = {}
+    def _options(self) -> dict[str, Any]:
+        opts: dict[str, Any] = {}
         if self.temperature is not None:
             opts["temperature"] = self.temperature
         if self.max_tokens is not None:
             opts["num_predict"] = self.max_tokens
         return opts
 
-    async def _generate(self, prompt: str) -> dict:
+    async def _generate(self, prompt: str) -> dict[str, Any]:
         body: dict[str, Any] = {
             "model": self.model,
             "prompt": prompt,
@@ -130,7 +130,7 @@ class _OllamaNeuron(_BaseNeuron):
 
         return {"response": data.get("response", ""), "meta": data}
 
-    async def _chat(self, messages: list[dict]) -> dict:
+    async def _chat(self, messages: list[dict]) -> dict[str, Any]:
         all_messages = messages
         if self.system:
             all_messages = [{"role": "system", "content": self.system}, *messages]
@@ -218,7 +218,7 @@ class _HuggingFaceNeuron(_BaseNeuron):
 
         return await self._generate(prompt)  # type: ignore[arg-type]
 
-    async def _generate(self, prompt: str) -> dict:
+    async def _generate(self, prompt: str) -> dict[str, Any]:
         """Native TGI /generate endpoint."""
         params: dict[str, Any] = {"max_new_tokens": self.max_new_tokens}
         if self.temperature is not None:
@@ -239,7 +239,7 @@ class _HuggingFaceNeuron(_BaseNeuron):
 
         return {"response": text, "meta": data}
 
-    async def _chat(self, messages: list[dict]) -> dict:
+    async def _chat(self, messages: list[dict]) -> dict[str, Any]:
         """OpenAI-compatible /v1/chat/completions (TGI ≥ 1.4, vLLM, llama.cpp)."""
         body: dict[str, Any] = {
             "messages": messages,
@@ -543,7 +543,7 @@ class Neuron:
     ``Neuron(...)`` returns an async-callable object that satisfies
     the ``NeuronFn`` signature::
 
-        async def __call__(input: dict, context: list) -> dict
+        async def __call__(input: dict[str, Any], context: list) -> dict[str, Any]
 
     Pass it directly to ``Axon``::
 
