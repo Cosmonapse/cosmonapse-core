@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, Any
 from cosmonapse.storage.base import NeuronRecord, RegistryStore
 
 if TYPE_CHECKING:
-    import asyncpg  # noqa: F401  # type: ignore[import-untyped]
+    import asyncpg  # type: ignore[import-untyped]  # noqa: F401
 
 logger = logging.getLogger(__name__)
 

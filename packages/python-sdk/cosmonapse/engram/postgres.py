@@ -30,7 +30,7 @@ from cosmonapse.engram.base import Engram, Hit, ImprintReceipt
 from cosmonapse.envelope import new_engram_id
 
 if TYPE_CHECKING:
-    import asyncpg  # noqa: F401  # type: ignore[import-untyped]
+    import asyncpg  # type: ignore[import-untyped]  # noqa: F401
 
 logger = logging.getLogger(__name__)
 
@@ -141,7 +141,7 @@ class PostgresEngram(Engram):
         if self._pool is not None:
             return
         try:
-            import asyncpg  # type: ignore[import-untyped]
+            import asyncpg
         except ImportError as exc:
             raise ImportError(
                 "PostgresEngram requires asyncpg. Install with "

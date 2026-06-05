@@ -47,7 +47,7 @@ from cosmonapse.envelope import Signal
 from cosmonapse.synapse.base import MessageHandler, Subscription, Synapse
 
 if TYPE_CHECKING:
-    from aiokafka import AIOKafkaConsumer, AIOKafkaProducer  # noqa: F401  # type: ignore[import-untyped]
+    from aiokafka import AIOKafkaConsumer, AIOKafkaProducer  # type: ignore[import-untyped]  # noqa: F401
 
 logger = logging.getLogger(__name__)
 

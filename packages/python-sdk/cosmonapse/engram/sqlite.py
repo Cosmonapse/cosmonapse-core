@@ -126,7 +126,7 @@ class SqliteEngram(Engram):
         if self._conn is not None:
             return
 
-        def _open():
+        def _open() -> sqlite3.Connection:
             conn = sqlite3.connect(self._path, check_same_thread=False)
             conn.executescript(_SCHEMA)
             conn.commit()
@@ -167,7 +167,7 @@ class SqliteEngram(Engram):
         since = filters.get("since")
         until = filters.get("until")
 
-        def _read():
+        def _read() -> list[Any]:
             sql_parts = [
                 "SELECT id, engram_kind, merge_key, content, tags, meta, "
                 "version, created_at, updated_at, deleted_at "
@@ -228,7 +228,7 @@ class SqliteEngram(Engram):
 
         async with self._lock:
 
-            def _check_seen():
+            def _check_seen() -> str | None:
                 if imprint_id is None:
                     return None
                 row = conn.execute(
@@ -240,7 +240,7 @@ class SqliteEngram(Engram):
 
             seen_entry_id = await self._run(_check_seen)
             if seen_entry_id is not None:
-                def _read_version():
+                def _read_version() -> int | None:
                     row = conn.execute(
                         "SELECT version FROM engram_entries WHERE id = ?",
                         (seen_entry_id,),
@@ -260,7 +260,7 @@ class SqliteEngram(Engram):
             if op == "add":
                 eid = entry.get("id") or new_engram_id()
 
-                def _insert():
+                def _insert() -> None:
                     conn.execute(
                         "INSERT INTO engram_entries "
                         "(id, engram_kind, merge_key, content, tags, meta, "
@@ -287,7 +287,7 @@ class SqliteEngram(Engram):
                 # Append generates a fresh id every time.
                 eid = new_engram_id()
 
-                def _insert():
+                def _insert() -> None:
                     conn.execute(
                         "INSERT INTO engram_entries "
                         "(id, engram_kind, merge_key, content, tags, meta, "
@@ -309,7 +309,7 @@ class SqliteEngram(Engram):
 
             elif op == "upsert":
 
-                def _upsert():
+                def _upsert() -> tuple[str | None, str | None]:
                     if merge_key is None:
                         return None, "upsert requires merge_key"
                     existing = conn.execute(
@@ -361,7 +361,7 @@ class SqliteEngram(Engram):
 
             elif op == "merge":
 
-                def _merge():
+                def _merge() -> tuple[str | None, str | None]:
                     if merge_key is None:
                         return None, "merge requires merge_key"
                     existing = conn.execute(
@@ -411,7 +411,7 @@ class SqliteEngram(Engram):
 
             elif op == "delete":
 
-                def _delete():
+                def _delete() -> tuple[str | None, str | None]:
                     target_id = entry.get("id")
                     if target_id is None and merge_key is not None:
                         row = conn.execute(
@@ -440,7 +440,7 @@ class SqliteEngram(Engram):
                 error = f"unknown op {op!r}"
 
             if imprint_id is not None and resulting_id is not None and error is None:
-                def _record_seen():
+                def _record_seen() -> None:
                     conn.execute(
                         "INSERT OR IGNORE INTO engram_imprint_seen "
                         "(imprint_id, entry_id, seen_at) VALUES (?,?,?)",

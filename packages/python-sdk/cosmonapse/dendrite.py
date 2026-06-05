@@ -1282,7 +1282,7 @@ class Dendrite(LifecycleHooks):
         return sig
 
     async def emit_memory_append(self, *, trace_id: str, parent_id: str, key: str, value: Any,
-                                 neuron=None, meta: dict[str, Any] | None = None) -> Signal:
+                                 neuron: str | None = None, meta: dict[str, Any] | None = None) -> Signal:
         sig = memory_append_signal(
             trace_id=trace_id, parent_id=parent_id,
             neuron=neuron or self.dendrite_id,
@@ -1314,7 +1314,7 @@ class Dendrite(LifecycleHooks):
         return sig
 
     async def emit_consensus(self, *, trace_id: str, parent_id: str, members: list[str], verdict: str,
-                             votes: list[Any] | None = None, neuron: str | None = None, meta: dict[str, Any] | None = None) -> Signal:
+                             votes: dict[str, Any] | None = None, neuron: str | None = None, meta: dict[str, Any] | None = None) -> Signal:
         sig = consensus_signal(
             trace_id=trace_id, parent_id=parent_id,
             neuron=neuron or self.dendrite_id,

@@ -27,7 +27,7 @@ from typing import Any
 def _require_httpx() -> types.ModuleType:
     """Import httpx lazily so it stays a soft dependency."""
     try:
-        import httpx  # noqa: F401  # type: ignore[import-not-found]
+        import httpx  # type: ignore[import-not-found]  # noqa: F401
         return httpx  # type: ignore[no-any-return]
     except ImportError:
         raise ImportError(
