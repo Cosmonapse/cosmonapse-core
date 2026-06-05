@@ -130,7 +130,7 @@ class KafkaSynapse(Synapse):
         if self._connected:
             return
         try:
-            from aiokafka import AIOKafkaProducer  # type: ignore[import-untyped]
+            from aiokafka import AIOKafkaProducer
         except ImportError as exc:
             raise ImportError(
                 "KafkaSynapse requires the 'aiokafka' package. "
@@ -187,7 +187,7 @@ class KafkaSynapse(Synapse):
         if not self._connected:
             raise RuntimeError("KafkaSynapse.subscribe called before connect()")
 
-        from aiokafka import AIOKafkaConsumer  # type: ignore[import-untyped]
+        from aiokafka import AIOKafkaConsumer
 
         servers = (self._bootstrap if isinstance(self._bootstrap, str)
                    else ",".join(self._bootstrap))

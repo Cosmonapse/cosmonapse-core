@@ -393,37 +393,37 @@ class Dendrite(LifecycleHooks):
 
     # -- Lifecycle decorators --------------------------------------------
 
-    def on_agent_output(self, fn: SignalHandler | None = None, *, neuron=None, capability=None, trace_id=None) -> Any:
+    def on_agent_output(self, fn: SignalHandler | None = None, *, neuron: str | None = None, capability: str | None = None, trace_id: str | None = None) -> Any:
         return self._decorator_or_call(fn, self._on(
             SignalType.AGENT_OUTPUT,
             neuron=neuron, capability=capability, trace_id=trace_id,
         ))
 
-    def on_clarification(self, fn: SignalHandler | None = None, *, neuron=None, capability=None, trace_id=None) -> Any:
+    def on_clarification(self, fn: SignalHandler | None = None, *, neuron: str | None = None, capability: str | None = None, trace_id: str | None = None) -> Any:
         return self._decorator_or_call(fn, self._on(
             SignalType.CLARIFICATION,
             neuron=neuron, capability=capability, trace_id=trace_id,
         ))
 
-    def on_error_signal(self, fn: SignalHandler | None = None, *, neuron=None, capability=None, trace_id=None) -> Any:
+    def on_error_signal(self, fn: SignalHandler | None = None, *, neuron: str | None = None, capability: str | None = None, trace_id: str | None = None) -> Any:
         return self._decorator_or_call(fn, self._on(
             SignalType.ERROR,
             neuron=neuron, capability=capability, trace_id=trace_id,
         ))
 
-    def on_register_signal(self, fn: SignalHandler | None = None, *, neuron=None, capability=None, trace_id=None) -> Any:
+    def on_register_signal(self, fn: SignalHandler | None = None, *, neuron: str | None = None, capability: str | None = None, trace_id: str | None = None) -> Any:
         return self._decorator_or_call(fn, self._on(
             SignalType.REGISTER,
             neuron=neuron, capability=capability, trace_id=trace_id,
         ))
 
-    def on_deregister_signal(self, fn: SignalHandler | None = None, *, neuron=None, capability=None, trace_id=None) -> Any:
+    def on_deregister_signal(self, fn: SignalHandler | None = None, *, neuron: str | None = None, capability: str | None = None, trace_id: str | None = None) -> Any:
         return self._decorator_or_call(fn, self._on(
             SignalType.DEREGISTER,
             neuron=neuron, capability=capability, trace_id=trace_id,
         ))
 
-    def on_heartbeat_signal(self, fn: SignalHandler | None = None, *, neuron=None, capability=None, trace_id=None) -> Any:
+    def on_heartbeat_signal(self, fn: SignalHandler | None = None, *, neuron: str | None = None, capability: str | None = None, trace_id: str | None = None) -> Any:
         return self._decorator_or_call(fn, self._on(
             SignalType.HEARTBEAT,
             neuron=neuron, capability=capability, trace_id=trace_id,
@@ -431,55 +431,55 @@ class Dendrite(LifecycleHooks):
 
     # -- Cognition decorators --------------------------------------------
 
-    def on_plan(self, fn: SignalHandler | None = None, *, neuron=None, capability=None, trace_id=None) -> Any:
+    def on_plan(self, fn: SignalHandler | None = None, *, neuron: str | None = None, capability: str | None = None, trace_id: str | None = None) -> Any:
         return self._decorator_or_call(fn, self._on(
             SignalType.PLAN,
             neuron=neuron, capability=capability, trace_id=trace_id,
         ))
 
-    def on_thought_delta(self, fn: SignalHandler | None = None, *, neuron=None, capability=None, trace_id=None) -> Any:
+    def on_thought_delta(self, fn: SignalHandler | None = None, *, neuron: str | None = None, capability: str | None = None, trace_id: str | None = None) -> Any:
         return self._decorator_or_call(fn, self._on(
             SignalType.THOUGHT_DELTA,
             neuron=neuron, capability=capability, trace_id=trace_id,
         ))
 
-    def on_tool_call(self, fn: SignalHandler | None = None, *, neuron=None, capability=None, trace_id=None) -> Any:
+    def on_tool_call(self, fn: SignalHandler | None = None, *, neuron: str | None = None, capability: str | None = None, trace_id: str | None = None) -> Any:
         return self._decorator_or_call(fn, self._on(
             SignalType.TOOL_CALL,
             neuron=neuron, capability=capability, trace_id=trace_id,
         ))
 
-    def on_tool_result(self, fn: SignalHandler | None = None, *, neuron=None, capability=None, trace_id=None) -> Any:
+    def on_tool_result(self, fn: SignalHandler | None = None, *, neuron: str | None = None, capability: str | None = None, trace_id: str | None = None) -> Any:
         return self._decorator_or_call(fn, self._on(
             SignalType.TOOL_RESULT,
             neuron=neuron, capability=capability, trace_id=trace_id,
         ))
 
-    def on_memory_append(self, fn: SignalHandler | None = None, *, neuron=None, capability=None, trace_id=None) -> Any:
+    def on_memory_append(self, fn: SignalHandler | None = None, *, neuron: str | None = None, capability: str | None = None, trace_id: str | None = None) -> Any:
         return self._decorator_or_call(fn, self._on(
             SignalType.MEMORY_APPEND,
             neuron=neuron, capability=capability, trace_id=trace_id,
         ))
 
-    def on_critique(self, fn: SignalHandler | None = None, *, neuron=None, capability=None, trace_id=None) -> Any:
+    def on_critique(self, fn: SignalHandler | None = None, *, neuron: str | None = None, capability: str | None = None, trace_id: str | None = None) -> Any:
         return self._decorator_or_call(fn, self._on(
             SignalType.CRITIQUE,
             neuron=neuron, capability=capability, trace_id=trace_id,
         ))
 
-    def on_escalation(self, fn: SignalHandler | None = None, *, neuron=None, capability=None, trace_id=None) -> Any:
+    def on_escalation(self, fn: SignalHandler | None = None, *, neuron: str | None = None, capability: str | None = None, trace_id: str | None = None) -> Any:
         return self._decorator_or_call(fn, self._on(
             SignalType.ESCALATION,
             neuron=neuron, capability=capability, trace_id=trace_id,
         ))
 
-    def on_consensus(self, fn: SignalHandler | None = None, *, neuron=None, capability=None, trace_id=None) -> Any:
+    def on_consensus(self, fn: SignalHandler | None = None, *, neuron: str | None = None, capability: str | None = None, trace_id: str | None = None) -> Any:
         return self._decorator_or_call(fn, self._on(
             SignalType.CONSENSUS,
             neuron=neuron, capability=capability, trace_id=trace_id,
         ))
 
-    def on_context_sync(self, fn: SignalHandler | None = None, *, neuron=None, capability=None, trace_id=None) -> Any:
+    def on_context_sync(self, fn: SignalHandler | None = None, *, neuron: str | None = None, capability: str | None = None, trace_id: str | None = None) -> Any:
         return self._decorator_or_call(fn, self._on(
             SignalType.CONTEXT_SYNC,
             neuron=neuron, capability=capability, trace_id=trace_id,
@@ -536,19 +536,19 @@ class Dendrite(LifecycleHooks):
             stacklevel=3,
         )
 
-    def on_error(self, fn) -> Any:
+    def on_error(self, fn: SignalHandler | None = None) -> Any:
         self._deprecated_alias("on_error", "on_error_signal")
         return self.on_error_signal(fn)
 
-    def on_register(self, fn) -> Any:
+    def on_register(self, fn: SignalHandler | None = None) -> Any:
         self._deprecated_alias("on_register", "on_register_signal")
         return self.on_register_signal(fn)
 
-    def on_deregister(self, fn) -> Any:
+    def on_deregister(self, fn: SignalHandler | None = None) -> Any:
         self._deprecated_alias("on_deregister", "on_deregister_signal")
         return self.on_deregister_signal(fn)
 
-    def on_heartbeat(self, fn) -> Any:
+    def on_heartbeat(self, fn: SignalHandler | None = None) -> Any:
         self._deprecated_alias("on_heartbeat", "on_heartbeat_signal")
         return self.on_heartbeat_signal(fn)
 
@@ -1141,7 +1141,7 @@ class Dendrite(LifecycleHooks):
         *,
         capability: str | None = None,
         trace_id: str | None = None,
-    ) -> Callable[[SignalHandler], SignalHandler] | SignalHandler:
+    ) -> Any:
         """Register a handler fired on inbound TASK_OFFER signals.
 
         Workers use this to evaluate offers and call :meth:`bid` to
@@ -1224,14 +1224,14 @@ class Dendrite(LifecycleHooks):
         """Called by a Pathway when it closes - evict from the registry."""
         self._pathways.pop(pathway.trace_id, None)
 
-    async def emit_final(self, *, trace_id, parent_id, result, meta=None) -> Signal:
+    async def emit_final(self, *, trace_id: str, parent_id: str, result: Any, meta: dict[str, Any] | None = None) -> Signal:
         sig = final_signal(trace_id=trace_id, parent_id=parent_id,
                            neuron=self.dendrite_id, result=result, meta=meta)
         await self.emit(sig)
         return sig
 
-    async def emit_error(self, *, trace_id, parent_id, code, message,
-                         recoverable=False, meta=None) -> Signal:
+    async def emit_error(self, *, trace_id: str, parent_id: str, code: str, message: str,
+                         recoverable: bool = False, meta: dict[str, Any] | None = None) -> Signal:
         sig = error_signal(trace_id=trace_id, parent_id=parent_id,
                            neuron=self.dendrite_id, code=code, message=message,
                            recoverable=recoverable, meta=meta)
@@ -1240,8 +1240,8 @@ class Dendrite(LifecycleHooks):
 
     # -- Cognition emit helpers ------------------------------------------
 
-    async def emit_plan(self, *, trace_id, parent_id, steps,
-                        rationale=None, neuron=None, meta=None) -> Signal:
+    async def emit_plan(self, *, trace_id: str, parent_id: str, steps: list[Any],
+                        rationale: str | None = None, neuron: str | None = None, meta: dict[str, Any] | None = None) -> Signal:
         sig = plan_signal(
             trace_id=trace_id, parent_id=parent_id,
             neuron=neuron or self.dendrite_id,
@@ -1250,8 +1250,8 @@ class Dendrite(LifecycleHooks):
         await self.emit(sig)
         return sig
 
-    async def emit_thought_delta(self, *, trace_id, parent_id, delta,
-                                 seq=None, neuron=None, meta=None) -> Signal:
+    async def emit_thought_delta(self, *, trace_id: str, parent_id: str, delta: str,
+                                 seq: int | None = None, neuron: str | None = None, meta: dict[str, Any] | None = None) -> Signal:
         sig = thought_delta_signal(
             trace_id=trace_id, parent_id=parent_id,
             neuron=neuron or self.dendrite_id,
@@ -1260,8 +1260,8 @@ class Dendrite(LifecycleHooks):
         await self.emit(sig)
         return sig
 
-    async def emit_tool_call(self, *, trace_id, parent_id, tool, args,
-                             call_id=None, neuron=None, meta=None) -> Signal:
+    async def emit_tool_call(self, *, trace_id: str, parent_id: str, tool: str, args: dict[str, Any],
+                             call_id: str | None = None, neuron: str | None = None, meta: dict[str, Any] | None = None) -> Signal:
         sig = tool_call_signal(
             trace_id=trace_id, parent_id=parent_id,
             neuron=neuron or self.dendrite_id,
@@ -1270,9 +1270,9 @@ class Dendrite(LifecycleHooks):
         await self.emit(sig)
         return sig
 
-    async def emit_tool_result(self, *, trace_id, parent_id, tool,
-                               result=None, error=None, call_id=None,
-                               neuron=None, meta=None) -> Signal:
+    async def emit_tool_result(self, *, trace_id: str, parent_id: str, tool: str,
+                               result: Any = None, error: Any = None, call_id: str | None = None,
+                               neuron: str | None = None, meta: dict[str, Any] | None = None) -> Signal:
         sig = tool_result_signal(
             trace_id=trace_id, parent_id=parent_id,
             neuron=neuron or self.dendrite_id,
@@ -1281,8 +1281,8 @@ class Dendrite(LifecycleHooks):
         await self.emit(sig)
         return sig
 
-    async def emit_memory_append(self, *, trace_id, parent_id, key, value,
-                                 neuron=None, meta=None) -> Signal:
+    async def emit_memory_append(self, *, trace_id: str, parent_id: str, key: str, value: Any,
+                                 neuron=None, meta: dict[str, Any] | None = None) -> Signal:
         sig = memory_append_signal(
             trace_id=trace_id, parent_id=parent_id,
             neuron=neuron or self.dendrite_id,
@@ -1291,8 +1291,8 @@ class Dendrite(LifecycleHooks):
         await self.emit(sig)
         return sig
 
-    async def emit_critique(self, *, trace_id, parent_id, target_event_id,
-                            issues, verdict, neuron=None, meta=None) -> Signal:
+    async def emit_critique(self, *, trace_id: str, parent_id: str, target_event_id: str,
+                            issues: list[Any], verdict: str, neuron: str | None = None, meta: dict[str, Any] | None = None) -> Signal:
         sig = critique_signal(
             trace_id=trace_id, parent_id=parent_id,
             neuron=neuron or self.dendrite_id,
@@ -1302,9 +1302,9 @@ class Dendrite(LifecycleHooks):
         await self.emit(sig)
         return sig
 
-    async def emit_escalation(self, *, trace_id, parent_id, reason,
-                              target=None, context=None,
-                              neuron=None, meta=None) -> Signal:
+    async def emit_escalation(self, *, trace_id: str, parent_id: str, reason: str,
+                              target: str | None = None, context: dict[str, Any] | None = None,
+                              neuron: str | None = None, meta: dict[str, Any] | None = None) -> Signal:
         sig = escalation_signal(
             trace_id=trace_id, parent_id=parent_id,
             neuron=neuron or self.dendrite_id,
@@ -1313,8 +1313,8 @@ class Dendrite(LifecycleHooks):
         await self.emit(sig)
         return sig
 
-    async def emit_consensus(self, *, trace_id, parent_id, members, verdict,
-                             votes=None, neuron=None, meta=None) -> Signal:
+    async def emit_consensus(self, *, trace_id: str, parent_id: str, members: list[str], verdict: str,
+                             votes: list[Any] | None = None, neuron: str | None = None, meta: dict[str, Any] | None = None) -> Signal:
         sig = consensus_signal(
             trace_id=trace_id, parent_id=parent_id,
             neuron=neuron or self.dendrite_id,
@@ -1323,8 +1323,8 @@ class Dendrite(LifecycleHooks):
         await self.emit(sig)
         return sig
 
-    async def emit_context_sync(self, *, trace_id, parent_id, snapshot,
-                                version=None, neuron=None, meta=None) -> Signal:
+    async def emit_context_sync(self, *, trace_id: str, parent_id: str, snapshot: dict[str, Any],
+                                version: str | None = None, neuron: str | None = None, meta: dict[str, Any] | None = None) -> Signal:
         sig = context_sync_signal(
             trace_id=trace_id, parent_id=parent_id,
             neuron=neuron or self.dendrite_id,

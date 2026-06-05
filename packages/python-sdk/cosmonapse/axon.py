@@ -247,7 +247,7 @@ class Axon(LifecycleHooks):
             recall_mode: str | None = None,
             min_confidence: float | None = None,
             meta: dict[str, Any] | None = None,
-        ):
+        ) -> Any:
             binding = self._resolve_binding(name)
             client = self._engram_client()
             return await client.recall(
@@ -275,7 +275,7 @@ class Axon(LifecycleHooks):
             await_ack: bool = False,
             deadline_ms: int | None = None,
             meta: dict[str, Any] | None = None,
-        ):
+        ) -> Any:
             binding = self._resolve_binding(name)
             client = self._engram_client()
             return await client.imprint(

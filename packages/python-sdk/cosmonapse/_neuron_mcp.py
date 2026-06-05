@@ -125,7 +125,7 @@ _CONTROL_KEYS = {"tool", "arguments", "args", "__list_tools__"}
 def _require_mcp() -> types.ModuleType:
     try:
         import mcp  # type: ignore[import-not-found]
-        return mcp
+        return mcp  # type: ignore[no-any-return]
     except ImportError:
         raise ImportError(
             "The 'mcp' package is required for MCP-server Neuron wrappers.\n"
@@ -286,7 +286,7 @@ class _MCPNeuron(_BaseNeuron):
             await started  # propagates startup errors (e.g. command not found)
 
     async def _run(self, started: asyncio.Future[None]) -> None:
-        from mcp import ClientSession, StdioServerParameters  # type: ignore[import-not-found]
+        from mcp import ClientSession, StdioServerParameters
         from mcp.client.stdio import stdio_client  # type: ignore[import-not-found]
 
         params = StdioServerParameters(

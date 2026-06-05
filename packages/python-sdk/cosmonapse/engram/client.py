@@ -154,7 +154,7 @@ class EngramClient:
             raise
 
         try:
-            return await fut
+            return cast(RecallResult, await fut)
         finally:
             self._pending_recalls.pop(sig.id, None)
             self._discard_trace_entry(trace_id, sig.id)
@@ -223,7 +223,7 @@ class EngramClient:
             raise
 
         try:
-            return await fut
+            return cast("ImprintReceipt | None", await fut)
         finally:
             self._pending_imprints.pop(sig.id, None)
             self._discard_trace_entry(trace_id, sig.id)

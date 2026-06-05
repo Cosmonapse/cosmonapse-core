@@ -85,7 +85,7 @@ class PostgresRegistryStore(RegistryStore):
         if self._pool is not None:
             return
         try:
-            import asyncpg  # type: ignore[import-untyped]
+            import asyncpg
         except ImportError as exc:
             raise ImportError(
                 "PostgresRegistryStore requires 'asyncpg'. "

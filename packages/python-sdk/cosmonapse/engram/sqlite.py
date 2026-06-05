@@ -155,6 +155,7 @@ class SqliteEngram(Engram):
         min_confidence: float | None = None,
     ) -> list[Hit]:
         assert self._conn is not None, "SqliteEngram.connect() not called"
+        conn = self._conn
 
         query = query or {}
         filters = filters or {}
@@ -183,7 +184,7 @@ class SqliteEngram(Engram):
                 sql_parts.append("AND updated_at <= ?")
                 params.append(until)
             sql = " ".join(sql_parts) + " ORDER BY updated_at DESC"
-            rows = self._conn.execute(sql, params).fetchall()
+            rows = conn.execute(sql, params).fetchall()
             return rows
 
         rows = await self._run(_read)
@@ -222,6 +223,7 @@ class SqliteEngram(Engram):
         imprint_id: str | None = None,
     ) -> ImprintReceipt:
         assert self._conn is not None, "SqliteEngram.connect() not called"
+        conn = self._conn
         t0 = time.monotonic()
 
         async with self._lock:
@@ -229,7 +231,7 @@ class SqliteEngram(Engram):
             def _check_seen():
                 if imprint_id is None:
                     return None
-                row = self._conn.execute(
+                row = conn.execute(
                     "SELECT entry_id FROM engram_imprint_seen "
                     "WHERE imprint_id = ?",
                     (imprint_id,),
@@ -239,7 +241,7 @@ class SqliteEngram(Engram):
             seen_entry_id = await self._run(_check_seen)
             if seen_entry_id is not None:
                 def _read_version():
-                    row = self._conn.execute(
+                    row = conn.execute(
                         "SELECT version FROM engram_entries WHERE id = ?",
                         (seen_entry_id,),
                     ).fetchone()
@@ -259,7 +261,7 @@ class SqliteEngram(Engram):
                 eid = entry.get("id") or new_engram_id()
 
                 def _insert():
-                    self._conn.execute(
+                    conn.execute(
                         "INSERT INTO engram_entries "
                         "(id, engram_kind, merge_key, content, tags, meta, "
                         " version, created_at, updated_at) "
@@ -272,7 +274,7 @@ class SqliteEngram(Engram):
                             1, _now_iso(), _now_iso(),
                         ),
                     )
-                    self._conn.commit()
+                    conn.commit()
 
                 try:
                     await self._run(_insert)
@@ -286,7 +288,7 @@ class SqliteEngram(Engram):
                 eid = new_engram_id()
 
                 def _insert():
-                    self._conn.execute(
+                    conn.execute(
                         "INSERT INTO engram_entries "
                         "(id, engram_kind, merge_key, content, tags, meta, "
                         " version, created_at, updated_at) "
@@ -299,7 +301,7 @@ class SqliteEngram(Engram):
                             1, _now_iso(), _now_iso(),
                         ),
                     )
-                    self._conn.commit()
+                    conn.commit()
 
                 await self._run(_insert)
                 resulting_id = eid
@@ -310,7 +312,7 @@ class SqliteEngram(Engram):
                 def _upsert():
                     if merge_key is None:
                         return None, "upsert requires merge_key"
-                    existing = self._conn.execute(
+                    existing = conn.execute(
                         "SELECT id, version, created_at FROM engram_entries "
                         "WHERE merge_key = ? AND deleted_at IS NULL "
                         "ORDER BY updated_at DESC LIMIT 1",
@@ -318,7 +320,7 @@ class SqliteEngram(Engram):
                     ).fetchone()
                     if existing is None:
                         eid = entry.get("id") or new_engram_id()
-                        self._conn.execute(
+                        conn.execute(
                             "INSERT INTO engram_entries "
                             "(id, engram_kind, merge_key, content, tags, meta,"
                             " version, created_at, updated_at) "
@@ -331,11 +333,11 @@ class SqliteEngram(Engram):
                                 1, _now_iso(), _now_iso(),
                             ),
                         )
-                        self._conn.commit()
+                        conn.commit()
                         return (eid, 1), None
                     eid, old_version, created_at = existing
                     new_version = old_version + 1
-                    self._conn.execute(
+                    conn.execute(
                         "UPDATE engram_entries SET "
                         "content = ?, tags = ?, meta = ?, version = ?, "
                         "updated_at = ? WHERE id = ?",
@@ -348,7 +350,7 @@ class SqliteEngram(Engram):
                             eid,
                         ),
                     )
-                    self._conn.commit()
+                    conn.commit()
                     return (eid, new_version), None
 
                 outcome, err_msg = await self._run(_upsert)
@@ -362,7 +364,7 @@ class SqliteEngram(Engram):
                 def _merge():
                     if merge_key is None:
                         return None, "merge requires merge_key"
-                    existing = self._conn.execute(
+                    existing = conn.execute(
                         "SELECT id, content, tags, meta, version "
                         "FROM engram_entries "
                         "WHERE merge_key = ? AND deleted_at IS NULL "
@@ -385,7 +387,7 @@ class SqliteEngram(Engram):
                         entry.get("meta"),
                     ) or {}
                     new_version = old_version + 1
-                    self._conn.execute(
+                    conn.execute(
                         "UPDATE engram_entries SET "
                         "content = ?, tags = ?, meta = ?, version = ?, "
                         "updated_at = ? WHERE id = ?",
@@ -398,7 +400,7 @@ class SqliteEngram(Engram):
                             eid,
                         ),
                     )
-                    self._conn.commit()
+                    conn.commit()
                     return (eid, new_version), None
 
                 outcome, err_msg = await self._run(_merge)
@@ -412,7 +414,7 @@ class SqliteEngram(Engram):
                 def _delete():
                     target_id = entry.get("id")
                     if target_id is None and merge_key is not None:
-                        row = self._conn.execute(
+                        row = conn.execute(
                             "SELECT id FROM engram_entries "
                             "WHERE merge_key = ? AND deleted_at IS NULL "
                             "ORDER BY updated_at DESC LIMIT 1",
@@ -423,12 +425,12 @@ class SqliteEngram(Engram):
                         target_id = row[0]
                     if target_id is None:
                         return None
-                    self._conn.execute(
+                    conn.execute(
                         "UPDATE engram_entries SET deleted_at = ? "
                         "WHERE id = ?",
                         (_now_iso(), target_id),
                     )
-                    self._conn.commit()
+                    conn.commit()
                     return target_id
 
                 resulting_id = await self._run(_delete)
@@ -439,12 +441,12 @@ class SqliteEngram(Engram):
 
             if imprint_id is not None and resulting_id is not None and error is None:
                 def _record_seen():
-                    self._conn.execute(
+                    conn.execute(
                         "INSERT OR IGNORE INTO engram_imprint_seen "
                         "(imprint_id, entry_id, seen_at) VALUES (?,?,?)",
                         (imprint_id, resulting_id, _now_iso()),
                     )
-                    self._conn.commit()
+                    conn.commit()
                 await self._run(_record_seen)
 
         return ImprintReceipt(

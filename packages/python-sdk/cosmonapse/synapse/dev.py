@@ -155,7 +155,7 @@ class DevSynapseServer:
         # to stream to stdout.
         self.on_signal: Callable[[str, str], None] | None = None
         # Namespace registry: namespace -> {transport, started_at, signal_count, owner}
-        self._namespaces: dict[str, Any][str, dict[str, Any]] = {}
+        self._namespaces: dict[str, dict[str, Any]] = {}
 
     # -- properties ---------------------------------------------------
 
@@ -421,7 +421,7 @@ class DevSynapse(Synapse):
         self._writer: asyncio.StreamWriter | None = None
         self._reader_task: asyncio.Task[Any] | None = None
         self._send_lock = asyncio.Lock()
-        self._handlers: dict[str, Any][str, MessageHandler] = {}
+        self._handlers: dict[str, MessageHandler] = {}
         self._connected = False
 
     @property
@@ -467,7 +467,7 @@ class DevSynapse(Synapse):
 
     # -- protocol -----------------------------------------------------
 
-    async def _send(self, payload: dict) -> None:
+    async def _send(self, payload: dict[str, Any]) -> None:
         if not self._connected or self._writer is None:
             raise RuntimeError("DevSynapse not connected")
         line = (json.dumps(payload, separators=(",", ":")) + "\n").encode()

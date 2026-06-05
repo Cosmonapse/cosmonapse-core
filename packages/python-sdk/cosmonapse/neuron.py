@@ -130,7 +130,7 @@ class _OllamaNeuron(_BaseNeuron):
 
         return {"response": data.get("response", ""), "meta": data}
 
-    async def _chat(self, messages: list[dict]) -> dict[str, Any]:
+    async def _chat(self, messages: list[dict[str, Any]]) -> dict[str, Any]:
         all_messages = messages
         if self.system:
             all_messages = [{"role": "system", "content": self.system}, *messages]
@@ -239,7 +239,7 @@ class _HuggingFaceNeuron(_BaseNeuron):
 
         return {"response": text, "meta": data}
 
-    async def _chat(self, messages: list[dict]) -> dict[str, Any]:
+    async def _chat(self, messages: list[dict[str, Any]]) -> dict[str, Any]:
         """OpenAI-compatible /v1/chat/completions (TGI ≥ 1.4, vLLM, llama.cpp)."""
         body: dict[str, Any] = {
             "messages": messages,

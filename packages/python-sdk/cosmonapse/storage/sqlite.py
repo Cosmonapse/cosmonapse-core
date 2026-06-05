@@ -17,7 +17,7 @@ import json
 import sqlite3
 from datetime import datetime, timezone
 
-from typing import Any
+from typing import Any, cast
 
 from cosmonapse.storage.base import NeuronRecord, RegistryStore
 
@@ -79,7 +79,7 @@ class SqliteRegistryStore(RegistryStore):
         if self._conn is not None:
             return
 
-        def _open():
+        def _open() -> sqlite3.Connection:
             conn = sqlite3.connect(self._path, check_same_thread=False)
             conn.executescript(_SCHEMA)
             conn.commit()
@@ -102,7 +102,7 @@ class SqliteRegistryStore(RegistryStore):
         assert self._conn is not None, "SqliteRegistryStore.connect() not called"
         conn = self._conn
 
-        def _write():
+        def _write() -> None:
             cur = conn.cursor()
             existing = cur.execute(
                 "SELECT registered_at FROM neurons WHERE neuron_id = ?",
@@ -141,7 +141,7 @@ class SqliteRegistryStore(RegistryStore):
         assert self._conn is not None
         conn = self._conn
 
-        def _write():
+        def _write() -> None:
             conn.execute(
                 "UPDATE neurons SET status = 'deregistered' WHERE neuron_id = ?",
                 (neuron_id,),
@@ -162,7 +162,7 @@ class SqliteRegistryStore(RegistryStore):
         ts_iso = ts.isoformat()
         now_iso = datetime.now(timezone.utc).isoformat()
 
-        def _write():
+        def _write() -> None:
             cur = conn.cursor()
             existing = cur.execute(
                 "SELECT neuron_id FROM neurons WHERE neuron_id = ?", (neuron_id,)
@@ -201,7 +201,7 @@ class SqliteRegistryStore(RegistryStore):
         assert self._conn is not None
         conn = self._conn
 
-        def _read():
+        def _read() -> NeuronRecord | None:
             row = conn.execute(
                 "SELECT neuron_id, capabilities, version, status, "
                 "last_heartbeat, registered_at FROM neurons WHERE neuron_id = ?",
@@ -209,7 +209,7 @@ class SqliteRegistryStore(RegistryStore):
             ).fetchone()
             return _record_from_row(row) if row is not None else None
 
-        return await self._run(_read)
+        return cast("NeuronRecord | None", await self._run(_read))
 
     async def list(
         self,
@@ -220,7 +220,7 @@ class SqliteRegistryStore(RegistryStore):
         assert self._conn is not None
         conn = self._conn
 
-        def _read():
+        def _read() -> list[NeuronRecord]:
             sql = (
                 "SELECT neuron_id, capabilities, version, status, "
                 "last_heartbeat, registered_at FROM neurons"
@@ -237,4 +237,4 @@ class SqliteRegistryStore(RegistryStore):
                 out = [r for r in out if capability in r.capabilities]
             return out
 
-        return await self._run(_read)
+        return cast("list[NeuronRecord]", await self._run(_read))
