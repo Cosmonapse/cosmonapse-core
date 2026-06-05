@@ -560,6 +560,8 @@ class Dendrite(LifecycleHooks):
         if self._running:
             return
 
+        await self._synapse.connect()
+
         if self._registry_store is not None:
             await self._registry_store.connect()
 
