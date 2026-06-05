@@ -130,35 +130,26 @@ class TestEnvelope:
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture
-async def memory_engram():
-    eng = InMemoryEngram(engram_id="ctx-mem", engram_kind="context")
+@pytest.fixture(params=["memory", "sqlite"])
+async def any_engram(request, tmp_path):
+    if request.param == "memory":
+        eng: Engram = InMemoryEngram(engram_id="ctx-mem", engram_kind="context")
+    else:
+        eng = SqliteEngram(
+            path=str(tmp_path / "engram.db"),
+            engram_id="ctx-sqlite",
+            engram_kind="context",
+        )
     await eng.connect()
     yield eng
     await eng.close()
-
-
-@pytest.fixture
-async def sqlite_engram(tmp_path):
-    eng = SqliteEngram(
-        path=str(tmp_path / "engram.db"),
-        engram_id="ctx-sqlite",
-        engram_kind="context",
-    )
-    await eng.connect()
-    yield eng
-    await eng.close()
-
-
-_BACKENDS = ["memory_engram", "sqlite_engram"]
 
 
 class TestEngramConformance:
 
-    @pytest.mark.parametrize("fixture_name", _BACKENDS)
     @pytest.mark.asyncio
-    async def test_append_and_recall(self, fixture_name, request):
-        eng: Engram = request.getfixturevalue(fixture_name)
+    async def test_append_and_recall(self, any_engram):
+        eng = any_engram
         rec = await eng.imprint(
             "append",
             {"content": "hello world", "tags": ["k8s"]},
@@ -171,10 +162,9 @@ class TestEngramConformance:
         assert len(hits) == 1
         assert hits[0].entry["content"] == "hello world"
 
-    @pytest.mark.parametrize("fixture_name", _BACKENDS)
     @pytest.mark.asyncio
-    async def test_imprint_idempotency(self, fixture_name, request):
-        eng: Engram = request.getfixturevalue(fixture_name)
+    async def test_imprint_idempotency(self, any_engram):
+        eng = any_engram
         kwargs = dict(
             entry={"content": "once", "tags": []},
             merge_key="ind:1",
@@ -187,10 +177,9 @@ class TestEngramConformance:
         hits = await eng.recall({"merge_key": "ind:1"})
         assert len(hits) == 1
 
-    @pytest.mark.parametrize("fixture_name", _BACKENDS)
     @pytest.mark.asyncio
-    async def test_upsert_then_merge(self, fixture_name, request):
-        eng: Engram = request.getfixturevalue(fixture_name)
+    async def test_upsert_then_merge(self, any_engram):
+        eng = any_engram
         await eng.imprint(
             "upsert",
             {"content": {"a": 1}, "tags": ["x"]},
@@ -208,10 +197,9 @@ class TestEngramConformance:
         assert set(hits[0].entry["tags"]) == {"x", "y"}
         assert hits[0].entry["version"] == 2
 
-    @pytest.mark.parametrize("fixture_name", _BACKENDS)
     @pytest.mark.asyncio
-    async def test_delete(self, fixture_name, request):
-        eng: Engram = request.getfixturevalue(fixture_name)
+    async def test_delete(self, any_engram):
+        eng = any_engram
         rec = await eng.imprint(
             "append", {"content": "doomed"}, merge_key="d:1",
         )
@@ -220,10 +208,9 @@ class TestEngramConformance:
         hits = await eng.recall({"merge_key": "d:1"})
         assert hits == []
 
-    @pytest.mark.parametrize("fixture_name", _BACKENDS)
     @pytest.mark.asyncio
-    async def test_recall_filters_by_tags(self, fixture_name, request):
-        eng: Engram = request.getfixturevalue(fixture_name)
+    async def test_recall_filters_by_tags(self, any_engram):
+        eng = any_engram
         await eng.imprint("append", {"content": "a", "tags": ["x", "y"]})
         await eng.imprint("append", {"content": "b", "tags": ["x"]})
         await eng.imprint("append", {"content": "c", "tags": ["y"]})
