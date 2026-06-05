@@ -1,5 +1,5 @@
 /**
- * @cosmonapse/sdk — Postgres registry store
+ * @cosmonapse/sdk  -  Postgres registry store
  *
  * Ported from `cosmonapse.storage.postgres`. Backed by `pg` (node-postgres),
  * lazy-imported as an optional dependency: `npm i pg`. Only `connect()` raises

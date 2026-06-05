@@ -4,7 +4,7 @@ cosmonapse.synapse.kafka
 Kafka Synapse adapter.
 
 Kafka does not map onto the Cosmonapse Synapse contract as cleanly as
-NATS — a few translations are needed:
+NATS  -  a few translations are needed:
 
   Cosmonapse                       Kafka
   ----------------------------     ----------------------------------
@@ -20,7 +20,7 @@ NATS — a few translations are needed:
                                    publishing, then awaits one message
                                    matching the request's signal id.
 
-The `aiokafka` library is **lazy-imported** — the module imports fine
+The `aiokafka` library is **lazy-imported**  -  the module imports fine
 without it; `connect()` raises a clear `ImportError` if it is missing.
 
 Install:

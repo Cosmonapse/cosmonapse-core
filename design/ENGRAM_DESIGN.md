@@ -1,4 +1,4 @@
-# Cosmonapse Engram — Design (Draft)
+# Cosmonapse Engram  -  Design (Draft)
 
 **Status:** Draft v0.1
 **Last updated:** 2026-05-29
@@ -15,9 +15,9 @@ An **Engram** is a storage wrapper. It is the second persistent surface in Cosmo
 - It listens on the Synapse for `RECALL` / `IMPRINT` Signals and responds with `RECALLED` / `IMPRINTED` Signals.
 - It owns its own schema. The protocol does not constrain what an Engram stores, only how it is addressed and how it advertises itself.
 
-An Engram is not a Neuron. It does not produce `AGENT_OUTPUT`. It is a synapse-side participant with its own envelope category — the same way a Dendrite is.
+An Engram is not a Neuron. It does not produce `AGENT_OUTPUT`. It is a synapse-side participant with its own envelope category  -  the same way a Dendrite is.
 
-A namespace may run **zero, one, or many** Engrams, each serving a **distinct memory purpose** — one for working context, one for vectors, one for blobs, one for relational records. The intended default is **addressed routing**: a recall says "I want the vector Engram" (by `engram_id`) or "I want a `semantic` Engram" (by `engram_kind`) and the matching Engram answers. Fan-out across multiple Engrams of the same kind is an opt-in for cases like multi-source retrieval — not the default mental model.
+A namespace may run **zero, one, or many** Engrams, each serving a **distinct memory purpose**  -  one for working context, one for vectors, one for blobs, one for relational records. The intended default is **addressed routing**: a recall says "I want the vector Engram" (by `engram_id`) or "I want a `semantic` Engram" (by `engram_kind`) and the matching Engram answers. Fan-out across multiple Engrams of the same kind is an opt-in for cases like multi-source retrieval  -  not the default mental model.
 
 This is closer in spirit to how `TASK` routes by `neuron` than to how `TASK_OFFER` auctions over `BID`s. Engrams are addressable singletons in the namespace; bidding is not the goal.
 
@@ -25,7 +25,7 @@ This is closer in spirit to how `TASK` routes by `neuron` than to how `TASK_OFFE
 
 ## 2. Design principles
 
-- **Recall/imprint are part of the task workflow, not standalone.** A `RECALL` or `IMPRINT` emitted by a Neuron mid-task inherits the containing `TASK.trace_id`. The parent_id chain proves causation. Doppler, cost rollup, deadlines, and any `FINAL` / `ERROR` terminal event apply to the whole slice — Engram I/O included.
+- **Recall/imprint are part of the task workflow, not standalone.** A `RECALL` or `IMPRINT` emitted by a Neuron mid-task inherits the containing `TASK.trace_id`. The parent_id chain proves causation. Doppler, cost rollup, deadlines, and any `FINAL` / `ERROR` terminal event apply to the whole slice  -  Engram I/O included.
 - **Neurons are the primary issuer.** The expected traffic mix is: a handful of Cortex-level recalls per workflow (pre-task hydration, post-task summarisation), and many Neuron-level recalls/imprints inside each TASK. The Axon's helper API is the hot path. Cortex-level helpers are convenience.
 - **Storage is plural.** No single "the memory." Multiple Engrams coexist, one per purpose.
 - **Engrams are black boxes.** The protocol sees opaque keys, queries, results. The schema is the Engram's business.
@@ -64,7 +64,7 @@ This is closer in spirit to how `TASK` routes by `neuron` than to how `TASK_OFFE
             └─────────────┘
 ```
 
-The Engram class is the analogue of the `Neuron` — pure logic, no protocol knowledge. The Engram Dendrite is the analogue of the `Axon` + `Dendrite` pair on the agent side — it owns the wire.
+The Engram class is the analogue of the `Neuron`  -  pure logic, no protocol knowledge. The Engram Dendrite is the analogue of the `Axon` + `Dendrite` pair on the agent side  -  it owns the wire.
 
 ---
 
@@ -101,7 +101,7 @@ A search request. Any Dendrite can emit it. Engrams whose `engram_kind` matches 
 | `context_ref`   | no  | Same form as TASK. Scopes the recall (trace / session / project). |
 | `deadline_ms`   | no  | Best-effort SLA. Engrams that cannot meet it should not respond. |
 | `min_confidence`| no  | Drops weak hits before responding. |
-| `recall_mode`   | no  | `"first"` (default — one responder wins, others drop the request), `"merge"` (fan-out, caller merges), `"all"` (fan-out, caller gets each `RECALLED` separately). |
+| `recall_mode`   | no  | `"first"` (default  -  one responder wins, others drop the request), `"merge"` (fan-out, caller merges), `"all"` (fan-out, caller gets each `RECALLED` separately). |
 
 **Routing precedence.** `engram_id` beats `engram_kind`. When only `engram_kind` is set and multiple Engrams of that kind exist, behaviour depends on `recall_mode`. The conventional deployment runs one Engram per kind, so `recall_mode: "first"` is a safe default.
 
@@ -122,7 +122,7 @@ A search request. Any Dendrite can emit it. Engrams whose `engram_kind` matches 
 }
 ```
 
-`parent_id` MUST point to the `RECALL` event. Multiple Engrams may respond — the Cortex merges or picks.
+`parent_id` MUST point to the `RECALL` event. Multiple Engrams may respond  -  the Cortex merges or picks.
 
 ### 4.3 `IMPRINT`  `[D]`
 
@@ -152,15 +152,15 @@ A search request. Any Dendrite can emit it. Engrams whose `engram_kind` matches 
 | `entry`       | yes | Opaque body. The Engram validates against its declared schema. |
 | `merge_key`   | conditional | Required when `op = merge` or `op = upsert`. |
 
-Imprints are addressed by default (one Engram writes). Broadcast writes — e.g. "every semantic Engram should index this" — are explicitly opt-in via `meta.broadcast: true`. The protocol does not promise atomicity across multiple receivers.
+Imprints are addressed by default (one Engram writes). Broadcast writes  -  e.g. "every semantic Engram should index this"  -  are explicitly opt-in via `meta.broadcast: true`. The protocol does not promise atomicity across multiple receivers.
 
 `op` semantics:
 
-- `add` — insert; fail if id exists.
-- `append` — append to a sequence/log keyed by `merge_key` (or auto-create one).
-- `merge` — locate by `merge_key`, deep-merge `entry` into the existing record.
-- `upsert` — replace if `merge_key` matches, otherwise insert.
-- `delete` — remove by id or `merge_key`.
+- `add`  -  insert; fail if id exists.
+- `append`  -  append to a sequence/log keyed by `merge_key` (or auto-create one).
+- `merge`  -  locate by `merge_key`, deep-merge `entry` into the existing record.
+- `upsert`  -  replace if `merge_key` matches, otherwise insert.
+- `delete`  -  remove by id or `merge_key`.
 
 ### 4.4 `IMPRINTED`  `[D]`
 
@@ -179,13 +179,13 @@ Imprints are addressed by default (one Engram writes). Broadcast writes — e.g.
 
 ### 4.5 Lifecycle signals reuse
 
-Engrams piggyback on the existing agent-management signals — no new ones needed:
+Engrams piggyback on the existing agent-management signals  -  no new ones needed:
 
 - `REGISTER` with `payload.role = "engram"`, `payload.engram_kind = "semantic"`, plus `capabilities` listing supported query features (`vector_search`, `bm25`, `sql`, `time_range`, `tags`, …).
 - `HEARTBEAT` / `DEREGISTER` unchanged.
 - `DISCOVER` can filter by `role: "engram"` and `engram_kind`.
 
-This means `RegistryStore` already tracks Engrams — no second registry surface required.
+This means `RegistryStore` already tracks Engrams  -  no second registry surface required.
 
 ### 4.6 New ULID prefix
 
@@ -193,12 +193,12 @@ This means `RegistryStore` already tracks Engrams — no second registry surface
 
 ### 4.7 Allowed-producer sets
 
-Add `RECALL`, `RECALLED`, `IMPRINT`, `IMPRINTED` to `SYNAPSE_TYPES`. Axons still cannot produce them — they go through the hosting Dendrite, same as `MEMORY_APPEND`.
+Add `RECALL`, `RECALLED`, `IMPRINT`, `IMPRINTED` to `SYNAPSE_TYPES`. Axons still cannot produce them  -  they go through the hosting Dendrite, same as `MEMORY_APPEND`.
 
 ### 4.8 Relation to existing `MEMORY_APPEND` / `CONTEXT_SYNC`
 
 - `MEMORY_APPEND` becomes a **convenience macro** that compiles to `IMPRINT { op: "append" }`. Keep it for back-compat; mark "prefer IMPRINT" in the spec.
-- `CONTEXT_SYNC` is unchanged — it's a transient broadcast, not a storage op.
+- `CONTEXT_SYNC` is unchanged  -  it's a transient broadcast, not a storage op.
 
 ---
 
@@ -226,7 +226,7 @@ class Engram(ABC):
     async def imprint(self, op: str, entry: dict, *,
                       merge_key: str | None = None) -> ImprintResult: ...
 
-    # Optional override — Engrams that cannot serve a query should return None
+    # Optional override  -  Engrams that cannot serve a query should return None
     async def can_serve(self, query: dict) -> bool:
         return True
 ```
@@ -257,7 +257,7 @@ await dendrite.start()
 
 ### 5.3 Mid-task recall from inside a Neuron
 
-This is the workflow that drives the whole design: a Neuron is processing a TASK, decides it needs prior context (or a vector lookup, or a blob, or anything else), asks for it, and continues. The Neuron stays a pure function — it never touches the Synapse. The Axon exposes a small helper, the Dendrite does the wire work.
+This is the workflow that drives the whole design: a Neuron is processing a TASK, decides it needs prior context (or a vector lookup, or a blob, or anything else), asks for it, and continues. The Neuron stays a pure function  -  it never touches the Synapse. The Axon exposes a small helper, the Dendrite does the wire work.
 
 ```python
 async def web_research_neuron(input, context, *, recall, imprint):
@@ -323,7 +323,7 @@ The producer-allowed sets stay unchanged:
 
 The lifecycle of a TASK includes every RECALL and IMPRINT the Neuron emits while servicing it. They are not separate workflows. Concretely:
 
-**Trace.** Every RECALL / RECALLED / IMPRINT / IMPRINTED emitted on behalf of a TASK carries that TASK's `trace_id`. No new trace_id is minted. The Axon helpers do this automatically — the application code never thinks about trace_id.
+**Trace.** Every RECALL / RECALLED / IMPRINT / IMPRINTED emitted on behalf of a TASK carries that TASK's `trace_id`. No new trace_id is minted. The Axon helpers do this automatically  -  the application code never thinks about trace_id.
 
 **Causal chain.** Within a single TASK slice:
 
@@ -338,24 +338,24 @@ TASK.id   = T
 
 `parent_id` always points at the immediate causal event. The full causal tree is reconstructable by walking parents; the trace_id gives you the cheap slice query.
 
-**Cost rollup.** `RECALLED` and `IMPRINTED` MAY set `meta.cost_micro_usd` (e.g. embedding fees, vector-db read units). These aggregate into the TASK's total per the existing `cost_micro_usd` convention in §5.4 of the envelope spec. The TASK's `budget_usd`, if set, bounds the whole slice — recalls included.
+**Cost rollup.** `RECALLED` and `IMPRINTED` MAY set `meta.cost_micro_usd` (e.g. embedding fees, vector-db read units). These aggregate into the TASK's total per the existing `cost_micro_usd` convention in §5.4 of the envelope spec. The TASK's `budget_usd`, if set, bounds the whole slice  -  recalls included.
 
-**Deadlines.** A RECALL's `deadline_ms` is local to that recall. The TASK's own `deadline` still bounds the slice as a whole — a Neuron that burns its TASK deadline waiting on recalls gets a TASK-level timeout.
+**Deadlines.** A RECALL's `deadline_ms` is local to that recall. The TASK's own `deadline` still bounds the slice as a whole  -  a Neuron that burns its TASK deadline waiting on recalls gets a TASK-level timeout.
 
 **Terminal events.** The first `FINAL` or `ERROR` on `trace_id` wins as before. A late `RECALLED` or `IMPRINTED` arriving after a terminal event is dropped (consumers de-dupe by id and ignore post-FINAL events).
 
-**Cancellation.** If the Cortex cancels a TASK (via `ERROR { kind: "cancelled" }`), the Axon's pending-recall Futures resolve with `EngramCancelled`. In-flight imprints are not rolled back — the protocol is at-least-once. Engrams that need exactly-once apply the `imprint_id` dedupe.
+**Cancellation.** If the Cortex cancels a TASK (via `ERROR { kind: "cancelled" }`), the Axon's pending-recall Futures resolve with `EngramCancelled`. In-flight imprints are not rolled back  -  the protocol is at-least-once. Engrams that need exactly-once apply the `imprint_id` dedupe.
 
-**Doppler view.** A Doppler subscribed to `trace_id = T` sees the TASK, every RECALL/RECALLED, every IMPRINT/IMPRINTED, intermediate cognition events, and the AGENT_OUTPUT — in one stream. No separate memory log needs to be reconciled.
+**Doppler view.** A Doppler subscribed to `trace_id = T` sees the TASK, every RECALL/RECALLED, every IMPRINT/IMPRINTED, intermediate cognition events, and the AGENT_OUTPUT  -  in one stream. No separate memory log needs to be reconciled.
 
 ### 5.5 Who emits what
 
 | Issuer | When | What it emits | Surface |
 |---|---|---|---|
-| **Neuron (via Axon)** | inside `neuron_fn` while servicing a TASK | most RECALL, most IMPRINT | injected `recall` / `imprint` helpers — the hot path |
+| **Neuron (via Axon)** | inside `neuron_fn` while servicing a TASK | most RECALL, most IMPRINT | injected `recall` / `imprint` helpers  -  the hot path |
 | **Cortex / orchestrating Dendrite** | before dispatching a TASK (hydrate context); after FINAL (persist summary, memoise result) | a handful per workflow | `dendrite.recall(...)` / `dendrite.imprint(...)` |
 | **Engram itself** | when one Engram needs another to satisfy a query (cache fill, projection materialisation) | RECALL → another Engram, then IMPRINT to itself | same helpers on its hosting Dendrite |
-| **Doppler / external observer** | never | — | read-only |
+| **Doppler / external observer** | never |  -  | read-only |
 
 The Axon's helper is therefore the surface that needs the most polish: deterministic correlation, bounded queues, deadline enforcement, clean cancellation. The Cortex's helpers can wrap it.
 
@@ -397,8 +397,8 @@ If every TASK triggers two or three recalls, Synapse traffic scales as `O(TASKs 
 
 Two coalescing options the SDK can offer later (not in v1):
 
-- **Per-TASK recall batch** — Axon helper collects multiple `recall(...)` calls inside one async tick and emits a single RECALL with a `queries: [...]` payload. The Engram responds once.
-- **Per-Engram local cache** — Axon caches recent RECALLED results keyed by `(engram_id, query_hash)` for the duration of the TASK. Imprints on the same Engram invalidate it.
+- **Per-TASK recall batch**  -  Axon helper collects multiple `recall(...)` calls inside one async tick and emits a single RECALL with a `queries: [...]` payload. The Engram responds once.
+- **Per-Engram local cache**  -  Axon caches recent RECALLED results keyed by `(engram_id, query_hash)` for the duration of the TASK. Imprints on the same Engram invalidate it.
 
 Both are SDK-level optimisations; neither changes the wire protocol.
 
@@ -440,7 +440,7 @@ What the Axon hands the Dendrite, per call:
 
 | Field | Source |
 |---|---|
-| `binding` | from the Axon's declared `engrams=[...]` list — resolves to `engram_id` or `engram_kind` |
+| `binding` | from the Axon's declared `engrams=[...]` list  -  resolves to `engram_id` or `engram_kind` |
 | `query` / `entry` / `op` / `merge_key` / `filters` | from the Neuron's call |
 | `deadline_ms` / `recall_mode` / `await_ack` | defaults from the binding, overridable per call |
 
@@ -470,13 +470,13 @@ The Neuron **never** sees `EngramClient` either. It only sees the helpers the Ax
 This keeps three layers cleanly separated:
 
 ```
-Neuron        — pure fn; sees recall.ctx(...) / imprint.ctx(...)
+Neuron         -  pure fn; sees recall.ctx(...) / imprint.ctx(...)
    ▼ helper call
-Axon          — validates binding, packages args
+Axon           -  validates binding, packages args
    ▼ EngramClient call (in-process)
-Dendrite      — builds envelope, owns Synapse, correlates by parent_id
+Dendrite       -  builds envelope, owns Synapse, correlates by parent_id
    ▼ Synapse
-Engram Dendrite (other process) — services the request
+Engram Dendrite (other process)  -  services the request
 ```
 
 The same `EngramClient` interface is what the Cortex's own `dendrite.recall(...)` / `dendrite.imprint(...)` helpers call. The Cortex case just sets `trace_id` and `parent_id` from its own dispatch context instead of an active TASK.
@@ -491,7 +491,7 @@ await cortex.imprint(
     entry={"content": "...", "tags": ["k8s"]},
 )
 
-# competitive recall — returns merged hits across all responding Engrams
+# competitive recall  -  returns merged hits across all responding Engrams
 hits = await cortex.recall(
     engram_kind="semantic",
     query={"text": "...", "top_k": 5},
@@ -514,7 +514,7 @@ Under the hood `recall` is `dispatch_task`-shaped: emit `RECALL`, collect `RECAL
 | `S3Engram`         | `blob`                  | `recall` is by key/prefix, no search. |
 | `InMemoryEngram`   | any                     | Tests, ephemeral runs. |
 
-A single backend can register **multiple** Engrams of different kinds (e.g. Postgres serving both `relational` and `keyvalue`) — each is a separate `attach_engram` call with its own `engram_id`.
+A single backend can register **multiple** Engrams of different kinds (e.g. Postgres serving both `relational` and `keyvalue`)  -  each is a separate `attach_engram` call with its own `engram_id`.
 
 ---
 
@@ -576,7 +576,7 @@ CREATE INDEX engram_embedding_idx
 
 All flows below run inside a single `trace_id = T`. Every envelope carries it; the diagrams show only `parent_id` for clarity.
 
-### 8.1 Neuron mid-task — the canonical flow
+### 8.1 Neuron mid-task  -  the canonical flow
 
 ```
 Cortex → TASK[T] (parent: none)                          neuron=web_research
@@ -619,7 +619,7 @@ Neuron's Axon → IMPRINT(engram_id=ctx-default, op=append)
    │     → IMPRINTED(parent_id=IMPRINT.id, id=eng_…, version=1)
    │
    └─→ relational Engram Dendrite
-         (skips — engram_id mismatch)
+         (skips  -  engram_id mismatch)
 ```
 
 ### 8.3 Recall routing (addressed, default)
@@ -681,16 +681,16 @@ What's strong:
 
 - **Symmetry with TASK/AGENT_OUTPUT.** Reusing the same request/response shape (`RECALL`/`RECALLED`, `IMPRINT`/`IMPRINTED`) means no new mental model. Cortex code that already handles `dispatch_task` patterns reads identically.
 - **Plural storage by construction.** Multiple Engrams over one namespace falls out of the existing subscription model. No new router.
-- **Lifecycle reuse.** REGISTER/HEARTBEAT/DEREGISTER/DISCOVER need zero changes — Engrams are just participants with a different `role`.
+- **Lifecycle reuse.** REGISTER/HEARTBEAT/DEREGISTER/DISCOVER need zero changes  -  Engrams are just participants with a different `role`.
 - **Backwards-compatible.** `MEMORY_APPEND` stays valid as a thin alias for `IMPRINT { op: "append" }`.
 
 What's risky:
 
-- **Multiple Engrams of the same kind.** The default (`recall_mode: "first"`) assumes one Engram per purpose, which matches the intended deployment (one context Engram, one vector Engram, one blob Engram). Fan-out is opt-in via `"merge"` / `"all"`. If someone runs two `semantic` Engrams without setting `recall_mode`, the first one to answer wins and the other silently does work it discards — document this as the trade-off.
+- **Multiple Engrams of the same kind.** The default (`recall_mode: "first"`) assumes one Engram per purpose, which matches the intended deployment (one context Engram, one vector Engram, one blob Engram). Fan-out is opt-in via `"merge"` / `"all"`. If someone runs two `semantic` Engrams without setting `recall_mode`, the first one to answer wins and the other silently does work it discards  -  document this as the trade-off.
 - **`op = merge` is fragile.** Deep-merging arbitrary JSON has no obvious right answer (replace vs concat arrays, null handling, etc.). Recommend Engrams declare their merge strategy in capabilities (`merge: "jsonpatch"`, `merge: "deep"`) and reject `merge` ops they don't support.
 - **`engram_kind` is doing two jobs.** It's both a routing topic and a schema hint. If we ever want one Engram to serve multiple kinds, that's already covered by attaching it twice, but the spec should be explicit that `engram_kind` is a routing label, not a type.
 - **Idempotency window.** `engram_imprint_seen` grows forever. Needs a TTL sweep or partitioned-by-day storage.
-- **No transactional multi-imprint.** Workflows that need "imprint A and B atomically" can't get it. Probably fine — if you need ACID, hit Postgres directly through a Neuron. Document it explicitly.
+- **No transactional multi-imprint.** Workflows that need "imprint A and B atomically" can't get it. Probably fine  -  if you need ACID, hit Postgres directly through a Neuron. Document it explicitly.
 
 What we should defer:
 

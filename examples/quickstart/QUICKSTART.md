@@ -1,6 +1,6 @@
 # Cosmonapse Quickstart
 
-From zero to a working signal pipeline — manually, step by step.
+From zero to a working signal pipeline  -  manually, step by step.
 
 ---
 
@@ -18,12 +18,12 @@ pip install -e 'cosmonapse-core/packages/python-sdk[flask]'
 
 ---
 
-## Step 1 — Start a Synapse
+## Step 1  -  Start a Synapse
 
 A **Synapse** is the message bus. Every process connects to one.  
-For local dev, `DevSynapseServer` is a zero-dependency TCP broker — no NATS, no Kafka.
+For local dev, `DevSynapseServer` is a zero-dependency TCP broker  -  no NATS, no Kafka.
 
-**Option A — CLI (recommended)**
+**Option A  -  CLI (recommended)**
 
 If you installed the CLI, this is one command:
 
@@ -46,7 +46,7 @@ cosmo synapse start memory --namespace=quickstart
 
 The CLI also streams every Signal that crosses the bus to stdout, so you get the Doppler behaviour built-in. Pass `--quiet` if you don't want that.
 
-**Option B — Python**
+**Option B  -  Python**
 
 If you haven't installed the CLI, paste this into `synapse.py` and run it:
 
@@ -70,11 +70,24 @@ python synapse.py
 
 Leave this terminal open. Everything else connects to `cosmo://127.0.0.1:7070`.
 
+### Watch it live with Prism
+
+Right after the Synapse is up, open the **Prism** browser visualization in a
+second terminal so you can watch Signals flow across the bus as you build:
+
+```bash
+cosmo doppler --prism --url=cosmo://127.0.0.1:7070 -n quickstart
+```
+
+This launches the Prism UI (default at <http://127.0.0.1:7071>) and opens it in
+your browser. Leave it running alongside the Synapse  -  every TASK, AGENT_OUTPUT,
+and FINAL Signal from the steps below shows up there in real time.
+
 ---
 
-## Step 2 — Code a Neuron
+## Step 2  -  Code a Neuron
 
-A **Neuron** is just an async function. It has zero knowledge of the protocol — no imports from cosmonapse, no Signal boilerplate.
+A **Neuron** is just an async function. It has zero knowledge of the protocol  -  no imports from cosmonapse, no Signal boilerplate.
 
 ```python
 async def hello_neuron(input: dict, context: list) -> dict:
@@ -86,7 +99,7 @@ That's it. The Neuron only knows about its job.
 
 ---
 
-## Step 3 — Wrap it in an Axon
+## Step 3  -  Wrap it in an Axon
 
 An **Axon** is the agent-side tool that gives your Neuron an identity on the bus. It validates the Neuron's output into a protocol-valid Signal, handles errors, and manages the Neuron's `neuron_id` and capabilities.
 
@@ -101,11 +114,11 @@ axon = Axon(
 )
 ```
 
-The Axon doesn't run yet — it needs a Dendrite to connect it to the bus.
+The Axon doesn't run yet  -  it needs a Dendrite to connect it to the bus.
 
 ---
 
-## Step 4 — Connect a Dendrite
+## Step 4  -  Connect a Dendrite
 
 A **Dendrite** is the synapse-side participant. It connects to the Synapse, emits `REGISTER` on behalf of your Axon, subscribes to `TASK` signals, and routes them to the right Axon.
 
@@ -149,7 +162,7 @@ The worker is now registered on the bus. Any process can dispatch a `TASK` to `"
 
 ---
 
-## Step 5 — Connect Doppler
+## Step 5  -  Connect Doppler
 
 Open a third terminal and run:
 
@@ -158,17 +171,17 @@ cosmo doppler --synapse=cosmo://127.0.0.1:7070/quickstart
 ```
 
 ```
-● Doppler attached — namespace: quickstart
+● Doppler attached  -  namespace: quickstart
   Watching all signal types
 ```
 
-Doppler is a read-only observer that streams every Signal flowing through the bus. You don't touch your code — it just taps in. Leave it running and watch signals appear in the next steps.
+Doppler is a read-only observer that streams every Signal flowing through the bus. You don't touch your code  -  it just taps in. Leave it running and watch signals appear in the next steps.
 
 ---
 
-## Step 6 — Flask Server + Dendrite
+## Step 6  -  Flask Server + Dendrite
 
-Now wire an HTTP interface. The server runs an **orchestrator Dendrite** — it has no Axon, its job is to dispatch tasks and collect results.
+Now wire an HTTP interface. The server runs an **orchestrator Dendrite**  -  it has no Axon, its job is to dispatch tasks and collect results.
 
 Flask is synchronous; cosmonapse is async. The bridge: run the asyncio loop in a background thread and use `concurrent.futures.Future` to hand results back to Flask.
 
@@ -235,7 +248,7 @@ python server.py
 
 ---
 
-## Step 7 — Test with Hello
+## Step 7  -  Test with Hello
 
 Send a task from the terminal:
 
@@ -290,16 +303,10 @@ server.py  (on_agent_output resolves the Future)
 curl receives {"message": "Hello, Cosmonapse!"}
 ```
 
-Four processes, two Dendrites, one Synapse, one Neuron — connected by Signals.
+Four processes, two Dendrites, one Synapse, one Neuron  -  connected by Signals.
 
 ---
 
 ## Next steps
 
-**Replace the Neuron with a real LLM call** — just make `hello_neuron` async and call OpenAI/Anthropic inside it. Nothing else changes.
-
-**Chain two Neurons** — inside `on_agent_output`, call `orch.dispatch_task(neuron="second-neuron", ...)` with the result as input.
-
-**Go to production** — change `cosmo://127.0.0.1:7070` to `nats://localhost:4222` everywhere. The Dendrite, Axon, and Neuron code is identical.
-
-**Persist the registry** — pass `registry_store=SqliteRegistryStore("registry.db")` to your Dendrite to track which neurons are online.
+**Replace the Neuron with a real LLM call**  -  swap `hello_neuron

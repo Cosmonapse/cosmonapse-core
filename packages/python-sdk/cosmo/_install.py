@@ -6,14 +6,14 @@ Helpers that make `pip install -e <cosmonapse>` feel like a "real" install
 on a fresh machine by also putting the Python Scripts/bin directory on the
 user's persistent PATH so the `cosmo` command is callable from any shell.
 
-This lives in the ``cosmo`` CLI package — not in the ``cosmonapse`` SDK —
+This lives in the ``cosmo`` CLI package  -  not in the ``cosmonapse`` SDK  - 
 because manipulating the user's shell configuration is CLI/installer
 behaviour, not something an imported library should ever do.
 
 Two entry points are exposed by pyproject.toml:
 
-* ``cosmonapse-init-path`` — a console script created by pip at install time.
-* ``python -m cosmo._install`` — works even before PATH has been updated.
+* ``cosmonapse-init-path``  -  a console script created by pip at install time.
+* ``python -m cosmo._install``  -  works even before PATH has been updated.
 
 The same module is also invoked automatically by the top-level installer
 script (``cosmonapse-core/install.py``) right after it runs
@@ -148,7 +148,7 @@ def _update_path_posix(target: Path) -> bool:
 
         content = rc.read_text(encoding="utf-8", errors="replace") if rc.exists() else ""
         if marker in content:
-            # Already managed — refresh the block in case the target changed.
+            # Already managed  -  refresh the block in case the target changed.
             before, _, rest = content.partition(marker)
             _, _, after = rest.partition(end_marker)
             new_content = before.rstrip() + block + after.lstrip()

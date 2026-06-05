@@ -3,7 +3,7 @@ cosmonapse.engram.postgres
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 Postgres Engram via asyncpg. JSONB content + GIN indexes for tags.
 
-asyncpg is lazy-imported so this module loads without the dep — only
+asyncpg is lazy-imported so this module loads without the dep  -  only
 connect() raises a clear ImportError when the package is missing.
 
 Recall surface matches SqliteEngram for portability:

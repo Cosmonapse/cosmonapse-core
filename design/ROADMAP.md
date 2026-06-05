@@ -1,4 +1,4 @@
-# Cosmonapse — Road to 1.0.0
+# Cosmonapse  -  Road to 1.0.0
 
 This document is the milestone-by-milestone plan from the current public alpha
 (**0.1.0**) to a stable **1.0.0**. The theme of the 0.x → 1.0 line is
@@ -27,7 +27,7 @@ The gaps that 1.0 must close, in priority order, are below.
 
 ---
 
-## Milestone 0.2.0 — "Provable" (engineering hygiene)
+## Milestone 0.2.0  -  "Provable" (engineering hygiene)
 
 The single most important gap: nothing currently enforces the tests. Close that
 first so every subsequent change lands on a green baseline.
@@ -47,7 +47,7 @@ first so every subsequent change lands on a green baseline.
 
 ---
 
-## Milestone 0.3.0 — "Frozen contract" (protocol)
+## Milestone 0.3.0  -  "Frozen contract" (protocol)
 
 Make the spec something a third party can implement against without reading
 Python.
@@ -67,7 +67,7 @@ Python.
 
 ---
 
-## Milestone 0.4.0 — "Real transports" (reliability)
+## Milestone 0.4.0  -  "Real transports" (reliability)
 
 Today the memory and dev-TCP synapses are well tested; NATS/Kafka/Postgres paths
 are not exercised against real services.
@@ -85,12 +85,12 @@ integration test in CI.
 
 ---
 
-## Milestone 0.5.0 — "Parity" (TypeScript SDK)
+## Milestone 0.5.0  -  "Parity" (TypeScript SDK)
 
 Promote the TS SDK from preview to first-class by closing the
 `PORTING_STATUS.md` gaps that block authoring decentralised workflows.
 
-- ☐ Lifecycle hooks (`on_connect` / `on_refresh` / `on_schedule`) — required for
+- ☐ Lifecycle hooks (`on_connect` / `on_refresh` / `on_schedule`)  -  required for
       p2p workflows; currently the headline gap.
 - ☐ `connectSynapse(url)` URL factory (parity with `connect_synapse`).
 - ☐ `DevSynapse` / dev broker client so TS-first users need no Python process.
@@ -103,7 +103,7 @@ only items explicitly deferred past 1.0 with rationale.
 
 ---
 
-## Milestone 1.0.0 — "Stable"
+## Milestone 1.0.0  -  "Stable"
 
 - ☐ All of the above complete and green in CI.
 - ☐ API reference docs generated for both SDKs.

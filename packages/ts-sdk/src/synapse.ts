@@ -1,13 +1,13 @@
 /**
- * @cosmonapse/sdk — synapse
+ * @cosmonapse/sdk  -  synapse
  *
  * The Synapse interface (five methods) and the in-process MemorySynapse,
  * ported 1:1 from `cosmonapse.synapse.base` / `cosmonapse.synapse.memory`.
  *
- * MemorySynapse is NOT a throwaway test double — it is the adapter that backs
+ * MemorySynapse is NOT a throwaway test double  -  it is the adapter that backs
  * the local dev experience, and any code written against it works unchanged
  * against a networked adapter. NatsSynapse is ported (synapse-nats.ts); the
- * Kafka adapter is still outstanding — see PORTING_STATUS.md.
+ * Kafka adapter is still outstanding  -  see PORTING_STATUS.md.
  *
  * Subject convention (ENVELOPE_SPEC.md §10):
  *   cosmonapse.<namespace>.<type>     e.g. cosmonapse.team_a.TASK
@@ -145,7 +145,7 @@ export class MemorySynapse implements Synapse {
   async publish(subject: string, signal: Signal): Promise<void> {
     if (!this.connected) throw new Error("Synapse not connected");
     // Serialise to bytes and back so every subscriber gets an independent
-    // copy — mirrors a real wire and prevents shared-reference mutation.
+    // copy  -  mirrors a real wire and prevents shared-reference mutation.
     await this.deliver(subject, signal);
   }
 
@@ -256,7 +256,7 @@ export class MemorySynapse implements Synapse {
   async replyTo(original: Signal, reply: Signal): Promise<void> {
     const replySubject = original.meta["_reply_to"];
     if (typeof replySubject !== "string" || !replySubject) {
-      throw new Error("Signal has no _reply_to in meta — not a request signal");
+      throw new Error("Signal has no _reply_to in meta  -  not a request signal");
     }
     await this.publish(replySubject, reply);
   }

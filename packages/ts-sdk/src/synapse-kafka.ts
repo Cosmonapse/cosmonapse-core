@@ -1,9 +1,9 @@
 /**
- * @cosmonapse/sdk — Kafka synapse adapter
+ * @cosmonapse/sdk  -  Kafka synapse adapter
  *
  * Ported from `cosmonapse.synapse.kafka`.
  *
- * Kafka does not map onto the Synapse contract as cleanly as NATS — a few
+ * Kafka does not map onto the Synapse contract as cleanly as NATS  -  a few
  * translations are needed:
  *
  *   Cosmonapse                    Kafka
@@ -19,7 +19,7 @@
  *                                 then awaits one message whose parent_id
  *                                 matches the request's signal id.
  *
- * The `kafkajs` library is **lazy-imported** — the module loads fine without it;
+ * The `kafkajs` library is **lazy-imported**  -  the module loads fine without it;
  * `connect()` raises a clear error if it is missing. Install:  npm i kafkajs
  *
  * Caveats

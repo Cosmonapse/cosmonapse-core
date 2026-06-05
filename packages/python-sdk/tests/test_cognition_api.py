@@ -3,7 +3,7 @@ Tests for the cognition decorator/emit surface and filter ergonomics.
 
 Covers:
   * Cognition decorators (@on_plan, @on_critique, @on_memory_append, ...)
-    receive matching signals — plugging the AXON_TYPES-only gap in
+    receive matching signals  -  plugging the AXON_TYPES-only gap in
     Dendrite._dispatch_inbound.
   * emit_* helpers for cognition signals round-trip through the bus and
     produce well-formed envelopes that match the underlying builders.

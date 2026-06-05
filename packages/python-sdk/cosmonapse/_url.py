@@ -11,7 +11,7 @@ closing it.
   nats://host:port       -> NatsSynapse
   kafka://host:port      -> KafkaSynapse
 
-For in-process MemorySynapse, construct it directly — a URL would be
+For in-process MemorySynapse, construct it directly  -  a URL would be
 ambiguous across processes.
 """
 
@@ -64,7 +64,7 @@ async def connect_synapse(url: str) -> Synapse:
             await synapse.close()
 
     Multiple Dendrites and Cortices can share the same Synapse instance.
-    Closing the Synapse is the caller's responsibility — no component
+    Closing the Synapse is the caller's responsibility  -  no component
     will close it on you.
     """
     t = synapse_from_url(url)

@@ -51,7 +51,7 @@ threading.Thread(target=_run_event_loop, daemon=True, name="cosmo-loop").start()
 
 
 # ---------------------------------------------------------------------------
-# Async setup — runs once at import time inside the background loop
+# Async setup  -  runs once at import time inside the background loop
 # ---------------------------------------------------------------------------
 
 async def _setup_dendrite() -> None:
@@ -61,7 +61,7 @@ async def _setup_dendrite() -> None:
         synapse     = synapse,
         namespace   = NAMESPACE,
         dendrite_id = "http-orch",
-        heartbeat_s = 0,   # no axons here — heartbeat not needed
+        heartbeat_s = 0,   # no axons here  -  heartbeat not needed
     )
 
     @_orch.on_agent_output
@@ -108,7 +108,7 @@ _HTML = """<!doctype html>
   </style>
 </head>
 <body>
-  <h2>Cosmonapse — Hello Quickstart</h2>
+  <h2>Cosmonapse  -  Hello Quickstart</h2>
   <p>Send a task to the <code>hello-neuron</code> and see the response.</p>
   <form id="f">
     <input id="name" type="text" placeholder="Your name" value="World" autocomplete="off" />
@@ -116,7 +116,7 @@ _HTML = """<!doctype html>
   </form>
   <br>
   <div class="label">Response</div>
-  <pre id="out">—</pre>
+  <pre id="out"> - </pre>
 
   <script>
     document.getElementById("f").onsubmit = async (e) => {
@@ -170,7 +170,7 @@ def submit_task():
         return jsonify({"ok": True, "trace_id": trace_id, "result": result})
     except concurrent.futures.TimeoutError:
         _pending.pop(trace_id, None)
-        return jsonify({"ok": False, "error": "timeout — is the worker running?"}), 504
+        return jsonify({"ok": False, "error": "timeout  -  is the worker running?"}), 504
     except Exception as exc:
         return jsonify({"ok": False, "error": str(exc)}), 500
 

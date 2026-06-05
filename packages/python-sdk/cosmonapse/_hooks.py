@@ -3,7 +3,7 @@ cosmonapse._hooks
 ~~~~~~~~~~~~~~~~~
 Shared lifecycle-hook surface for Axon, Dendrite, Cortex.
 
-Three hook kinds — chosen because they cover both the centralised
+Three hook kinds  -  chosen because they cover both the centralised
 (orchestrator-first) and decentralised (peer-to-peer) cases:
 
     on_connect       fire-once after this component finishes its own
@@ -12,7 +12,7 @@ Three hook kinds — chosen because they cover both the centralised
                      wired)
 
     on_refresh       fired internally whenever the component's
-                     observable state refreshes — heartbeat tick,
+                     observable state refreshes  -  heartbeat tick,
                      REGISTER / DEREGISTER / HEARTBEAT seen by the
                      Cortex's registry, a manual `await refresh()`.
                      The handler receives a RefreshEvent describing
@@ -28,7 +28,7 @@ Without a central Cortex, each Dendrite can use:
 
     @dendrite.on_connect
     async def announce(d):
-        # peer hello — broadcast our local registry to anyone listening
+        # peer hello  -  broadcast our local registry to anyone listening
         ...
 
     @dendrite.on_refresh

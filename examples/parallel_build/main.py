@@ -1,7 +1,7 @@
 """
 examples/parallel_build/main.py
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-"Build a website" — one task, multiple Neurons working in parallel.
+"Build a website"  -  one task, multiple Neurons working in parallel.
 
 This is the core Cosmonapse use case: a single high-level task fans out
 across a team of specialised Neurons. Each Neuron writes its output to
@@ -22,7 +22,7 @@ Architecture (new vocabulary)
                    ▼
             ┌──────────────────┐
             │  one Dendrite    │  (hosts every Axon in this example
-            │  per process     │   for brevity — in production each
+            │  per process     │   for brevity  -  in production each
             └────────┬─────────┘   Neuron has its own Dendrite)
                      │
             ┌────────┴──────────────────────────────┐
@@ -66,7 +66,7 @@ logger = logging.getLogger("cortex")
 
 
 # ---------------------------------------------------------------------------
-# Neurons — pure functions, zero protocol knowledge
+# Neurons  -  pure functions, zero protocol knowledge
 # ---------------------------------------------------------------------------
 
 
@@ -179,7 +179,7 @@ def make_context_fetcher(engram: Engram):
 
 
 # ---------------------------------------------------------------------------
-# Workflow — built on top of the Cortex
+# Workflow  -  built on top of the Cortex
 # ---------------------------------------------------------------------------
 
 
@@ -314,7 +314,7 @@ async def main() -> None:
     engram = Engram()
     fetch = make_context_fetcher(engram)
 
-    # All Axons for this team — in production each lives in its own process.
+    # All Axons for this team  -  in production each lives in its own process.
     axons = [
         Axon(neuron_id="design-neuron",   neuron_fn=design_neuron,
              capabilities=["ui-design", "ux"],          context_fetcher=fetch),
@@ -342,7 +342,7 @@ async def main() -> None:
                     namespace="default", dendrite_id="build-site-cortex")
 
     print("\n" + "═" * 60)
-    print("  Cosmonapse — parallel_build example")
+    print("  Cosmonapse  -  parallel_build example")
     print("  Brief: 'Build a SaaS landing page for a dev tool'")
     print("═" * 60 + "\n")
 

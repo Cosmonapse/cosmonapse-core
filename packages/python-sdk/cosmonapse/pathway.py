@@ -1,7 +1,7 @@
 """
 cosmonapse.pathway
 ~~~~~~~~~~~~~~~~~~
-The Pathway primitive — a per-trace event handle.
+The Pathway primitive  -  a per-trace event handle.
 
 A Pathway is the client-side observation surface for one logical workflow,
 identified by its ``trace_id``. Open one by calling
@@ -10,20 +10,20 @@ or ``dendrite.observe_pathway(trace_id)`` to subscribe to a trace another
 peer initiated (*observer* role). Every Signal whose ``trace_id`` matches
 the Pathway is delivered into it.
 
-The same primitive supports three consumption shapes — the dev picks the
+The same primitive supports three consumption shapes  -  the dev picks the
 one that fits the workflow:
 
-* ``await pathway.wait()`` — block until the next *terminal* Signal
+* ``await pathway.wait()``  -  block until the next *terminal* Signal
   (AGENT_OUTPUT, CLARIFICATION, ERROR, or FINAL). The classic
   request/reply shape.
-* ``@pathway.on(SignalType.X)`` — register a callback that fires for each
-  matching Signal as it arrives. The reactive shape — useful for streams
+* ``@pathway.on(SignalType.X)``  -  register a callback that fires for each
+  matching Signal as it arrives. The reactive shape  -  useful for streams
   like THOUGHT_DELTA or for cognition signals (PLAN / TOOL_CALL / …).
-* ``async for sig in pathway:`` — iterate over every Signal on this trace
+* ``async for sig in pathway:``  -  iterate over every Signal on this trace
   until the Pathway closes. The streaming shape.
 
 The three shapes compose: callbacks, iteration, and ``wait()`` all observe
-every Signal independently — broadcasting, not draining a queue.
+every Signal independently  -  broadcasting, not draining a queue.
 
 Lifecycle
 ---------
@@ -40,7 +40,7 @@ Opt-in
 ------
 This whole surface is additive. The existing ``dispatch_task`` /
 ``on_agent_output`` API is untouched. Use Pathways when you want
-correlation, sequential composition, or trace-scoped subscriptions — and
+correlation, sequential composition, or trace-scoped subscriptions  -  and
 ignore them when a global handler is enough.
 """
 
@@ -56,7 +56,7 @@ logger = logging.getLogger(__name__)
 
 
 # Signals that auto-close a Pathway when received. FINAL and ERROR are
-# the two truly terminal types — AGENT_OUTPUT alone does NOT close the
+# the two truly terminal types  -  AGENT_OUTPUT alone does NOT close the
 # Pathway because a streaming workflow may produce several before
 # finalising.
 _TERMINAL_TYPES: frozenset[SignalType] = frozenset({
@@ -64,7 +64,7 @@ _TERMINAL_TYPES: frozenset[SignalType] = frozenset({
     SignalType.ERROR,
 })
 
-# Default set that satisfies a bare ``wait()`` — the first Signal of any
+# Default set that satisfies a bare ``wait()``  -  the first Signal of any
 # of these types resolves the wait. ERROR / FINAL are included so a
 # ``wait()`` doesn't hang on a failed or finalised workflow.
 _WAIT_TYPES: frozenset[SignalType] = frozenset({
@@ -74,7 +74,7 @@ _WAIT_TYPES: frozenset[SignalType] = frozenset({
     SignalType.FINAL,
 })
 
-# Signals delivered when scope="terminal" — the decentralised pattern:
+# Signals delivered when scope="terminal"  -  the decentralised pattern:
 # intermediate orchestration is handled peer-to-peer; the Cortex's
 # Pathway only wakes for things that demand its attention.
 _SCOPE_TERMINAL_TYPES: frozenset[SignalType] = frozenset({
@@ -84,9 +84,9 @@ _SCOPE_TERMINAL_TYPES: frozenset[SignalType] = frozenset({
 })
 
 # Signal types that flow through a Pathway. Excludes:
-#   * Management (REGISTER / DEREGISTER / HEARTBEAT / DISCOVER) — own
+#   * Management (REGISTER / DEREGISTER / HEARTBEAT / DISCOVER)  -  own
 #     trace_id space, not workflow-correlated.
-#   * TASK — the originator already knows it dispatched, and the worker
+#   * TASK  -  the originator already knows it dispatched, and the worker
 #     side doesn't need its own outbound TASKs replayed. Avoiding TASK
 #     here also eliminates a double-subscription that would otherwise
 #     occur when a Dendrite both hosts Axons (subscribes to TASK via
@@ -135,7 +135,7 @@ class Pathway:
         role
             ``"originator"`` if this Pathway was opened by dispatching a
             TASK, ``"observer"`` if opened to watch a trace started by a
-            peer. Purely informational — the protocol does not distinguish.
+            peer. Purely informational  -  the protocol does not distinguish.
         on_close
             Optional callback invoked once when the Pathway closes. Used
             by the Dendrite to evict the Pathway from its registry.
@@ -144,7 +144,7 @@ class Pathway:
             Signal on the trace is delivered. ``"terminal"`` (decentralised
             pattern): only FINAL / ERROR / CLARIFICATION are delivered;
             intermediate AGENT_OUTPUT / PLAN / TOOL_CALL etc. are dropped
-            on the Pathway side — other Dendrites on the bus still see and
+            on the Pathway side  -  other Dendrites on the bus still see and
             act on them. Use ``"terminal"`` when the orchestrator only
             wants to wake for workflow conclusion.
         """
@@ -312,7 +312,7 @@ class Pathway:
                 result = self._on_close(self)
                 if asyncio.iscoroutine(result):
                     await result
-            except Exception as exc:  # noqa: BLE001 — teardown must not raise
+            except Exception as exc:  # noqa: BLE001  -  teardown must not raise
                 logger.warning(
                     "Pathway %s: on_close hook raised: %s",
                     self._trace_id, exc,

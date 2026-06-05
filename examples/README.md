@@ -3,13 +3,13 @@
 Runnable, self-contained programs that exercise the SDK. Each example is one
 folder; read it top-to-bottom and you have seen every layer it touches.
 
-Sorted by difficulty — start at the top and work down.
+Sorted by difficulty  -  start at the top and work down.
 
 ## Beginner
 
 ### [`building_a_neuron/`](./building_a_neuron/)
 
-The smallest possible Cosmonapse program — one Neuron, one Axon, one
+The smallest possible Cosmonapse program  -  one Neuron, one Axon, one
 Dendrite, one TASK, one reply. Single process, in-memory Synapse, no broker
 to start.
 
@@ -37,21 +37,24 @@ touching the protocol. Backed by `InMemoryEngram` here; swap for
 
 ### [`neuron_providers/`](./neuron_providers/)
 
-Replace the hand-written Neuron with a provider-backed one:
-`Neuron(source="ollama", ...)` or `Neuron(source="huggingface", ...)`. The
-Axon never knows whether the Neuron is a function, an LLM, an HTTP app, or
-an MCP server — that's the point.
+Replace the hand-written Neuron with a provider-backed one. Defaults to
+`Neuron(source="huggingface", ...)` against the Inference Providers router,
+with `Neuron(source="ollama", ...)` shown as a one-line swap. The Axon never
+knows whether the Neuron is a function, an LLM, an HTTP app, or an MCP
+server  -  that's the point.
 
 **Primitives:** Neuron sources · Axon · Dendrite
 
 ### [`neuron_real_world/`](./neuron_real_world/)
 
-A Neuron is "anything that interacts with the real world". One Cortex
-dispatches to an HTTP API (Flask), a wrapped stdio MCP server, and an LLM,
-all behind the identical Axon interface. Includes a TypeScript variant
-(`express_mcp.ts`) showing the same pattern in Node.
+A Neuron is "anything that interacts with the real world"  -  a plain function,
+a wrapped stdio MCP server, an LLM. An **HTTP API is not a Neuron**: instead of
+wrapping a web app behind an Axon, you keep your framework (Flask / Express) on
+the outside as an HTTP boundary and dispatch TASKs from its route handlers via
+an orchestrator Dendrite, using the Dendrite's decorators directly in the app.
+Includes a TypeScript variant (`express_mcp.ts`) showing the same pattern.
 
-**Primitives:** Neuron sources · Axon · Dendrite
+**Primitives:** Neuron sources · Axon · Dendrite (worker + orchestrator roles)
 
 ### [`quickstart-hf/`](./quickstart-hf/)
 
@@ -64,7 +67,7 @@ round-robin orchestrator. Includes a `QUICKSTART.md` walkthrough.
 
 ### [`parallel_build/`](./parallel_build/)
 
-"Build a website" — one high-level task fans out across specialised
+"Build a website"  -  one high-level task fans out across specialised
 Neurons that write to a shared Engram. Downstream Neurons read what the
 upstream ones wrote. The Cortex coordinates and emits FINAL when complete.
 
@@ -75,9 +78,4 @@ upstream ones wrote. The Cortex coordinates and emits FINAL when complete.
 - Every example is **runnable as written**. No placeholders, no `# TODO:
   fill in your model`.
 - Examples that need network or models (Ollama, HuggingFace, NATS, Kafka,
-  Postgres) say so in the first paragraph of their README and degrade
-  gracefully when the dependency is missing.
-- The single-file examples use `MemorySynapse` so they run in one process
-  with no broker. The multi-file ones use `cosmo synapse start memory` —
-  the local TCP dev broker — so each process can be inspected
-  independently.
+  Postgres) say so in the first 

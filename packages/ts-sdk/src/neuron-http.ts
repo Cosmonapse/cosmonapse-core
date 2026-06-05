@@ -1,16 +1,16 @@
 /**
- * @cosmonapse/sdk — provider-backed Neurons (LLM over HTTP)
+ * @cosmonapse/sdk  -  provider-backed Neurons (LLM over HTTP)
  *
  * Ported from `cosmonapse.neuron` (`_OllamaNeuron` / `_HuggingFaceNeuron`) and
  * `cosmonapse._neuron_base`. Wrap a running LLM server behind the `NeuronFn`
  * signature so it slots straight into an Axon.
  *
- * Uses the global `fetch` (Node 18+), so there is no extra dependency — the
+ * Uses the global `fetch` (Node 18+), so there is no extra dependency  -  the
  * Python port needs `httpx`; in Node the runtime ships the client.
  *
  * Input convention (shared with the Python SDK):
- *   - `prompt` (string)  — single-turn input, or
- *   - `messages` (OpenAI-style `[{ role, content }]`) — multi-turn / system.
+ *   - `prompt` (string)   -  single-turn input, or
+ *   - `messages` (OpenAI-style `[{ role, content }]`)  -  multi-turn / system.
  *   (`text` / `query` / `content` are also accepted as a prompt alias.)
  *
  * Output: `{ response: "<text>", meta: <raw provider payload> }`.
@@ -133,7 +133,7 @@ export interface HuggingFaceNeuronOptions {
   temperature?: number;
   /** Maximum tokens to generate. Default 512. */
   maxNewTokens?: number;
-  /** Bearer token — use your HF Hub token for hosted endpoints. */
+  /** Bearer token  -  use your HF Hub token for hosted endpoints. */
   apiKey?: string;
   /** HTTP timeout in ms. Default 120_000. */
   timeoutMs?: number;

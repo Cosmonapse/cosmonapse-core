@@ -1,5 +1,5 @@
 /**
- * @cosmonapse/sdk — local dev synapse
+ * @cosmonapse/sdk  -  local dev synapse
  *
  * A tiny TCP + NDJSON broker, ported 1:1 from `cosmonapse.synapse.dev`.
  *
@@ -12,7 +12,7 @@
  * for the case where Axons, Dendrites and Cortices live in separate processes
  * on a developer's laptop. For production use NatsSynapse or KafkaSynapse.
  *
- * Wire protocol (NDJSON over TCP, UTF-8, `\n` framed) — identical to the Python
+ * Wire protocol (NDJSON over TCP, UTF-8, `\n` framed)  -  identical to the Python
  * server so the two interoperate:
  *
  *   Client -> Server:
@@ -47,7 +47,7 @@ import type {
   Synapse,
 } from "./synapse.js";
 
-/** Shared subject matcher — same semantics as MemorySynapse.matches. */
+/** Shared subject matcher  -  same semantics as MemorySynapse.matches. */
 function matches(pattern: string, subject: string): boolean {
   return MemorySynapse.matches(pattern, subject);
 }
@@ -493,7 +493,7 @@ export class DevSynapse implements Synapse {
     });
   }
 
-  /** @internal — used by DevSubscription. */
+  /** @internal  -  used by DevSubscription. */
   async _sendUnsub(subId: string): Promise<void> {
     this.handlers.delete(subId);
     if (this.connected) {
@@ -575,7 +575,7 @@ export class DevSynapse implements Synapse {
   async replyTo(original: Signal, reply: Signal): Promise<void> {
     const replySubject = original.meta["_reply_to"];
     if (typeof replySubject !== "string" || !replySubject) {
-      throw new Error("Signal has no _reply_to in meta — not a request signal");
+      throw new Error("Signal has no _reply_to in meta  -  not a request signal");
     }
     await this.publish(replySubject, reply);
   }

@@ -7,7 +7,7 @@
  * .d.ts build from erroring), the adapters in `storage-sqlite.ts` /
  * `storage-postgres.ts` indirect the dynamic-import specifier through a string
  * variable. That stops tsc from statically resolving the driver's types while
- * keeping the import lazy and external at runtime — so no shim is needed.
+ * keeping the import lazy and external at runtime  -  so no shim is needed.
  */
 
 export {};

@@ -58,7 +58,7 @@ class SqliteRegistryStore(RegistryStore):
     ----------
     path  Filesystem path to the DB file. Use ":memory:" for an
           ephemeral in-process DB (useful for tests; not shared
-          across connections — single connection only).
+          across connections  -  single connection only).
     """
 
     def __init__(self, path: str = ":memory:") -> None:

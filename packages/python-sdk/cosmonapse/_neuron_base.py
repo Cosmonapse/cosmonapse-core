@@ -11,11 +11,10 @@ interaction behind the ``NeuronFn`` signature::
 Concrete sources live in sibling modules:
 
 * ``neuron.py``        – LLM providers (Ollama, HuggingFace TGI / OpenAI-compat).
-* ``_neuron_http.py``  – a Flask / WSGI application served in-process.
 * ``_neuron_mcp.py``   – any stdio MCP server, spawned as a subprocess.
 
-Keeping the base here (rather than in ``neuron.py``) lets the HTTP and MCP
-modules import it without creating an import cycle back through the public
+Keeping the base here (rather than in ``neuron.py``) lets the MCP module
+import it without creating an import cycle back through the public
 ``Neuron`` factory.
 """
 

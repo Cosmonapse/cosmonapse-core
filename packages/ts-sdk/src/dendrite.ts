@@ -1,5 +1,5 @@
 /**
- * @cosmonapse/sdk — dendrite
+ * @cosmonapse/sdk  -  dendrite
  *
  * The synapse-side participant, ported from `cosmonapse.dendrite`.
  *
@@ -10,14 +10,14 @@
  *   - Register handlers -> subscribes to that AXON_TYPE and dispatches.
  *   - heartbeatMs = 0   -> the heartbeat loop never starts.
  *
- * The Dendrite does NOT own the Synapse — the caller builds and closes it.
+ * The Dendrite does NOT own the Synapse  -  the caller builds and closes it.
  *
  * There is no separate Cortex class: every Dendrite has dispatchTask /
  * emitFinal / emitError / emit plus the inbound-handler hooks. `Cortex` is
  * kept as a back-compat alias.
  *
  * Lifecycle: call `await dendrite.start()` / `await dendrite.stop()`, or use
- * `await using dendrite = new Dendrite({...}); await dendrite.start();` — the
+ * `await using dendrite = new Dendrite({...}); await dendrite.start();`  -  the
  * Symbol.asyncDispose implementation calls stop() automatically when the scope
  * exits. This is the TS counterpart to Python's `async with dendrite:`.
  *
@@ -109,13 +109,13 @@ export class Dendrite {
   private readonly handlers = new Map<SignalType, SignalHandler[]>();
   private taskSub: Subscription | null = null;
   private readonly inboundSubs = new Map<SignalType, Subscription>();
-  // Self-scheduling setTimeout handle (not setInterval — see startHeartbeatLoop).
+  // Self-scheduling setTimeout handle (not setInterval  -  see startHeartbeatLoop).
   private heartbeatTimer: ReturnType<typeof setTimeout> | null = null;
   // Set true by stop() so an in-flight tick won't re-arm the loop.
   private heartbeatStopped = true;
   private running = false;
 
-  /** @internal — lifecycle hooks for this Dendrite. */
+  /** @internal  -  lifecycle hooks for this Dendrite. */
   readonly hooks: LifecycleHooks<Dendrite> = new LifecycleHooks<Dendrite>(this);
 
   constructor(opts: DendriteOptions) {
@@ -258,7 +258,7 @@ export class Dendrite {
    * effective interval drifts; and because the callback is sync, any rejection
    * from the async work inside is an unhandled rejection that setInterval
    * silently drops. Here each tick is fully awaited, its errors are caught, and
-   * only then is the next tick scheduled — matching the Python SDK's
+   * only then is the next tick scheduled  -  matching the Python SDK's
    * asyncio.Task semantics (structured error handling + clean cancellation).
    */
   private startHeartbeatLoop(): void {
@@ -333,7 +333,7 @@ export class Dendrite {
 
   /**
    * Explicit-resource-management hook so a Dendrite can be used with
-   * `await using` — the TS equivalent of Python's `async with dendrite:`.
+   * `await using`  -  the TS equivalent of Python's `async with dendrite:`.
    *
    * ```ts
    * await using dendrite = new Dendrite({ synapse });
@@ -354,7 +354,7 @@ export class Dendrite {
   private requireStore(): RegistryStore {
     if (this.registryStore === null) {
       throw new Error(
-        "Dendrite has no registryStore — pass one at construction to use " +
+        "Dendrite has no registryStore  -  pass one at construction to use " +
           "registry helpers (findNeurons / registrySnapshot).",
       );
     }
@@ -599,6 +599,6 @@ export class Dendrite {
   }
 }
 
-/** Back-compat alias — a Cortex is just a Dendrite. */
+/** Back-compat alias  -  a Cortex is just a Dendrite. */
 export const Cortex = Dendrite;
 export type Cortex = Dendrite;

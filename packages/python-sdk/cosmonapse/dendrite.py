@@ -227,7 +227,7 @@ class Dendrite(LifecycleHooks):
         After attachment, the Dendrite subscribes to RECALL/IMPRINT
         signals addressed to ``engram.engram_id`` or matching
         ``engram.engram_kind`` and dispatches them to the attached
-        instance. The Engram still owns its backend lifecycle —
+        instance. The Engram still owns its backend lifecycle  - 
         ``connect()`` is called on Dendrite.start() and ``close()`` on
         Dendrite.stop().
 
@@ -566,14 +566,14 @@ class Dendrite(LifecycleHooks):
         if self._axons:
             # Two TASK subscriptions for two routing modes:
             #
-            # 1) ADDRESSED — broadcast on ``cosmonapse.<ns>.TASK``, no
+            # 1) ADDRESSED  -  broadcast on ``cosmonapse.<ns>.TASK``, no
             #    queue group. Every Dendrite gets every addressed TASK;
             #    only the one hosting the named Axon acts. Putting a
-            #    queue group here would break addressed routing — the
+            #    queue group here would break addressed routing  -  the
             #    broker could deliver to a Dendrite that doesn't host
             #    the target, and the TASK would be silently dropped.
             #
-            # 2) ROUTED — capability-routed on ``cosmonapse.<ns>.TASK.routed``,
+            # 2) ROUTED  -  capability-routed on ``cosmonapse.<ns>.TASK.routed``,
             #    queue_group keyed on this Dendrite's aggregate cap
             #    signature. Identical Dendrites (same Axon cap profile)
             #    share a group and load-balance, so a capability-routed
@@ -621,7 +621,7 @@ class Dendrite(LifecycleHooks):
                     )
             await self._ensure_inbound_sub(SignalType.RECALL)
             await self._ensure_inbound_sub(SignalType.IMPRINT)
-        # Always listen for RECALLED/IMPRINTED — the Dendrite owns the
+        # Always listen for RECALLED/IMPRINTED  -  the Dendrite owns the
         # EngramClient's correlation table even when it hosts no Axons,
         # because a Cortex calls dendrite.recall/imprint directly.
         await self._ensure_inbound_sub(SignalType.RECALLED)
@@ -695,7 +695,7 @@ class Dendrite(LifecycleHooks):
                 logger.warning("Dendrite failed to unsubscribe inbound: %s", exc)
         self._inbound_subs.clear()
 
-        # Cancel any in-flight engram I/O — Futures resolve with
+        # Cancel any in-flight engram I/O  -  Futures resolve with
         # EngramCancelled so awaiters get a clean exception instead of
         # hanging on the deadline.
         try:
@@ -775,7 +775,7 @@ class Dendrite(LifecycleHooks):
         meta: dict[str, Any] | None = None,
     ) -> Signal:
         """Emit a TASK signal. Addressed (``neuron=...``) or capability-routed
-        (``capabilities=[...]``) — at least one must be set.
+        (``capabilities=[...]``)  -  at least one must be set.
 
         Addressed TASKs go on the broadcast TASK subject; the unique
         host filters by neuron_id and acts. Capability-routed TASKs go
@@ -866,7 +866,7 @@ class Dendrite(LifecycleHooks):
 
         ``scope="all"`` (default) delivers every PATHWAY_TYPES Signal on
         the trace to the Pathway; ``scope="terminal"`` filters to FINAL /
-        ERROR / CLARIFICATION only — the decentralised pattern where
+        ERROR / CLARIFICATION only  -  the decentralised pattern where
         intermediate orchestration is handled by other Dendrites and the
         Cortex only wakes for terminal events.
 
@@ -969,7 +969,7 @@ class Dendrite(LifecycleHooks):
 
         The caller is expected to attach ``@pw.on(...)`` callbacks (or
         iterate, or hold a reference) and let signals stream in over
-        time. The Pathway still auto-closes on FINAL / ERROR — pass
+        time. The Pathway still auto-closes on FINAL / ERROR  -  pass
         ``scope="terminal"`` if you only care about terminal events,
         or use :meth:`dispatch` directly for custom lifecycle.
 
@@ -1016,9 +1016,9 @@ class Dendrite(LifecycleHooks):
 
         Selection strategies:
 
-        * ``"first_bid"`` — first bidder wins (latency-minimising).
-        * ``"lowest_cost"`` — bidder with the smallest ``cost`` wins.
-        * ``"highest_confidence"`` — bidder with the largest
+        * ``"first_bid"``  -  first bidder wins (latency-minimising).
+        * ``"lowest_cost"``  -  bidder with the smallest ``cost`` wins.
+        * ``"highest_confidence"``  -  bidder with the largest
           ``confidence`` wins.
 
         Raises ``TimeoutError`` if no BID arrives within ``deadline_ms``.
@@ -1171,7 +1171,7 @@ class Dendrite(LifecycleHooks):
         ``neuron``.
 
         BID bypasses the role guard so worker-role Dendrites can
-        participate in capability routing — bidding is how a worker
+        participate in capability routing  -  bidding is how a worker
         announces "I can take this work", not orchestration.
         """
         if offer.type is not SignalType.TASK_OFFER:
@@ -1183,7 +1183,7 @@ class Dendrite(LifecycleHooks):
             neuron=neuron, cost=cost, eta_ms=eta_ms,
             confidence=confidence, meta=meta,
         )
-        # _publish bypasses the orchestrator guard in emit() — a worker
+        # _publish bypasses the orchestrator guard in emit()  -  a worker
         # bidding is announcing capability, not dispatching work.
         await self._publish(sig)
         return sig
@@ -1773,7 +1773,7 @@ class Dendrite(LifecycleHooks):
 
         engram_id wins over engram_kind. If neither matches a hosted
         Engram, returns []. If engram_kind matches multiple hosted
-        Engrams, every match is returned — recall_mode handles the
+        Engrams, every match is returned  -  recall_mode handles the
         winner-selection on the caller side.
         """
         eid = signal.payload.get("engram_id")
@@ -1908,7 +1908,7 @@ class Dendrite(LifecycleHooks):
     ):
         """Emit RECALL and await RECALLED.
 
-        When ``trace_id`` is omitted a new trace is minted — use this for
+        When ``trace_id`` is omitted a new trace is minted  -  use this for
         pre-task hydration. Inside a TASK context (e.g. the Cortex
         servicing an AGENT_OUTPUT), pass ``trace_id`` and ``parent_id``
         so the recall is attributed to the containing workflow per

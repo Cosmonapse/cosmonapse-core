@@ -117,7 +117,7 @@ def test_orchestrator_role_can_dispatch():
         try:
             async with orch:
                 # dispatch_task without a target raises ValueError, not
-                # DendriteProtocolError — the role guard passes, the
+                # DendriteProtocolError  -  the role guard passes, the
                 # arg validation catches it.
                 with pytest.raises(ValueError):
                     await orch.dispatch_task(input={})
@@ -129,7 +129,7 @@ def test_orchestrator_role_can_dispatch():
 def test_worker_role_blocks_all_emit_helpers():
     """The role guard sits on emit(), so every cognition emitter
     (emit_final / emit_plan / emit_critique / ...) raises on a
-    worker — not just the dispatch* methods."""
+    worker  -  not just the dispatch* methods."""
     async def run():
         s = await _make_synapse()
         worker = Dendrite(synapse=s, namespace="t", role="worker",
@@ -267,7 +267,7 @@ def test_capability_subset_matching():
 
 def test_capability_routed_no_match_times_out():
     """A capability-routed TASK with no matching Axon anywhere on the
-    bus never gets a reply — wait() times out."""
+    bus never gets a reply  -  wait() times out."""
     async def run():
         s = await _make_synapse()
         orch = Dendrite(synapse=s, namespace="t", heartbeat_s=0)
@@ -313,7 +313,7 @@ def test_pathway_scope_terminal_drops_agent_output():
     """With scope="terminal", AGENT_OUTPUT (intermediate) is dropped
     from the Pathway. Only CLARIFICATION / ERROR / FINAL pass through.
     Note: AGENT_OUTPUT is NOT a terminal type for the Pathway, so it
-    won't auto-close — the orchestrator stays subscribed for the real
+    won't auto-close  -  the orchestrator stays subscribed for the real
     terminal events.
     """
     async def run():
@@ -332,7 +332,7 @@ def test_pathway_scope_terminal_drops_agent_output():
                     scope="terminal",
                 )
                 assert pw.scope == "terminal"
-                # Wait briefly — the AGENT_OUTPUT will fly past but be
+                # Wait briefly  -  the AGENT_OUTPUT will fly past but be
                 # dropped by the scope filter. wait() should time out
                 # because AGENT_OUTPUT is filtered out and no FINAL/
                 # ERROR/CLARIFICATION arrives.

@@ -2,7 +2,7 @@
 cosmo doppler
 ~~~~~~~~~~~~~
 Attach a read-only Doppler to a running Synapse, streaming Signals to stdout
-or to **Prism** — the live browser visualization.
+or to **Prism**  -  the live browser visualization.
 
 Usage
 -----
@@ -94,7 +94,7 @@ def _resolve_target(
     encodes the namespace in the URL path. When both a path namespace and an
     explicit ``--namespace`` are supplied, ``--namespace`` wins.
 
-    When ``required`` is False (Prism mode) the URL may be omitted — the user
+    When ``required`` is False (Prism mode) the URL may be omitted  -  the user
     will enter it through the browser form.
     """
     raw = url or synapse_arg
@@ -137,7 +137,7 @@ def _render_signal(subject: str, sig: Signal, show_payload: bool = False) -> Non
     if _HAS_RICH:
         colour = _TYPE_COLOURS.get(sig.type.value, "white")
         ts = sig.ts.strftime("%H:%M:%S.%f")[:-3]
-        neuron = sig.neuron or "—"
+        neuron = sig.neuron or " - "
         trace = sig.trace_id[4:12]
         t = Text()
         t.append(f"  {ts}  ", style="dim")
@@ -152,7 +152,7 @@ def _render_signal(subject: str, sig: Signal, show_payload: bool = False) -> Non
         console.print(t)
     else:
         ts = sig.ts.strftime("%H:%M:%S")
-        print(f"  {ts}  {sig.type.value:<18}  {sig.trace_id[4:12]}  {sig.neuron or '—'}")
+        print(f"  {ts}  {sig.type.value:<18}  {sig.trace_id[4:12]}  {sig.neuron or ' - '}")
 
 
 # ---------------------------------------------------------------------------
@@ -277,12 +277,12 @@ async def _run_cli(
             if neuron_filter:
                 console.print(f"  Neuron: [italic]{neuron_filter}[/italic]")
             console.print()
-            console.print("  [dim]Observing — Ctrl-C to detach[/dim]")
+            console.print("  [dim]Observing  -  Ctrl-C to detach[/dim]")
             console.print("  " + "─" * 60)
             console.print()
         else:
             print(f"\n  cosmo doppler  {base_url}/{namespace}")
-            print("  Observing — Ctrl-C to detach")
+            print("  Observing  -  Ctrl-C to detach")
             print("  " + "─" * 60 + "\n")
 
     signal_count = 0
@@ -304,7 +304,7 @@ async def _run_cli(
 
     subject = f"cosmonapse.{namespace}.>"
     # Broadcast DISCOVER once before the wildcard subscribe so every
-    # Dendrite with attached Axons replies with a REGISTER snapshot —
+    # Dendrite with attached Axons replies with a REGISTER snapshot  - 
     # the Doppler immediately sees the current namespace state instead
     # of waiting for the next heartbeat tick.
     try:

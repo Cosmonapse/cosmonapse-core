@@ -3,7 +3,7 @@ cosmonapse.storage.postgres
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Postgres RegistryStore via asyncpg.
 
-asyncpg is lazy-imported so this module loads without the dep — only
+asyncpg is lazy-imported so this module loads without the dep  -  only
 connect() raises a clear ImportError when the package is missing.
 
 Schema is bootstrapped on first connect(). Use a dedicated schema /

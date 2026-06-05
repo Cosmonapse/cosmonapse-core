@@ -2,7 +2,7 @@
   "name": "@cosmonapse/prism-ui",
   "version": "0.1.0",
   "private": true,
-  "description": "Prism — browser visualization for the Cosmonapse Doppler. Built with Vite + React + TS; the static build is bundled into the cosmonapse Python wheel and served by `cosmo doppler --prism`.",
+  "description": "Prism  -  browser visualization for the Cosmonapse Doppler. Built with Vite + React + TS; the static build is bundled into the cosmonapse Python wheel and served by `cosmo doppler --prism`.",
   "type": "module",
   "scripts": {
     "dev": "vite",

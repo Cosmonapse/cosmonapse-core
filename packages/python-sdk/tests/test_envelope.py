@@ -197,7 +197,7 @@ def test_memory_synapse_wildcard_star():
         async def handler(sig):
             received_subjects.append(True)
 
-        # Subscribe with * wildcard — matches cosmonapse.ns.ANYTHING
+        # Subscribe with * wildcard  -  matches cosmonapse.ns.ANYTHING
         await synapse.subscribe("cosmonapse.ns.*", handler)
 
         sig = task_signal(input={})
@@ -239,7 +239,7 @@ def test_memory_synapse_queue_group_load_balancing():
         await synapse.close()
 
     asyncio.run(run())
-    # Each message goes to exactly one worker — total == 10, neither is 0
+    # Each message goes to exactly one worker  -  total == 10, neither is 0
     assert counts[0] + counts[1] == 10
     assert counts[0] > 0
     assert counts[1] > 0

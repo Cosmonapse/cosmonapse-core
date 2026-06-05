@@ -7,7 +7,7 @@ Cosmonapse models multi-agent systems on a neural metaphor: agents are pure
 functions (**Neurons**), wrapped by **Axons** that turn their output into
 protocol-valid **Signals**, attached to **Dendrites** that exchange those
 signals over a **Synapse** (an in-memory bus, a local dev TCP broker, NATS, or
-Kafka). There is no central orchestrator class — any Dendrite can dispatch work
+Kafka). There is no central orchestrator class  -  any Dendrite can dispatch work
 and react to results.
 
 ```python
@@ -69,11 +69,11 @@ and CLI documentation.
 
 ## Documentation
 
-- [Python SDK README](packages/python-sdk/README.md) — install, quick start, API, CLI
-- [SDK_DESIGN.md](design/SDK_DESIGN.md) — design rationale
-- [ENVELOPE_SPEC.md](design/ENVELOPE_SPEC.md) — the Signal wire format
-- [CONTRIBUTING.md](CONTRIBUTING.md) — how to set up and contribute
-- [CHANGELOG.md](CHANGELOG.md) — release notes
+- [Python SDK README](packages/python-sdk/README.md)  -  install, quick start, API, CLI
+- [SDK_DESIGN.md](design/SDK_DESIGN.md)  -  design rationale
+- [ENVELOPE_SPEC.md](design/ENVELOPE_SPEC.md)  -  the Signal wire format
+- [CONTRIBUTING.md](CONTRIBUTING.md)  -  how to set up and contribute
+- [CHANGELOG.md](CHANGELOG.md)  -  release notes
 
 ## License
 

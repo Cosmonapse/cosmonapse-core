@@ -1,6 +1,6 @@
 import type { SignalType } from "./types";
 
-// Core palette — kept in sync with the CSS variables in styles.css.
+// Core palette  -  kept in sync with the CSS variables in styles.css.
 export const C = {
   bg: "#07080c",
   bgCard: "#0f111a",

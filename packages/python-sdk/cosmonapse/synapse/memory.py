@@ -136,7 +136,7 @@ class MemorySynapse(Synapse):
             result = handler(sig)
             if inspect.iscoroutine(result):
                 return result
-            # Sync handler — wrap in a coroutine
+            # Sync handler  -  wrap in a coroutine
             async def _wrap():
                 return result
             return _wrap()
@@ -203,5 +203,5 @@ class MemorySynapse(Synapse):
         """
         reply_to = original.meta.get("_reply_to")
         if not reply_to:
-            raise ValueError("Signal has no _reply_to in meta — not a request signal")
+            raise ValueError("Signal has no _reply_to in meta  -  not a request signal")
         await self.publish(reply_to, reply)

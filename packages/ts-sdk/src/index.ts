@@ -5,11 +5,11 @@
  * re-exports the envelope types/codec and the typed signal builders. It is the
  * 1:1 counterpart to the Python `cosmonapse` package's envelope module.
  *
- * Status: v0.3 — envelope, builders, MemorySynapse, NatsSynapse, DevSynapse,
+ * Status: v0.3  -  envelope, builders, MemorySynapse, NatsSynapse, DevSynapse,
  * KafkaSynapse, the RegistryStore (in-memory + sqlite + postgres) + Dendrite
- * registry mirror, LifecycleHooks, connectSynapse, Neuron (Express / MCP /
- * Ollama / HuggingFace), Axon and Dendrite are ported and functional. Any
- * remaining intentional differences are documented in PORTING_STATUS.md.
+ * registry mirror, LifecycleHooks, connectSynapse, Neuron (MCP / Ollama /
+ * HuggingFace), Axon and Dendrite are ported and functional. Any remaining
+ * intentional differences are documented in PORTING_STATUS.md.
  */
 
 export const VERSION = "0.1.0";
@@ -94,6 +94,7 @@ export {
   clarify,
   isClarification,
   type NeuronFn,
+  type CloseableNeuronFn,
   type ContextFetcher,
   type ClarificationOutput,
 } from "./neuron.js";
@@ -112,15 +113,12 @@ export {
 // --- neuron sources: wrap anything that interacts with the real world ---
 //
 // Prefer the unified `neuron(source, opts)` factory below in application code.
-// The standalone `expressNeuron` / `mcpNeuron` exports are the lower-level
-// primitives it delegates to — use them only when you want one source's exact
-// option type or to tree-shake the other. See neuron-factory.ts for guidance.
-
-export {
-  expressNeuron,
-  type ExpressNeuronOptions,
-  type CloseableNeuronFn,
-} from "./neuron-express.js";
+// The standalone `mcpNeuron` / `ollamaNeuron` / `huggingFaceNeuron` exports are
+// the lower-level primitives it delegates to  -  use them only when you want one
+// source's exact option type or to tree-shake the others. See neuron-factory.ts.
+//
+// NOTE  -  there is no Express / HTTP / API neuron source. An HTTP API is not a
+// Neuron; front an orchestrator Dendrite with your web framework instead.
 
 export {
   mcpNeuron,
@@ -136,4 +134,4 @@ export {
 } from "./neuron-http.js";
 
 /** Recommended entry point for building Neurons (see note above). */
-export { neuron, type NeuronSource, type ExpressSourceOptions } from "./neuron-factory.js";
+export { neuron, typ

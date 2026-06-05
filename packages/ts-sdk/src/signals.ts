@@ -1,8 +1,8 @@
 /**
- * @cosmonapse/sdk — typed signal builders
+ * @cosmonapse/sdk  -  typed signal builders
  *
  * Convenience constructors for the common Signal types. These are NOT required
- * by the protocol — the protocol only requires a valid Signal with the correct
+ * by the protocol  -  the protocol only requires a valid Signal with the correct
  * `type` and `payload`. They mirror the helpers in `cosmonapse.envelope`.
  */
 

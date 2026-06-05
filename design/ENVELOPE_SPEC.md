@@ -8,7 +8,7 @@
 
 ## 1. Purpose
 
-The envelope is the single shared contract of the Cosmonapse protocol. Every message that crosses a Cosmonapse channel — regardless of who produced it, what synapse carries it, or what router or workflow manager is running — must be a valid envelope.
+The envelope is the single shared contract of the Cosmonapse protocol. Every message that crosses a Cosmonapse channel  -  regardless of who produced it, what synapse carries it, or what router or workflow manager is running  -  must be a valid envelope.
 
 This document is the authoritative reference. The SDK, the CLI validator, and any third-party implementation derive their correctness from it.
 
@@ -19,8 +19,8 @@ This document is the authoritative reference. The SDK, the CLI validator, and an
 - **Minimal by default.** Only fields needed for routing, tracing, and lifecycle management live at the top level. Everything else belongs in `payload` or `meta`.
 - **Strict where it matters.** `id`, `trace_id`, `type`, and `ts` are always required. No exceptions.
 - **Neurons are black boxes.** A Neuron receives `(input, context)` and returns `output`. It has no knowledge of the protocol, envelopes, trace IDs, or workflow semantics. The Axon is the only component that translates between the Neuron's raw I/O and the envelope format.
-- **The Dendrite owns the wire.** All envelope publishing — REGISTER, HEARTBEAT, DEREGISTER, the reply to a TASK — is the Dendrite's responsibility. The Axon never touches the Synapse directly.
-- **No lifecycle rules.** The spec defines what a valid envelope looks like. It does not define what sequence of envelopes constitutes a valid workflow. Task lifecycle, error handling, retry logic, and termination conditions are entirely the developer's responsibility — implemented in their Cortex (or in cooperating Dendrites for the decentralised case).
+- **The Dendrite owns the wire.** All envelope publishing  -  REGISTER, HEARTBEAT, DEREGISTER, the reply to a TASK  -  is the Dendrite's responsibility. The Axon never touches the Synapse directly.
+- **No lifecycle rules.** The spec defines what a valid envelope looks like. It does not define what sequence of envelopes constitutes a valid workflow. Task lifecycle, error handling, retry logic, and termination conditions are entirely the developer's responsibility  -  implemented in their Cortex (or in cooperating Dendrites for the decentralised case).
 - **Extensible where it does not.** `payload` and `meta` are open objects. Implementations may add fields freely; consumers must ignore unknown fields.
 - **Language-agnostic.** The spec is defined in terms of JSON. SDK bindings in Python, TypeScript, or any other language are transformations of this format.
 
@@ -38,7 +38,7 @@ There are four distinct layers. Each has a single, non-overlapping responsibilit
 │  Axon; routes inbound TASKs; publishes Axon         │
 │  replies. Optionally orchestrates: dispatches       │
 │  TASK / TASK_OFFER / BID / FINAL / CRITIQUE / etc.  │
-│  (no separate Cortex class — `Cortex` is an alias.) │
+│  (no separate Cortex class  -  `Cortex` is an alias.) │
 └────────────────────────┬────────────────────────────┘
                          │  TASK in / AGENT_OUTPUT|CLARIFICATION|ERROR out
 ┌────────────────────────▼────────────────────────────┐
@@ -50,14 +50,14 @@ There are four distinct layers. Each has a single, non-overlapping responsibilit
                          │  (input, context)  /  output
 ┌────────────────────────▼────────────────────────────┐
 │  Neuron                                             │
-│  pure function — no protocol knowledge              │
+│  pure function  -  no protocol knowledge              │
 │  fn handle(input: JSON, context: list[Any]) -> JSON │
 └─────────────────────────────────────────────────────┘
 ```
 
 ### 3.1 Neuron
 
-Receives `(input, context)`. Returns `output`. Has no knowledge of envelopes, trace IDs, routing, or workflow rules. This is intentional — the Neuron is replaceable without touching any infrastructure.
+Receives `(input, context)`. Returns `output`. Has no knowledge of envelopes, trace IDs, routing, or workflow rules. This is intentional  -  the Neuron is replaceable without touching any infrastructure.
 
 ### 3.2 Axon
 
@@ -68,9 +68,9 @@ The agent-side tool. Its complete job:
 3. Resolve `context` via its configured context fetcher.
 4. Call the Neuron with `(input, context)`.
 5. Return one of:
-   - `AGENT_OUTPUT` — the Neuron returned normally.
-   - `CLARIFICATION` — the Neuron's output contained the clarification marker.
-   - `ERROR` — the Neuron raised.
+   - `AGENT_OUTPUT`  -  the Neuron returned normally.
+   - `CLARIFICATION`  -  the Neuron's output contained the clarification marker.
+   - `ERROR`  -  the Neuron raised.
 6. Never touch the Synapse.
 
 The Axon never produces `REGISTER`, `HEARTBEAT`, `DEREGISTER`, `FINAL`, `THOUGHT_DELTA`, or any routing envelope.
@@ -79,12 +79,12 @@ The Axon never produces `REGISTER`, `HEARTBEAT`, `DEREGISTER`, `FINAL`, `THOUGHT
 
 The synapse-side participant. The caller builds the Synapse and passes it in; the Dendrite does NOT own it. Behaviour is opt-in:
 
-- **With attached Axons** — emits `REGISTER` on start, `HEARTBEAT` periodically, `DEREGISTER` on stop. Subscribes to TASK on the namespace and routes by `signal.neuron`. Publishes the Axon's returned Signal (`AGENT_OUTPUT` / `CLARIFICATION` / `ERROR`).
-- **With registered handlers** — subscribes to that AXON_TYPE on the bus and dispatches matching Signals.
-- **With a `registry_store`** — mirrors its own attached Axons into the store and auto-subscribes to REGISTER/DEREGISTER/HEARTBEAT so the store tracks the namespace-wide view.
-- **Always** — exposes orchestration primitives (`dispatch_task`, `emit_final`, `emit_error`, `emit`, the handler decorators) for whoever wants to use them. The Dendrite refuses to emit anything outside SYNAPSE_TYPES.
+- **With attached Axons**  -  emits `REGISTER` on start, `HEARTBEAT` periodically, `DEREGISTER` on stop. Subscribes to TASK on the namespace and routes by `signal.neuron`. Publishes the Axon's returned Signal (`AGENT_OUTPUT` / `CLARIFICATION` / `ERROR`).
+- **With registered handlers**  -  subscribes to that AXON_TYPE on the bus and dispatches matching Signals.
+- **With a `registry_store`**  -  mirrors its own attached Axons into the store and auto-subscribes to REGISTER/DEREGISTER/HEARTBEAT so the store tracks the namespace-wide view.
+- **Always**  -  exposes orchestration primitives (`dispatch_task`, `emit_final`, `emit_error`, `emit`, the handler decorators) for whoever wants to use them. The Dendrite refuses to emit anything outside SYNAPSE_TYPES.
 
-There is no separate Cortex class — every Dendrite can orchestrate. `Cortex` is kept as a back-compat alias.
+There is no separate Cortex class  -  every Dendrite can orchestrate. `Cortex` is kept as a back-compat alias.
 
 The decentralised pattern is supported by construction: many Dendrites coexist on the same namespace with no central orchestrator, using lifecycle hooks (`on_connect`, `on_refresh`, `on_schedule`) to discover and reconcile peer state.
 
@@ -261,7 +261,7 @@ Signals that a task has failed. Produced by the Dendrite when the Axon's Neuron 
 
 ### 7.2 Routing  `[D]`
 
-Cortex-produced; Dendrites pass them through if any Axon is meant to react. The Axon itself never inspects them — the Cortex coordinates.
+Cortex-produced; Dendrites pass them through if any Axon is meant to react. The Axon itself never inspects them  -  the Cortex coordinates.
 
 #### `TASK_OFFER`
 
@@ -423,7 +423,7 @@ All cognition events are produced by the **Cortex**. They are optional. A Cortex
 }
 ```
 
-The Cortex (or any consumer with the right capability) routes the questions to wherever the answer comes from — a user, another Neuron, an external lookup — then re-dispatches the original `TASK` with the answers folded into `payload.input` or an updated `context_ref`.
+The Cortex (or any consumer with the right capability) routes the questions to wherever the answer comes from  -  a user, another Neuron, an external lookup  -  then re-dispatches the original `TASK` with the answers folded into `payload.input` or an updated `context_ref`.
 
 ### 7.6 Agent management  `[D]`
 
@@ -473,7 +473,7 @@ The Dendrite re-emits REGISTER alongside each HEARTBEAT so a late-joining Cortex
 
 A synapse-side control signal that solicits a REGISTER snapshot from
 participants on a namespace. Emitted by anyone that wants a current view
-of who's online — a Doppler attaching to a running namespace, a new
+of who's online  -  a Doppler attaching to a running namespace, a new
 orchestrator Dendrite populating its `registry_store` on startup, or a
 reconnecting peer re-verifying a specific worker. Both the broadcast
 and directed forms share the same envelope; the optional `payload`
@@ -505,7 +505,7 @@ with many participants the responses spread rather than spike.
 
 **Relation to other discovery mechanisms.** DISCOVER complements the
 re-register-on-heartbeat behaviour, which catches late joiners within
-one heartbeat interval. DISCOVER gives the same snapshot on demand —
+one heartbeat interval. DISCOVER gives the same snapshot on demand  - 
 useful on `MemorySynapse` / `DevSynapse` (which have no broker-level
 replay) and for the directed re-verify case which broker replay does
 not address.

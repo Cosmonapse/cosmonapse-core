@@ -1,4 +1,4 @@
-# Cosmonapse SDK — Design Document
+# Cosmonapse SDK  -  Design Document
 
 **Status:** Draft v0.2
 **Audience:** Cosmonapse contributors, early adopters, protocol implementers
@@ -10,7 +10,7 @@
 
 This document specifies the developer-facing surface of the Cosmonapse SDK and the runtime contracts the SDK depends on. It is the canonical reference for how applications, agents, and tools interact with the Cosmonapse distributed cognition fabric.
 
-The SDK is the ergonomic skin over the **Cosmonapse Protocol**. Anything an application can do can also be done by speaking the protocol directly — the SDK exists to make that pleasant.
+The SDK is the ergonomic skin over the **Cosmonapse Protocol**. Anything an application can do can also be done by speaking the protocol directly  -  the SDK exists to make that pleasant.
 
 ### 1.1 Goals
 
@@ -25,8 +25,8 @@ The SDK is the ergonomic skin over the **Cosmonapse Protocol**. Anything an appl
 
 - The SDK is **not** a prompt framework.
 - It is **not** a workflow DAG engine. Workflows emerge from components publishing cognitive events; the SDK exposes primitives, not a declarative graph language.
-- It does not ship an LLM inference runtime — Neurons bring their own.
-- It does not bake in an orchestration model — both centralised (one Cortex) and decentralised (many cooperating Dendrites) are supported with the same primitives.
+- It does not ship an LLM inference runtime  -  Neurons bring their own.
+- It does not bake in an orchestration model  -  both centralised (one Cortex) and decentralised (many cooperating Dendrites) are supported with the same primitives.
 
 ---
 
@@ -38,13 +38,13 @@ The five concrete primitives the developer touches:
 
 | Primitive       | What it is                                            | Lifetime     |
 |---|---|---|
-| `Neuron`        | A pure async function — the agent itself. Zero protocol knowledge. Optionally created via `Neuron(source=...)` provider factories (Ollama, HuggingFace). | Process |
+| `Neuron`        | A pure async function  -  the agent itself. Zero protocol knowledge. Optionally created via `Neuron(source=...)` provider factories (Ollama, HuggingFace). | Process |
 | `Axon`          | Agent-side tool that turns Neuron output into Signals | Process      |
 | `Dendrite`      | Synapse-side participant. Only `synapse` is required; `registry_store`, Axons, inbound handlers, and heartbeat are all opt-in. Orchestration primitives (`dispatch_task`, `emit_final`, `on_agent_output`, …) live here too. | Process |
 | `RegistryStore` | Persistent view of Neurons seen on a namespace (optional)     | Process+     |
 | `Synapse`       | Synapse adapter (memory / dev / NATS / Kafka). Caller-owned. | Process      |
 
-(`Cortex` is kept as a back-compat alias for `Dendrite` — there is no separate orchestrator class.)
+(`Cortex` is kept as a back-compat alias for `Dendrite`  -  there is no separate orchestrator class.)
 
 Everything else in the SDK is a convenience over these five.
 
@@ -53,10 +53,10 @@ Everything else in the SDK is a convenience over these five.
 | Term       | Maps to                  | Definition                                                                            |
 |---|---|---|
 | **Brain**  | Team of agents           | Collection of Neurons sharing a Synapse                                               |
-| **Neuron** | Agent                    | A single agent — pure function, zero protocol knowledge                               |
+| **Neuron** | Agent                    | A single agent  -  pure function, zero protocol knowledge                               |
 | **Axon**   | Skill / connector / tool | Agent-side tool that validates the Neuron's output into a Signal                      |
 | **Dendrite** | Synapse-side process   | Connects to the Synapse; hosts Axons; owns pub/sub, REGISTER, HEARTBEAT, DEREGISTER   |
-| **Cortex** | Orchestrating Dendrite   | Back-compat alias for `Dendrite`. A Dendrite that uses `dispatch_task` / `on_agent_output` / etc. is colloquially a "Cortex" — no separate class exists. |
+| **Cortex** | Orchestrating Dendrite   | Back-compat alias for `Dendrite`. A Dendrite that uses `dispatch_task` / `on_agent_output` / etc. is colloquially a "Cortex"  -  no separate class exists. |
 | **Synapse** | Channel / stream        | The synapse layer all Signals cross                                                 |
 | **Signal** | Envelope                 | A single message crossing the Synapse                                                 |
 | **Engram** | Context / memory         | Persistent shared state (per-Task input + the developer's own helpers)                |
@@ -72,7 +72,7 @@ A typical end-to-end flow (centralised case):
 3. The Dendrite hosting the addressed Neuron's Axon receives the TASK.
 4. The Dendrite invokes the Axon's `handle_task(task)`. The Axon resolves any `context_ref`, calls the Neuron function, and returns an `AGENT_OUTPUT` / `CLARIFICATION` / `ERROR` Signal.
 5. The Dendrite publishes the returned Signal on the Synapse.
-6. The Cortex's `on_agent_output` handler runs and decides what comes next — emit FINAL, dispatch another TASK, etc.
+6. The Cortex's `on_agent_output` handler runs and decides what comes next  -  emit FINAL, dispatch another TASK, etc.
 
 Every step is just Signals crossing the Synapse. The SDK only hides the choreography.
 
@@ -127,15 +127,15 @@ The Cortex remains an option, not a requirement.
 
 The Neuron itself has zero protocol knowledge. The Axon is the only piece of Cosmonapse that lives inside the Neuron's process. In v1 the Axon is an in-process Python helper; in v2 it ships as an MCP server, so an arbitrary LLM-driven agent can talk to a remote Dendrite over HTTP without ever importing Python from Cosmonapse.
 
-The Dendrite is the only thing that touches the Synapse. Everything that crosses the wire — REGISTER, HEARTBEAT, DEREGISTER, TASK routing, AGENT_OUTPUT, CLARIFICATION, ERROR — is the Dendrite's responsibility. The Axon hands the Dendrite an already-valid Signal and is done.
+The Dendrite is the only thing that touches the Synapse. Everything that crosses the wire  -  REGISTER, HEARTBEAT, DEREGISTER, TASK routing, AGENT_OUTPUT, CLARIFICATION, ERROR  -  is the Dendrite's responsibility. The Axon hands the Dendrite an already-valid Signal and is done.
 
-`Cortex` is a back-compat alias for `Dendrite` — there is no separate subclass. A Dendrite that calls `dispatch_task` and registers `on_agent_output` handlers is effectively a Cortex. It is still just another participant on the Synapse — there is nothing privileged about it from the protocol's point of view.
+`Cortex` is a back-compat alias for `Dendrite`  -  there is no separate subclass. A Dendrite that calls `dispatch_task` and registers `on_agent_output` handlers is effectively a Cortex. It is still just another participant on the Synapse  -  there is nothing privileged about it from the protocol's point of view.
 
 ---
 
 ## 4. Python SDK surface
 
-### 4.1 Axon — agent-side tool
+### 4.1 Axon  -  agent-side tool
 
 ```python
 from cosmonapse import Axon
@@ -151,9 +151,9 @@ axon = Axon(
 )
 ```
 
-The Axon owns the Neuron's identity (`neuron_id`, `capabilities`, `version`) and the tool body (`neuron_fn`). It does not touch the Synapse — it must be attached to a Dendrite to participate.
+The Axon owns the Neuron's identity (`neuron_id`, `capabilities`, `version`) and the tool body (`neuron_fn`). It does not touch the Synapse  -  it must be attached to a Dendrite to participate.
 
-### 4.2 Dendrite — synapse-side connector
+### 4.2 Dendrite  -  synapse-side connector
 
 `synapse` is the only required parameter. Every other capability is opt-in.
 
@@ -162,11 +162,11 @@ from cosmonapse import Dendrite, SqliteRegistryStore, connect_synapse
 
 synapse = await connect_synapse("cosmo://127.0.0.1:7070")
 
-# Worker Dendrite — no registry_store needed just to host an Axon
+# Worker Dendrite  -  no registry_store needed just to host an Axon
 worker = Dendrite(synapse=synapse, namespace="prod")
 worker.attach_axon(axon)
 
-# Orchestrator Dendrite — pass registry_store to enable registry helpers
+# Orchestrator Dendrite  -  pass registry_store to enable registry helpers
 orch = Dendrite(
     synapse=synapse,
     registry_store=SqliteRegistryStore("/tmp/orch.db"),
@@ -181,7 +181,7 @@ Constructor parameters:
 
 | Parameter | Type | Default | Notes |
 |---|---|---|---|
-| `synapse` | `Synapse` | — | **Required.** Caller builds and closes it. |
+| `synapse` | `Synapse` |  -  | **Required.** Caller builds and closes it. |
 | `registry_store` | `RegistryStore \| None` | `None` | Optional. Enables `find_neurons` / `registry_snapshot` and mirrors REGISTER / HEARTBEAT / DEREGISTER from the bus into the store. |
 | `namespace` | `str` | `"default"` | Synapse namespace all Signals are published under. |
 | `dendrite_id` | `str` | `"dendrite"` | Identifier embedded in outbound FINAL / ERROR signals as `neuron`. |
@@ -190,7 +190,7 @@ Constructor parameters:
 
 The Dendrite handles REGISTER on start, HEARTBEAT on the configured interval, DEREGISTER on stop, routes inbound TASKs to the matching Axon, and publishes the Axon's reply Signal.
 
-**Orchestration methods** — available on every Dendrite (no separate Cortex class needed):
+**Orchestration methods**  -  available on every Dendrite (no separate Cortex class needed):
 
 | Method | Emits / observes |
 |---|---|
@@ -204,9 +204,9 @@ The Dendrite handles REGISTER on start, HEARTBEAT on the configured interval, DE
 
 The canonical method names are `on_error_signal`, `on_register_signal`, `on_deregister_signal`, `on_heartbeat_signal`; the shorter forms above are convenient aliases.
 
-Lifecycle hooks (`on_connect`, `on_refresh`, `on_schedule`) are mixed in from `LifecycleHooks` — see §5.
+Lifecycle hooks (`on_connect`, `on_refresh`, `on_schedule`) are mixed in from `LifecycleHooks`  -  see §5.
 
-### 4.3 Cortex — back-compat alias for Dendrite
+### 4.3 Cortex  -  back-compat alias for Dendrite
 
 `Cortex` is exported purely for back-compat. In new code use `Dendrite` directly:
 
@@ -229,9 +229,11 @@ async with orch:
     ...
 ```
 
-### 4.4 Neuron — factory for anything that interacts with the real world
+### 4.4 Neuron  -  factory for anything that interacts with the real world
 
-A Neuron is any async function satisfying `(input: dict, context: list) -> dict`. It is *not* restricted to an LLM agent — a Neuron can be an LLM/agent, an **API** (a Flask app or any WSGI callable), or an **MCP server** (any stdio MCP server). The SDK ships optional source wrappers so each can be dropped into any Axon with no boilerplate; the protocol routes to all of them identically:
+A Neuron is any async function satisfying `(input: dict, context: list) -> dict`. It is *not* restricted to an LLM agent  -  a Neuron can be an LLM/agent, an **MCP server** (any stdio MCP server), or a plain async function. The SDK ships optional source wrappers so each can be dropped into any Axon with no boilerplate; the protocol routes to all of them identically:
+
+> An **HTTP API is not a Neuron.** The Flask/WSGI/`api` source (and the TS `expressNeuron`) were removed: a web app is an inbound request handler, not an `input -> output` worker. Keep your framework on the outside as an HTTP boundary and dispatch TASKs from its route handlers via an orchestrator Dendrite instead (see the `neuron_real_world` example).
 
 ```python
 from cosmonapse import Axon, Neuron
@@ -268,21 +270,20 @@ axon = Axon(
 |---|---|---|
 | `"ollama"` | `model` *(required)*, `endpoint`, `system`, `temperature`, `max_tokens`, `timeout` | LLM. Wraps `/api/generate` (plain prompt) and `/api/chat` (messages). Needs `httpx`. |
 | `"huggingface"` / `"hf"` | `endpoint` *(required)*, `model`, `use_chat_api`, `temperature`, `max_new_tokens`, `api_key`, `timeout` | LLM. Uses `/generate` (native TGI) or `/v1/chat/completions` (OpenAI compat). Needs `httpx`. |
-| `"flask"` / `"wsgi"` / `"api"` | `app` *(required)*, `default_method`, `default_path`, `base_headers` | API. Serves a Flask app / any WSGI callable in-process; input is HTTP-shaped (`method`/`path`/`json`/`query`/`headers`). Returns `{status, ok, json, response, headers, meta}`. Needs `werkzeug` (ships with Flask). |
-| `"mcp"` | `command`+`args` **or** `server`+`args`, plus `env`, `cwd`, `tool` | MCP server. Spawns any stdio MCP server and exposes its tools; input is `{tool, arguments}` (or `{"__list_tools__": True}`). Returns `{response, result, is_error, content, meta}`. Wrapper only — does not implement a server. Needs `mcp`. Standard launch presets in `STANDARD_MCP_SERVERS`. |
+| `"mcp"` | `command`+`args` **or** `server`+`args`, plus `env`, `cwd`, `tool` | MCP server. Spawns any stdio MCP server and exposes its tools; input is `{tool, arguments}` (or `{"__list_tools__": True}`). Returns `{response, result, is_error, content, meta}`. Wrapper only  -  does not implement a server. Needs `mcp`. Standard launch presets in `STANDARD_MCP_SERVERS`. |
 
-**TypeScript:** the same sources are available as `expressNeuron(app, opts)` and `mcpNeuron(opts)`, plus a unified `neuron(source, opts)` dispatcher and `standardMcpServers`. The MCP client uses `@modelcontextprotocol/sdk` (an optional peer dependency, imported lazily).
+**TypeScript:** the same sources are available as `mcpNeuron(opts)`, `ollamaNeuron(opts)`, `huggingFaceNeuron(opts)`, plus a unified `neuron(source, opts)` dispatcher and `standardMcpServers`. The MCP client uses `@modelcontextprotocol/sdk` (an optional peer dependency, imported lazily). (There is no `expressNeuron`  -  an HTTP API is not a Neuron.)
 
 **Input dict keys** (passed via `dispatch_task(input=...)`):
 
-- `prompt` (str) — plain-text single-turn.
-- `messages` (list) — OpenAI-style `[{"role": "user", "content": "…"}]` for multi-turn.
+- `prompt` (str)  -  plain-text single-turn.
+- `messages` (list)  -  OpenAI-style `[{"role": "user", "content": "…"}]` for multi-turn.
 
-**Output** — always `{"response": "<generated text>", "meta": <raw provider payload>}`.
+**Output**  -  always `{"response": "<generated text>", "meta": <raw provider payload>}`.
 
-**Soft dependency** — `httpx` must be installed (`pip install httpx`). It is intentionally not in the core SDK requirements so projects that bring their own Neuron functions don't pull in an extra dependency.
+**Soft dependency**  -  `httpx` must be installed (`pip install httpx`). It is intentionally not in the core SDK requirements so projects that bring their own Neuron functions don't pull in an extra dependency.
 
-### 4.5 RegistryStore — the optional persistent surface
+### 4.5 RegistryStore  -  the optional persistent surface
 
 ```python
 from cosmonapse import RegistryStore, MemoryRegistryStore, SqliteRegistryStore, PostgresRegistryStore
@@ -296,9 +297,9 @@ from cosmonapse import RegistryStore, MemoryRegistryStore, SqliteRegistryStore, 
 
 A third-party backend (Redis, DynamoDB, anything) is conformant iff it passes the `tests/test_registry_store.py` suite.
 
-Anything beyond the registry — costs, latency histograms, audit history — is the developer's to build by subscribing to the Synapse and persisting whatever they need. The SDK deliberately stops at `RegistryStore` so the mandatory surface stays small.
+Anything beyond the registry  -  costs, latency histograms, audit history  -  is the developer's to build by subscribing to the Synapse and persisting whatever they need. The SDK deliberately stops at `RegistryStore` so the mandatory surface stays small.
 
-### 4.6 Synapse — Synapse adapters
+### 4.6 Synapse  -  Synapse adapters
 
 ```python
 from cosmonapse import MemorySynapse, DevSynapse, NatsSynapse, KafkaSynapse
@@ -311,7 +312,7 @@ from cosmonapse import MemorySynapse, DevSynapse, NatsSynapse, KafkaSynapse
 | `NatsSynapse`   | cluster               | production default; native wildcards/queue groups            |
 | `KafkaSynapse`  | cluster               | durable audit log; trickier request/reply                    |
 
-URL factories — `synapse_from_url` builds without connecting; `connect_synapse` builds and connects in one call (recommended):
+URL factories  -  `synapse_from_url` builds without connecting; `connect_synapse` builds and connects in one call (recommended):
 
 ```python
 from cosmonapse import connect_synapse, synapse_from_url
@@ -326,7 +327,7 @@ t = synapse_from_url("cosmo://localhost:7070")
 await t.connect()
 ```
 
-For `MemorySynapse`, construct directly — there is no URL scheme for in-process transport:
+For `MemorySynapse`, construct directly  -  there is no URL scheme for in-process transport:
 
 ```python
 synapse = MemorySynapse()
@@ -351,7 +352,7 @@ The `cosmo` CLI ships with the Python SDK (`pip install cosmonapse`).
 **Synapse management**
 
 ```bash
-# Boot a local dev synapse (DevSynapseServer — TCP + NDJSON, single-host only)
+# Boot a local dev synapse (DevSynapseServer  -  TCP + NDJSON, single-host only)
 cosmo synapse start memory --namespace=dev
 
 # Boot with NATS or Kafka as the underlying transport
@@ -374,7 +375,7 @@ Connect a Dendrite to the running server:
 synapse = await connect_synapse("cosmo://127.0.0.1:7070")
 ```
 
-`DevSynapse` wire protocol: `hello / pub / sub / unsub / msg / err` (newline-delimited JSON). Subject matching follows MemorySynapse / NATS conventions (`*` one token, `>` rest). Queue groups, fan-out, and Doppler subscribers all work identically to the in-memory adapter. Zero external deps — dev-only, single host.
+`DevSynapse` wire protocol: `hello / pub / sub / unsub / msg / err` (newline-delimited JSON). Subject matching follows MemorySynapse / NATS conventions (`*` one token, `>` rest). Queue groups, fan-out, and Doppler subscribers all work identically to the in-memory adapter. Zero external deps  -  dev-only, single host.
 
 **Doppler (passive watcher)**
 
@@ -397,16 +398,16 @@ Every primitive (`Axon`, `Dendrite`, `Cortex`) mixes in `LifecycleHooks`, provid
 | Hook                       | Fires when                                                                                       |
 |---|---|
 | `on_connect(fn)`           | Once, after this component finishes its own connect handshake (Axon attached + REGISTER emitted; Dendrite/Cortex synapse up + subscriptions wired). |
-| `on_refresh(fn)`           | Whenever internal state observably changes — heartbeat tick, REGISTER / DEREGISTER / HEARTBEAT observed by a Cortex's registry, or a manual `await component.refresh(reason=..., extra=...)`. The handler receives a `RefreshEvent(reason, neuron_id, extra)`. |
+| `on_refresh(fn)`           | Whenever internal state observably changes  -  heartbeat tick, REGISTER / DEREGISTER / HEARTBEAT observed by a Cortex's registry, or a manual `await component.refresh(reason=..., extra=...)`. The handler receives a `RefreshEvent(reason, neuron_id, extra)`. |
 | `on_schedule(every_s=N)(fn)` | Developer-supplied periodic task. Runs as a background coroutine every `every_s` seconds for the lifetime of the component. |
 
 ### 5.1 Why these three
 
 `on_connect` and `on_refresh` exist because Cosmonapse explicitly supports **decentralised** operation. With no central orchestrator, every Dendrite needs:
 
-- a moment to announce itself to peers (handshake) — `on_connect`,
-- a way to react to state changes on the bus (reconciliation) — `on_refresh`,
-- a way to run periodic gossip / heartbeat / state-refresh tasks — `on_schedule`.
+- a moment to announce itself to peers (handshake)  -  `on_connect`,
+- a way to react to state changes on the bus (reconciliation)  -  `on_refresh`,
+- a way to run periodic gossip / heartbeat / state-refresh tasks  -  `on_schedule`.
 
 These hooks are the substrate on which peer-to-peer fabrics are built.
 
@@ -498,14 +499,10 @@ The TypeScript SDK is **shipping at v0.2** with full envelope/codec, all signal 
 
 ## 10. Roadmap
 
-**v0.2 (this release)** — Axon / Dendrite / Cortex alias; Neuron provider factories (Ollama, HuggingFace); RegistryStore + memory/sqlite/postgres; memory/dev/NATS/Kafka synapses; `cosmo synapse start|view|stop`, `cosmo doppler`, `cosmo validate`; lifecycle hooks; `connect_synapse` URL helper. TypeScript SDK: envelope, builders, MemorySynapse, NatsSynapse, RegistryStore mirror, Axon, Dendrite, Neuron contract.
+**v0.2 (this release)**  -  Axon / Dendrite / Cortex alias; Neuron provider factories (Ollama, HuggingFace); RegistryStore + memory/sqlite/postgres; memory/dev/NATS/Kafka synapses; `cosmo synapse start|view|stop`, `cosmo doppler`, `cosmo validate`; lifecycle hooks; `connect_synapse` URL helper. TypeScript SDK: envelope, builders, MemorySynapse, NatsSynapse, RegistryStore mirror, Axon, Dendrite, Neuron contract.
 
-**v0.3** — Axon as MCP server; `cosmo dev cortex` and `cosmo dev dendrite` scaffold subcommands; durable REGISTER replay on join; TypeScript: KafkaSynapse, SqliteRegistryStore/PostgresRegistryStore, provider-backed Neuron factories.
+**v0.3**  -  Axon as MCP server; `cosmo dev cortex` and `cosmo dev dendrite` scaffold subcommands; durable REGISTER replay on join; TypeScript: KafkaSynapse, SqliteRegistryStore/PostgresRegistryStore, provider-backed Neuron factories.
 
-**v0.4** — declarative router DSL on top of Dendrite primitives.
+**v0.4**  -  declarative router DSL on top of Dendrite primitives.
 
-**v0.5** — a Neuron-driven Dendrite (the orchestrator is itself an agent on the bus).
-
----
-
-*Open the issue tracker if anything here is unclear or contested.*
+**v0.5**  -  a Neuron-driven Dendrite (the orchestrator is itself an 

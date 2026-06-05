@@ -4,16 +4,32 @@ All notable changes to Cosmonapse are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Removed
+- **The HTTP-app Neuron type** (`Neuron(source="flask" | "wsgi" | "api")` and
+  the module `cosmonapse._neuron_http`; the TypeScript `expressNeuron` and the
+  `neuron("express" | "http" | "api", …)` factory sources). An HTTP API is not
+  a Neuron  -  a web app is an inbound request handler, not an `input -> output`
+  worker. The supported pattern is the reverse: keep your web framework (Flask,
+  Express, …) on the outside as an HTTP boundary and dispatch TASK Signals from
+  its route handlers via an orchestrator Dendrite, wiring
+  `@dendrite.on_agent_output` directly in the app. The `neuron_real_world`
+  example and the quickstart now show this.
+- The `[flask]` optional dependency was dropped from the Python SDK; the shared
+  `CloseableNeuronFn` type moved from `neuron-express.ts` to `neuron.ts` in the
+  TS SDK.
+
 ## [0.1.0] - 2026-05-30
 
 First feature release. Adds shared memory (Engram), per-trace event handles
 (Pathway), the full cognition signal family, capability-routed dispatch with
 competitive bidding, and a richer `cosmo` CLI. The TypeScript SDK ships its
-first published version alongside the Python SDK — parity gaps relative to
+first published version alongside the Python SDK  -  parity gaps relative to
 Python are tracked in `packages/ts-sdk/PORTING_STATUS.md`.
 
 ### Added
-- **Engram** — shared memory subsystem for Neurons. New `cosmonapse.engram`
+- **Engram**  -  shared memory subsystem for Neurons. New `cosmonapse.engram`
   package with the `Engram` ABC, `EngramBinding` for declarative wiring on an
   Axon, `EngramClient` for in-Neuron access, and three backends:
   `InMemoryEngram`, `SqliteEngram`, and `PostgresEngram` (lazy-imports
@@ -22,35 +38,35 @@ Python are tracked in `packages/ts-sdk/PORTING_STATUS.md`.
   `imprint_signal`, `imprinted_signal`) and `new_engram_id()` ULID helper.
   Errors: `EngramTimeout`, `EngramCancelled`, `EngramNotBound`,
   `EngramOverloaded`. See `design/ENGRAM_DESIGN.md`.
-- **Pathway** — `cosmonapse.pathway` exposes `Pathway` and `PathwayClosedError`.
+- **Pathway**  -  `cosmonapse.pathway` exposes `Pathway` and `PathwayClosedError`.
   `Dendrite.dispatch(...)` and `observe_pathway(trace_id)` return a per-trace
   event handle supporting three consumption shapes on one primitive:
   `await pw.wait()`, `@pw.on(SignalType.X)`, and `async for sig in pw`.
   `Pathway(scope="all" | "terminal")` filters which signal types are delivered;
   pathways auto-close on FINAL / ERROR.
-- **Cognition signal family** — `PLAN`, `THOUGHT_DELTA`, `TOOL_CALL`,
+- **Cognition signal family**  -  `PLAN`, `THOUGHT_DELTA`, `TOOL_CALL`,
   `TOOL_RESULT`, `MEMORY_APPEND`, `CRITIQUE`, `ESCALATION`, `CONSENSUS`,
   `CONTEXT_SYNC`. Each has a matching `emit_*` method and `on_*` decorator on
   `Dendrite`. Decorators accept `neuron=` / `capability=` / `trace_id=` filter
   kwargs and `on_trace(trace_id, *types)` narrows a handler to a single
   workflow.
-- **Capability-routed dispatch** — `dispatch(capabilities=..., ...)` publishes
+- **Capability-routed dispatch**  -  `dispatch(capabilities=..., ...)` publishes
   on `cosmonapse.<ns>.TASK.routed` with a queue group keyed on each Dendrite's
   aggregate capabilities, so identical-cap-profile Dendrites load-balance and
   the broker delivers each TASK exactly once within the group.
-- **Competitive bidding** — `dispatch_offer(input=..., capabilities=...,
+- **Competitive bidding**  -  `dispatch_offer(input=..., capabilities=...,
   deadline_ms=..., select=...)` runs the `TASK_OFFER` / `BID` / `TASK_AWARDED`
   flow. Selection strategies: `"first_bid"`, `"lowest_cost"`,
   `"highest_confidence"`. Returns a Pathway scoped to the awarded workflow.
-- **Dispatch sugar** — `dispatch_and_wait(...)` (dispatch, await first
+- **Dispatch sugar**  -  `dispatch_and_wait(...)` (dispatch, await first
   terminal signal, return it) and `dispatch_and_subscribe(...)` (dispatch and
   return the live Pathway).
-- **CLI** — new `cosmo init` command scaffolds a minimal Axon + Dendrite
+- **CLI**  -  new `cosmo init` command scaffolds a minimal Axon + Dendrite
   project. New `cosmo completion` prints a bash/zsh/fish completion script.
   `cosmo synapse view` gained namespace listing and per-namespace signal
   streaming. Internal `_prism` / `_prism_view` / `_prism_hero` modules back the
   richer signal-tree rendering used by `synapse view` and `doppler`.
-- **TypeScript SDK** (`@cosmonapse/sdk`) — first published version (`0.1.0`).
+- **TypeScript SDK** (`@cosmonapse/sdk`)  -  first published version (`0.1.0`).
   Envelope types and codec, typed signal builders, `Synapse` interface plus
   in-process `MemorySynapse` and networked `NatsSynapse`, `RegistryStore` with
   `MemoryRegistryStore`, `Neuron` / `Axon` / `Dendrite`, and the
@@ -71,7 +87,7 @@ Python are tracked in `packages/ts-sdk/PORTING_STATUS.md`.
 
 ### Changed
 - `Dendrite` is now the canonical orchestrator type. `Cortex` remains as a
-  back-compat alias; the public `Dendrite.cortex_id` attribute is gone — use
+  back-compat alias; the public `Dendrite.cortex_id` attribute is gone  -  use
   `dendrite_id`. The role guard now sits on `emit()` itself, so every cognition
   emitter funnels through it and worker-role Dendrites are blocked from
   emitting orchestration signals (except `bid()`, which uses the private
@@ -96,21 +112,4 @@ Python are tracked in `packages/ts-sdk/PORTING_STATUS.md`.
   `cosmo synapse start memory`).
 - Unused `anyio` core dependency.
 - The deprecated `cosmonapse.transport` compatibility shim.
-- The deprecated standalone `packages/cli` directory (the canonical `cosmo`
-  CLI ships inside the SDK distribution).
-- Committed `__pycache__` / `*.pyc` artifacts; added a repository `.gitignore`.
-
-### Fixed
-- `MemorySynapse.request()`, `DevSynapse.request()`, `KafkaSynapse.request()`,
-  and `SqliteRegistryStore` now use `asyncio.get_running_loop()` instead of the
-  deprecated `asyncio.get_event_loop()`.
-- `DevSynapse(port=0)` now correctly requests an OS-assigned port instead of
-  silently falling back to 7070.
-- `DevSynapseServer.on_signal` is typed `Callable[[str, str], None] | None`
-  rather than the bare builtin `callable`.
-- The Flask/WSGI Neuron factory no longer uses `Response.charset`, which
-  Werkzeug 3.x removed; it now decodes responses via `get_data(as_text=True)`,
-  working across Werkzeug 2.x and 3.x.
-
-## [0.0.1]
-- Initial development release.
+- The deprecat

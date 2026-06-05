@@ -1,5 +1,5 @@
 /**
- * @cosmonapse/sdk — registry store
+ * @cosmonapse/sdk  -  registry store
  *
  * The one mandatory persistent surface: a live view of the Neurons a namespace
  * has seen. Ported from `cosmonapse.storage.base` / `cosmonapse.storage.memory`.
@@ -8,7 +8,7 @@
  * serialise cleanly to JSON. A backend is conformant iff it behaves like
  * MemoryRegistryStore (the reference implementation).
  *
- * NAMING — snake_case is deliberate. NeuronRecord fields (`neuron_id`,
+ * NAMING  -  snake_case is deliberate. NeuronRecord fields (`neuron_id`,
  * `last_heartbeat`, `registered_at`) intentionally use snake_case rather than
  * the usual TS camelCase because a record IS the on-the-wire / on-disk shape:
  * it round-trips verbatim through JSON and across the Python and TS SDKs, which
@@ -19,7 +19,7 @@
  * is ever added on top.)
  *
  * (Python additionally ships sqlite/postgres backends; only the in-memory
- * backend is ported here — see PORTING_STATUS.md. Implement the RegistryStore
+ * backend is ported here  -  see PORTING_STATUS.md. Implement the RegistryStore
  * interface for others.)
  */
 
@@ -28,7 +28,7 @@ export type NeuronStatus = "registered" | "draining" | "deregistered";
 /**
  * A live view of one Neuron the namespace has seen.
  *
- * Fields are snake_case on purpose — this is the serialised wire/registry
+ * Fields are snake_case on purpose  -  this is the serialised wire/registry
  * shape shared with the Python SDK, not an idiomatic TS object. See the file
  * header for the rationale.
  */
@@ -81,7 +81,7 @@ export interface RegistryStore {
   markDeregistered(neuronId: string): Promise<void>;
   /**
    * Update last_heartbeat (and optionally status). If unknown, the backend
-   * MAY create a thin record — tolerating heartbeats that arrive before
+   * MAY create a thin record  -  tolerating heartbeats that arrive before
    * REGISTER.
    */
   touchHeartbeat(neuronId: string, ts: string, status?: NeuronStatus): Promise<void>;

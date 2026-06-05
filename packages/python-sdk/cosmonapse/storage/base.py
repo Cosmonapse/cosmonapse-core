@@ -48,13 +48,13 @@ class NeuronRecord:
 
 class RegistryStore(ABC):
     """
-    Abstract registry store. All methods are async — backends that wrap
+    Abstract registry store. All methods are async  -  backends that wrap
     sync libraries (sqlite3) must dispatch to a threadpool internally
     so the event loop never blocks.
 
     Implementations are expected to be safe for concurrent calls from
     multiple coroutines on the same event loop. They are NOT required
-    to be safe across processes — Postgres is the canonical choice
+    to be safe across processes  -  Postgres is the canonical choice
     when multiple Cortex processes share state.
     """
 
@@ -92,7 +92,7 @@ class RegistryStore(ABC):
         """
         Update last_heartbeat (and optionally status) for an existing
         record. If no record exists, the backend MAY create a thin
-        record with just neuron_id + last_heartbeat — this matches how
+        record with just neuron_id + last_heartbeat  -  this matches how
         the Cortex tolerates heartbeats arriving before REGISTER.
         """
 

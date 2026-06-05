@@ -1,10 +1,12 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
 
 [project]
 name = "cosmonapse"
-version = "0.1.0"
+# Version is derived from the git tag at build time (see [tool.hatch.version]).
+# Tag a release as `vX.Y.Z` -> the wheel/sdist version is X.Y.Z. No manual edit.
+dynamic = ["version"]
 description = "Event-driven Agent-to-Agent protocol SDK and developer CLI"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -30,16 +32,12 @@ nats = ["nats-py>=2.3"]
 kafka = ["aiokafka>=0.10"]
 # Storage backends
 postgres = ["asyncpg>=0.29"]
-# Flask / WSGI Neuron factory. The wrapper drives the app through
-# werkzeug's WSGI test client; installing Flask brings werkzeug with it.
-flask = ["flask>=3.0"]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
     "ruff>=0.4",
     "mypy>=1.9",
     # so the test suite can exercise the optional code paths
-    "flask>=3.0",
     "aiokafka>=0.10",
     "asyncpg>=0.29",
 ]
@@ -55,6 +53,20 @@ cosmo = "cosmo.main:cli"
 # installer (cosmonapse-core/install.py) invokes this automatically; users can
 # also run it themselves at any time with `cosmonapse-init-path`.
 cosmonapse-init-path = "cosmo._install:main"
+
+# ---------------------------------------------------------------------------
+# Versioning  -  derived from git tags (hatch-vcs / setuptools-scm)
+# ---------------------------------------------------------------------------
+# The version comes from the most recent `vX.Y.Z` git tag, so a release is cut
+# purely by tagging:  git tag v0.1.1 && git push origin v0.1.1.
+# Between tags, builds get a dev version like `0.1.1.dev3+g<sha>`. If no tag is
+# reachable (e.g. a shallow CI checkout), it falls back to `fallback_version`.
+[tool.hatch.version]
+source = "vcs"
+
+[tool.hatch.version.raw-options]
+# `v0.1.1` -> `0.1.1`; the leading `v` is stripped automatically.
+fallback_version = "0.1.0"
 
 # ---------------------------------------------------------------------------
 # Build configuration

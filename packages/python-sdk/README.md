@@ -2,7 +2,7 @@
 
 Event-driven Agent-to-Agent protocol SDK for Python.
 
-**v0.1.0** — Python 3.11+ · MIT
+**v0.1.0**  -  Python 3.11+ · MIT
 
 ---
 
@@ -18,10 +18,8 @@ pip install "cosmonapse[kafka]"     # Kafka transport (aiokafka)
 # Optional storage backend
 pip install "cosmonapse[postgres]"  # Postgres registry store (asyncpg)
 
-# Optional Flask / WSGI Neuron factory
-pip install "cosmonapse[flask]"
-
-# Provider-backed Neurons (Ollama / HuggingFace) need httpx
+# Provider-backed Neurons (Ollama / HuggingFace / OpenAI / Anthropic / groq /
+# openrouter / together / mistral) need httpx
 pip install httpx
 ```
 
@@ -114,11 +112,39 @@ axon = Axon(
         use_chat_api=True,
     ),
 )
+
+# OpenAI (api_key falls back to OPENAI_API_KEY)
+axon = Axon(
+    neuron_id="writer",
+    neuron_fn=Neuron(source="openai", model="gpt-4o", system="Be concise."),
+)
+
+# Anthropic (api_key falls back to ANTHROPIC_API_KEY)
+axon = Axon(
+    neuron_id="reasoner",
+    neuron_fn=Neuron(source="anthropic", model="claude-opus-4-6"),
+)
+
+# OpenAI-compatible hosted endpoints  -  groq, openrouter, together, mistral.
+# Pre-configured huggingface Neurons; api_key falls back to <PROVIDER>_API_KEY.
+axon = Axon(
+    neuron_id="fast",
+    neuron_fn=Neuron(source="groq", model="llama-3.1-70b-versatile"),
+)
 ```
 
 `Neuron(...)` returns an async callable satisfying `NeuronFn`. Pass `prompt` or
 `messages` (OpenAI-style) in the task input. Output is always
 `{"response": "<text>", "meta": <raw provider payload>}`.
+
+| `source=` | Kind | Key kwargs |
+|---|---|---|
+| `"ollama"` | LLM | `model`*, `endpoint`, `system`, `temperature`, `max_tokens` |
+| `"huggingface"` / `"hf"` | LLM | `endpoint`*, `model`, `use_chat_api`, `api_key`, `max_new_tokens` |
+| `"openai"` | LLM | `model`*, `api_key` (or `OPENAI_API_KEY`), `endpoint`, `temperature`, `max_tokens`, `system` |
+| `"anthropic"` | LLM | `model`*, `api_key` (or `ANTHROPIC_API_KEY`), `system`, `max_tokens`, `temperature` |
+| `"groq"` / `"openrouter"` / `"together"` / `"mistral"` | LLM | `model`, `api_key` (or `<PROVIDER>_API_KEY`), `endpoint`, `temperature`, `max_new_tokens` |
+| `"mcp"` | MCP server | `command`+`args` *or* `server`+`args`, `env`, `cwd`, `tool` |
 
 Requires `httpx` (`pip install httpx`).
 
@@ -158,45 +184,4 @@ await synapse.connect()
 | Import | Use when |
 |---|---|
 | `MemoryRegistryStore` | tests, ephemeral orchestrators |
-| `SqliteRegistryStore` | single-process production, zero extra deps |
-| `PostgresRegistryStore` | multi-process production (`pip install "cosmonapse[postgres]"`) |
-
----
-
-## CLI
-
-```bash
-# Start a local dev synapse (TCP + NDJSON)
-cosmo synapse start memory --namespace=dev
-
-# View active namespaces
-cosmo synapse view --url=cosmo://127.0.0.1:7070
-
-# Stream signals for one namespace
-cosmo synapse view --url=cosmo://127.0.0.1:7070 --namespace=dev
-
-# Stop a namespace
-cosmo synapse stop --url=cosmo://127.0.0.1:7070 --namespace=dev
-
-# Passive signal watcher (Doppler)
-cosmo doppler --url=cosmo://127.0.0.1:7070 --namespace=dev
-
-# Validate envelope conformance
-cosmo validate --url=cosmo://127.0.0.1:7070 --namespace=dev
-```
-
----
-
-## Key concepts
-
-| Term | What it is |
-|---|---|
-| **Neuron** | A pure async function — zero protocol knowledge |
-| **Axon** | Agent-side wrapper that turns Neuron output into Signals |
-| **Dendrite** | Synapse-side participant; hosts Axons, handles routing, orchestration |
-| **Cortex** | Back-compat alias for `Dendrite` |
-| **Synapse** | The message transport (memory / dev TCP / NATS / Kafka) |
-| **Signal** | An envelope crossing the Synapse |
-| **RegistryStore** | Live view of Neurons seen on a namespace |
-
-See `design/SDK_DESIGN.md` for the full design document and `design/ENVELOPE_SPEC.md` for the wire protocol.
+| `SqliteRegistryStore` | single-process production, zero extra 

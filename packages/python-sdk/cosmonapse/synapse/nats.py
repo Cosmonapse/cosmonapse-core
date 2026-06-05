@@ -6,7 +6,7 @@ NATS Synapse adapter.
 NATS maps onto the Cosmonapse Synapse contract very directly:
 
   - Subjects use the same `cosmonapse.<namespace>.<TYPE>` convention.
-  - `*` and `>` wildcards are native NATS — no translation needed.
+  - `*` and `>` wildcards are native NATS  -  no translation needed.
   - Queue groups are native (`queue=...` on subscribe).
   - Request / reply is native (`nc.request`).
 

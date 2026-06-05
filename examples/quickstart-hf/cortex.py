@@ -1,7 +1,7 @@
 """
 cortex.py
 ~~~~~~~~~
-Cortex = orchestrator Dendrite. Owns no Axon — its only job is to
+Cortex = orchestrator Dendrite. Owns no Axon  -  its only job is to
 dispatch TASK Signals and collect AGENT_OUTPUT Signals.
 
 This Cortex round-robins prompts across a static pool of worker

@@ -1,7 +1,7 @@
 """
 examples/engram_integration/main.py
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Integrating an Engram — shared memory bound to a Neuron.
+Integrating an Engram  -  shared memory bound to a Neuron.
 
 Three things change versus `building_a_neuron`:
 
@@ -16,7 +16,7 @@ Three things change versus `building_a_neuron`:
   3. The Neuron signature gains two keyword-only parameters:
      `recall` and `imprint`. Calling them emits RECALL / IMPRINT Signals
      under the current trace_id and waits for the matching reply
-     (RECALLED / IMPRINTED). The Neuron stays pure — it never imports
+     (RECALLED / IMPRINTED). The Neuron stays pure  -  it never imports
      the protocol or touches the Synapse.
 
 The example calls the Neuron twice with the same input. The first call
@@ -48,7 +48,7 @@ from cosmonapse import (
 # because the Axon was constructed with `engrams=[EngramBinding(name="ctx",
 # engram_id="ctx")]`. They take the local binding name (`"ctx"`) as the
 # first positional argument so the Neuron stays decoupled from deployment
-# identifiers — operations change the engram_id without touching the
+# identifiers  -  operations change the engram_id without touching the
 # Neuron.
 # ---------------------------------------------------------------------------
 async def researcher(input: dict, context: list, *, recall, imprint) -> dict:
@@ -84,7 +84,7 @@ async def main() -> None:
 
     try:
         # -------------------------------------------------------------------
-        # Engram host — a worker Dendrite that owns the memory backend.
+        # Engram host  -  a worker Dendrite that owns the memory backend.
         # `engram_id="ctx"` is the address other peers use to route
         # RECALL / IMPRINT to this specific backend.
         # -------------------------------------------------------------------
@@ -99,7 +99,7 @@ async def main() -> None:
         )
 
         # -------------------------------------------------------------------
-        # Worker — hosts the Neuron and declares the binding.
+        # Worker  -  hosts the Neuron and declares the binding.
         # -------------------------------------------------------------------
         worker = Dendrite(
             synapse=synapse,
@@ -117,7 +117,7 @@ async def main() -> None:
         )
 
         # -------------------------------------------------------------------
-        # Orchestrator — drives two calls back-to-back.
+        # Orchestrator  -  drives two calls back-to-back.
         # -------------------------------------------------------------------
         orchestrator = Dendrite(synapse=synapse, namespace="demo")
 

@@ -1,5 +1,5 @@
 """
-cosmo — Cosmonapse developer CLI
+cosmo  -  Cosmonapse developer CLI
 
 Commands
 --------

@@ -55,7 +55,7 @@ _TYPE_COLOURS: dict[str, str] = {
 
 
 # ---------------------------------------------------------------------------
-# Output helpers — rich variant if available, plain otherwise
+# Output helpers  -  rich variant if available, plain otherwise
 # ---------------------------------------------------------------------------
 
 if _HAS_RICH:
@@ -64,7 +64,7 @@ if _HAS_RICH:
     def _print_signal(subject: str, sig: Signal) -> None:
         colour = _TYPE_COLOURS.get(sig.type.value, "white")
         ts = sig.ts.strftime("%H:%M:%S.%f")[:-3]
-        neuron = sig.neuron or "—"
+        neuron = sig.neuron or " - "
         trace = sig.trace_id[4:12]
         t = Text()
         t.append(f"  {ts}  ", style="dim")
@@ -89,7 +89,7 @@ else:
         ts = sig.ts.strftime("%H:%M:%S")
         print(
             f"  {ts}  {sig.type.value:<14}  {sig.trace_id[4:12]}  "
-            f"{(sig.neuron or '—'):<18}  {subject}"
+            f"{(sig.neuron or ' - '):<18}  {subject}"
         )
 
     def _hr() -> None:

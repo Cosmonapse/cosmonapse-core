@@ -1,5 +1,5 @@
 /**
- * @cosmonapse/sdk — lifecycle hooks
+ * @cosmonapse/sdk  -  lifecycle hooks
  *
  * Shared lifecycle-hook surface for Axon and Dendrite / Cortex, ported from
  * `cosmonapse._hooks`. Three hook kinds cover both the centralised
@@ -8,14 +8,14 @@
  *   onConnect   fire-once after the component finishes its own connect
  *               handshake (Axon attached + registered, Dendrite up on the
  *               Synapse).
- *   onRefresh   fired whenever the component's observable state refreshes —
+ *   onRefresh   fired whenever the component's observable state refreshes  - 
  *               heartbeat tick, REGISTER / DEREGISTER / HEARTBEAT seen by the
  *               registry, or a manual `refresh()`. The handler receives a
  *               {@link RefreshEvent} describing what changed.
  *   onSchedule  developer-supplied periodic task. Runs as a background loop
  *               every `everyMs` until the component stops.
  *
- * Decentralised use case — each Dendrite can announce itself on connect,
+ * Decentralised use case  -  each Dendrite can announce itself on connect,
  * reconcile peers on refresh, and gossip on a schedule, so peer-to-peer
  * fabrics emerge without the SDK baking in an orchestration model.
  *

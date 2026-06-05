@@ -1,9 +1,9 @@
 /**
- * @cosmonapse/sdk — NATS synapse adapter
+ * @cosmonapse/sdk  -  NATS synapse adapter
  *
  * NATS maps onto the Synapse contract directly:
  *   - subjects use the same `cosmonapse.<namespace>.<TYPE>` convention
- *   - `*` and `>` wildcards are native NATS — no translation needed
+ *   - `*` and `>` wildcards are native NATS  -  no translation needed
  *   - queue groups are native (`queue` on subscribe)
  *   - request/reply is native (`nc.request`)
  *
@@ -13,7 +13,7 @@
  *
  * Ported from `cosmonapse.synapse.nats`. One enhancement over the Python
  * adapter: the inbound bridge stashes the NATS reply subject into
- * `signal.meta._reply_to`, and `replyTo()` publishes there — so the SAME
+ * `signal.meta._reply_to`, and `replyTo()` publishes there  -  so the SAME
  * request/reply responder code works against MemorySynapse and NatsSynapse.
  */
 
@@ -165,7 +165,7 @@ export class NatsSynapse implements Synapse {
   async replyTo(original: Signal, reply: Signal): Promise<void> {
     const replySubject = original.meta["_reply_to"];
     if (typeof replySubject !== "string" || !replySubject) {
-      throw new Error("Signal has no _reply_to in meta — not a request signal");
+      throw new Error("Signal has no _reply_to in meta  -  not a request signal");
     }
     await this.publish(replySubject, reply);
   }

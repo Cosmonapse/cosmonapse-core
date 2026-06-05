@@ -1,4 +1,4 @@
-// The Signal envelope as it arrives over the Prism `/ws` bridge — one JSON
+// The Signal envelope as it arrives over the Prism `/ws` bridge  -  one JSON
 // object per WebSocket message. Mirrors ENVELOPE_SPEC.md §4. Consumers must
 // ignore unknown fields, so every non-required field is optional here.
 

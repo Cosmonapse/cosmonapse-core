@@ -214,7 +214,7 @@ class InMemoryEngram(Engram):
 
             elif op == "append":
                 ent = self._make_entry(entry, merge_key)
-                # Append is "add but never collide" — autogenerate id if missing.
+                # Append is "add but never collide"  -  autogenerate id if missing.
                 while ent.id in self._entries:
                     ent = self._make_entry({**entry, "id": new_engram_id()}, merge_key)
                 self._store(ent)

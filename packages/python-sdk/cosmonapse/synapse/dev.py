@@ -1,7 +1,7 @@
 """
 cosmonapse.synapse.dev
 ~~~~~~~~~~~~~~~~~~~~~~~~
-Local dev Synapse — a tiny TCP + NDJSON broker.
+Local dev Synapse  -  a tiny TCP + NDJSON broker.
 
 `cosmo synapse start memory` boots a `DevSynapseServer` and prints a URL like
 `cosmo://127.0.0.1:7070`. Any process can then connect to that URL with

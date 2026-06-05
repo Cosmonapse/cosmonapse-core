@@ -119,7 +119,7 @@ export function Sidebar({ open, width, signals, selected, onSelect }: Props) {
                   textOverflow: "ellipsis",
                 }}
               >
-                {sig.neuron || "—"}
+                {sig.neuron || " - "}
                 <span style={{ color: C.textFaint }}> · {(sig.trace_id || "").slice(4, 12)}</span>
               </div>
               {isSel && sig.payload && (

@@ -1,0 +1,75 @@
+# Cosmonapse release pipeline (GitLab CI/CD)
+#
+# Mirrors .github/workflows/release.yml for GitLab. Runs only on version tags
+# (e.g. `v0.1.1`) and performs three things:
+#
+#   1. prism-build   - build the Prism UI (Vite) and copy the static bundle into
+#                      the Python package so it ships inside the wheel.
+#   2. publish-pypi  - build the cosmonapse wheel + sdist and upload to PyPI.
+#   3. publish-npm   - build the @cosmonapse/sdk TS package and publish to npm.
+#
+# Required CI/CD variables (Settings -> CI/CD -> Variables, set "Masked"):
+#   PYPI_TOKEN  - a PyPI API token (value starts with "pypi-"). Used as the
+#                 twine password with username "__token__".
+#   NPM_TOKEN   - an npm automation token with publish rights for @cosmonapse.
+#
+# Tag a release with:  git tag v0.1.1 && git push origin v0.1.1
+
+stages:
+  - build
+  - publish
+
+# Run the whole pipeline only for SemVer-style tags like v0.1.1 / v1.2.3.
+workflow:
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+/'
+
+# ── 1. Build Prism UI and copy the bundle into the Python package ────────────
+prism-build:
+  stage: build
+  image: node:20
+  before_script:
+    - cd packages/prism-ui
+    - npm ci || npm install
+  script:
+    # `build:into-wheel` runs `vite build` then scripts/copy-dist.mjs, which
+    # copies packages/prism-ui/dist -> packages/python-sdk/cosmo/commands/prism_dist
+    - npm run build:into-wheel
+  artifacts:
+    # Hand the freshly built bundle to the PyPI job so the wheel embeds it.
+    paths:
+      - packages/python-sdk/cosmo/commands/prism_dist/
+    expire_in: 1 hour
+
+# ── 2. Python SDK -> PyPI ───────────────────────────────────────────────────
+publish-pypi:
+  stage: publish
+  image: python:3.12-slim
+  needs:
+    - job: prism-build
+      artifacts: true
+  variables:
+    TWINE_USERNAME: __token__
+    TWINE_PASSWORD: $PYPI_TOKEN
+    TWINE_NON_INTERACTIVE: "1"
+  before_script:
+    - python -m pip install --upgrade pip build twine
+  script:
+    - cd packages/python-sdk
+    - python -m build                       # wheel + sdist into dist/
+    - python -m twine check dist/*
+    - python -m twine upload dist/*
+
+# ── 3. TypeScript SDK -> npm ────────────────────────────────────────────────
+publish-npm:
+  stage: publish
+  image: node:20
+  before_script:
+    - cd packages/ts-sdk
+    - npm ci || npm install
+  script:
+    - npm run build
+    - echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > .npmrc
+    - npm publish --access public
+  after_script:
+    - rm -f packages/ts-sdk/.npmrc

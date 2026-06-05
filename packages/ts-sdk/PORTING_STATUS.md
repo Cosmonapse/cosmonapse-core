@@ -1,9 +1,9 @@
-# TypeScript SDK — porting status
+# TypeScript SDK  -  porting status
 
 This file is the single source of truth for what the TypeScript SDK
 (`@cosmonapse/sdk`) has ported from the reference Python SDK (`cosmonapse`) and
 what is still outstanding. It replaces the scattered "Still to port…" comments
-that used to live inline in the source — a developer reading a source file
+that used to live inline in the source  -  a developer reading a source file
 should not have to guess whether a gap is known or tracked. It is.
 
 When you open or close one of these items, update this file (and ideally mirror
@@ -22,20 +22,22 @@ delete the corresponding caveat comment from the source.
 - `RegistryStore` interface + `MemoryRegistryStore` (`storage.ts`),
   `SqliteRegistryStore` (`storage-sqlite.ts`, optional `better-sqlite3`),
   `PostgresRegistryStore` (`storage-postgres.ts`, optional `pg`)
-- `LifecycleHooks` — `onConnect` / `onRefresh` / `onSchedule` (`hooks.ts`),
+- `LifecycleHooks`  -  `onConnect` / `onRefresh` / `onSchedule` (`hooks.ts`),
   wired into `Axon` and `Dendrite`
 - `Neuron` contract + `Axon` + `Dendrite` (incl. the registry mirror)
-- Neuron sources: `expressNeuron`, `mcpNeuron`, `ollamaNeuron`,
-  `huggingFaceNeuron`, and the unified `neuron()` factory
+- Neuron sources: `mcpNeuron`, `ollamaNeuron`, `huggingFaceNeuron`, and the
+  unified `neuron()` factory. (The Express / HTTP-app Neuron was removed  -  an
+  HTTP API is not a Neuron; front an orchestrator Dendrite with your web
+  framework instead.)
 
 ## Still to port (tracked, not yet implemented)
 
-Nothing outstanding from the original parity gap list — every row below has
+Nothing outstanding from the original parity gap list  -  every row below has
 been closed. New gaps, if any are discovered, should be added here.
 
 | Area | Gap | Python reference | Notes |
 | --- | --- | --- | --- |
-| — | — | — | All previously-tracked gaps are ported. |
+|  -  |  -  |  -  | All previously-tracked gaps are ported. |
 
 ## Known intentional differences (not gaps)
 
@@ -50,6 +52,4 @@ been closed. New gaps, if any are discovered, should be added here.
 
 - **`NeuronRecord` field naming is snake_case** (`neuron_id`, `last_heartbeat`,
   `registered_at`). This is deliberate: the record is the on-the-wire / on-disk
-  shape shared with the Python SDK and must round-trip verbatim. See the header
-  of `src/storage.ts`. A camelCase view/adapter could be layered on top later;
-  if added, document it here.
+  shape shared with the Python SDK and must round-trip verba

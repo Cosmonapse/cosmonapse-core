@@ -1,9 +1,9 @@
 /**
- * @cosmonapse/sdk — envelope
+ * @cosmonapse/sdk  -  envelope
  *
  * Signal envelope types and codec. The TypeScript surface mirrors the Python
  * `cosmonapse.envelope` module 1:1 (see ENVELOPE_SPEC.md §7). Every message
- * crossing the Synapse is a Signal — a JSON object conforming to this schema.
+ * crossing the Synapse is a Signal  -  a JSON object conforming to this schema.
  *
  * Producer tags (who emits each type):
  *   [A]  Axon (skill/connector)

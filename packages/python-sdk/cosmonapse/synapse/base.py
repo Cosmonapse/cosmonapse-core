@@ -3,7 +3,7 @@ cosmonapse.synapse.base
 ~~~~~~~~~~~~~~~~~~~~~~~~~
 Synapse interface that all adapters must implement.
 
-The interface is intentionally narrow — five methods only.
+The interface is intentionally narrow  -  five methods only.
 Adapters translate these into whatever the underlying broker requires.
 """
 
@@ -63,9 +63,9 @@ class Synapse(ABC):
         """
         Subscribe to a subject pattern.
 
-        subject       — exact subject or wildcard (e.g. 'cosmonapse.>' for all)
-        handler       — async callback invoked for each received Signal
-        queue_group   — if set, only one subscriber in the group receives each message
+        subject        -  exact subject or wildcard (e.g. 'cosmonapse.>' for all)
+        handler        -  async callback invoked for each received Signal
+        queue_group    -  if set, only one subscriber in the group receives each message
                         (load-balancing across multiple Cortex instances).
                         Doppler subscribers must NOT use a queue_group.
         """

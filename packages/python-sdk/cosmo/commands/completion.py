@@ -9,13 +9,13 @@ shell's completion directory.
 
 Examples
 --------
-    # bash — load for the current shell
+    # bash  -  load for the current shell
     eval "$(cosmo completion bash)"
 
-    # bash — install permanently
+    # bash  -  install permanently
     cosmo completion bash > ~/.local/share/bash-completion/completions/cosmo
 
-    # zsh — add to a directory on $fpath
+    # zsh  -  add to a directory on $fpath
     cosmo completion zsh > ~/.zfunc/_cosmo
 
     # fish

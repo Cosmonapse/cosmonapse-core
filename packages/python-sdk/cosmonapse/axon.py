@@ -74,7 +74,7 @@ class Axon(LifecycleHooks):
         self._context_fetcher = context_fetcher or _noop_context_fetcher
         self._dendrite: "Dendrite | None" = None
 
-        # Engram bindings the Neuron may address. Keyed by binding.name —
+        # Engram bindings the Neuron may address. Keyed by binding.name  - 
         # the Neuron passes that name to recall(...) / imprint(...). The
         # Axon enforces the whitelist so a Neuron cannot hit an Engram it
         # was not declared to depend on.
@@ -149,7 +149,7 @@ class Axon(LifecycleHooks):
         if callable(aclose):
             try:
                 await aclose()
-            except Exception:  # noqa: BLE001 — teardown must not raise
+            except Exception:  # noqa: BLE001  -  teardown must not raise
                 logger.warning("Axon %s: neuron aclose() failed", self.neuron_id, exc_info=True)
 
     # -- core: handle one TASK ----------------------------------------

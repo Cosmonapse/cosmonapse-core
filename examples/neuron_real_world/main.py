@@ -1,104 +1,103 @@
 """
 examples/neuron_real_world/main.py
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-A Neuron is *anything that interacts with the real world*. This example wires
-three different kinds of Neuron onto the same Synapse, all behind the identical
-``Axon`` interface — the rest of the protocol can't tell them apart:
+A Neuron is *anything that interacts with the real world*  -  an MCP server, an
+LLM, a plain async function. But an **HTTP API is not a Neuron**. Rather than
+wrap a web app behind an Axon, you keep your web framework on the *outside* as
+an HTTP boundary and dispatch TASK Signals from inside its route handlers,
+using the orchestrator Dendrite's decorators directly in the Flask app.
 
-  * an **API**         — an existing Flask app, served in-process,
-  * an **MCP server**  — the standard filesystem server, wrapped as a Neuron,
-  * an **LLM**         — an Ollama model (commented out; needs a daemon).
+This single-file example wires:
+
+  * a **worker** Dendrite (``role="worker"``) hosting two real Neurons  - 
+        - ``summary`` : a plain async function,
+        - ``files``   : the standard filesystem MCP server, wrapped as a Neuron;
+  * a **Flask app** that owns an **orchestrator** Dendrite (``role=
+    "orchestrator"``). Its routes dispatch TASKs to those workers and block
+    until the matching AGENT_OUTPUT comes back.
+
+Flask is synchronous and Cosmonapse is async, so the orchestrator Dendrite runs
+on an asyncio loop in a background thread; each Flask route and the asyncio
+``@orch.on_agent_output`` handler hand off through a
+``concurrent.futures.Future`` keyed by ``trace_id``.
 
 Run with MemorySynapse (no external broker):
 
-    pip install httpx mcp flask        # soft deps for the sources used here
+    pip install flask mcp        # soft deps for the sources used here
     python examples/neuron_real_world/main.py
+
+    # then, in another terminal:
+    curl -s -X POST localhost:5000/summarise \\
+         -H 'Content-Type: application/json' \\
+         -d '{"text": "Cosmonapse keeps your API at the edge."}'
+    curl -s -X POST localhost:5000/files
 """
 
 import asyncio
+import concurrent.futures
+import threading
 
 from flask import Flask, jsonify, request
 
 from cosmonapse import (
     Axon,
     Dendrite,
-    MemoryRegistryStore,
     MemorySynapse,
     Neuron,
+    new_trace_id,
 )
 
-# ---------------------------------------------------------------------------
-# 1.  An ordinary Flask API → a Neuron
-# ---------------------------------------------------------------------------
+NAMESPACE = "demo"
+FLASK_PORT = 5000
 
-app = Flask(__name__)
-
-
-@app.post("/summarise")
-def summarise():
-    body = request.get_json(silent=True) or {}
-    text = body.get("text", "")
-    return jsonify(summary=text[:120], length=len(text))
-
-
-api_neuron = Neuron(source="flask", app=app, default_path="/summarise")
 
 # ---------------------------------------------------------------------------
-# 2.  A standard MCP server → a Neuron (wrapper only; we don't ship the server)
+# 1.  Real-world Neurons  -  the worker side
 # ---------------------------------------------------------------------------
-# Spawns `npx -y @modelcontextprotocol/server-filesystem .` over stdio and
-# exposes its tools. `tool="list_directory"` is the default tool to call.
+# A Neuron is a plain ``async (input, context) -> dict`` callable. Neither of
+# these knows anything about HTTP, Flask, or the protocol.
 
-fs_neuron = Neuron(
+async def summary_neuron(input: dict, context: list) -> dict:
+    text = input.get("text", "")
+    return {"summary": text[:120], "length": len(text)}
+
+
+# The standard filesystem MCP server, wrapped as a Neuron (wrapper only  -  we
+# don't ship the server; ``.`` is the allowed directory).
+files_neuron = Neuron(
     source="mcp",
     server="filesystem",
-    args=["."],               # allowed directory
+    args=["."],
     tool="list_directory",
 )
 
+
 # ---------------------------------------------------------------------------
-# 3.  (Optional) an LLM → a Neuron
+# 2.  The async runtime  -  a background asyncio loop hosting both Dendrites
 # ---------------------------------------------------------------------------
-# llm_neuron = Neuron(source="ollama", model="llama3")
+
+_loop = asyncio.new_event_loop()
+_pending: dict[str, "concurrent.futures.Future[dict]"] = {}
+_orch: Dendrite | None = None
 
 
-async def main():
+def _run_loop() -> None:
+    asyncio.set_event_loop(_loop)
+    _loop.run_forever()
+
+
+threading.Thread(target=_run_loop, daemon=True, name="cosmo-loop").start()
+
+
+async def _setup() -> None:
+    global _orch
     synapse = MemorySynapse()
-    store = MemoryRegistryStore()
+    await synapse.connect()
 
-    worker = Dendrite(synapse=synapse, namespace="demo")
-    worker.attach_axon(Axon(neuron_id="summary-api", neuron_fn=api_neuron,
-                            capabilities=["http", "summarise"]))
-    worker.attach_axon(Axon(neuron_id="files", neuron_fn=fs_neuron,
-                            capabilities=["mcp", "filesystem"]))
-
-    orch = Dendrite(synapse=synapse, registry_store=store, namespace="demo")
-
-    seen: dict = {}
-
-    @orch.on_agent_output
-    async def on_output(sig):
-        seen[sig.payload["neuron"]] = sig.payload["output"]
-        await orch.emit_final(trace_id=sig.trace_id, parent_id=sig.id,
-                              result=sig.payload["output"])
-
-    async with orch, worker:
-        # Hit the Flask API neuron. The whole input becomes the JSON body
-        # because it carries a `text` key and no explicit method/path.
-        await orch.dispatch_task(
-            neuron="summary-api",
-            input={"text": "Cosmonapse turns any real-world thing into a neuron."},
-        )
-        # Ask the filesystem MCP server to list the current directory.
-        await orch.dispatch_task(
-            neuron="files",
-            input={"tool": "list_directory", "arguments": {"path": "."}},
-        )
-        await asyncio.sleep(5)
-
-    print("API neuron  :", seen.get("summary-api"))
-    print("MCP neuron  :", seen.get("files"))
-
-
-if __name__ == "__main__":
-    asyncio.run(main())
+    # Worker Dendrite: hosts the Axons, replies to TASKs, never dispatches.
+    worker = Dendrite(synapse=synapse, namespace=NAMESPACE,
+                      dendrite_id="workers", role="worker")
+    worker.attach_axon(Axon(neuron_id="summary", neuron_fn=summary_neuron,
+                            capabilities=["summarise"]))
+    worker.attach_axon(Axon(neuron_id="files", neuron_fn=files_neuron,
+                            capabilities=["mcp", "filesyste

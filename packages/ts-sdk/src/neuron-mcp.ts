@@ -1,7 +1,7 @@
 /**
- * @cosmonapse/sdk — MCP-server Neuron
+ * @cosmonapse/sdk  -  MCP-server Neuron
  *
- * Wrap **any stdio MCP server** as a Neuron. This is a thin client wrapper —
+ * Wrap **any stdio MCP server** as a Neuron. This is a thin client wrapper  - 
  * it does NOT implement an MCP server. It spawns an existing server as a
  * subprocess, speaks MCP over stdio via `@modelcontextprotocol/sdk`, and
  * exposes that server's tools behind the NeuronFn signature. A TASK becomes an
@@ -30,7 +30,7 @@
  */
 
 import type { Json } from "./envelope.js";
-import type { CloseableNeuronFn } from "./neuron-express.js";
+import type { CloseableNeuronFn } from "./neuron.js";
 
 export interface McpNeuronOptions {
   /** Executable to spawn (e.g. "npx", "uvx"). Required unless `server` is set. */
@@ -50,7 +50,7 @@ export interface McpNeuronOptions {
 }
 
 /**
- * Launch specs for standard, separately-published MCP servers. We wrap them —
+ * Launch specs for standard, separately-published MCP servers. We wrap them  - 
  * we do not ship them. Anything in `opts.args` is appended (e.g. allowed dirs
  * for filesystem, `--repository <path>` for git).
  */
@@ -133,7 +133,7 @@ export function mcpNeuron(opts: McpNeuronOptions): CloseableNeuronFn {
     if (client) return client;
     if (connecting) return connecting;
     connecting = (async () => {
-      // Lazy, optional dependency — imported only when an MCP neuron runs.
+      // Lazy, optional dependency  -  imported only when an MCP neuron runs.
       // Variable specifiers keep the import non-analyzable, so `tsc`/bundlers
       // don't require @modelcontextprotocol/sdk to be installed at build time.
       const clientSpec = "@modelcontextprotocol/sdk/client/index.js";
@@ -226,3 +226,4 @@ export function mcpNeuron(opts: McpNeuronOptions): CloseableNeuronFn {
 
   return fn;
 }
+        

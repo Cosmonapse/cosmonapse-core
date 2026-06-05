@@ -85,7 +85,7 @@ class SignalType(str, Enum):
     MEMORY_APPEND = "MEMORY_APPEND"
     ESCALATION = "ESCALATION"
 
-    # Engram [C]  — see ENGRAM_DESIGN.md
+    # Engram [C]   -  see ENGRAM_DESIGN.md
     RECALL = "RECALL"
     RECALLED = "RECALLED"
     IMPRINT = "IMPRINT"
@@ -135,7 +135,7 @@ SYNAPSE_TYPES: frozenset[SignalType] = frozenset({
     SignalType.CONTEXT_SYNC,
     SignalType.CRITIQUE,
     SignalType.DISCOVER,
-    # Engram (see ENGRAM_DESIGN.md §4.7) — emitted by orchestrating
+    # Engram (see ENGRAM_DESIGN.md §4.7)  -  emitted by orchestrating
     # Dendrites on behalf of Neurons (Axons hand off via EngramClient,
     # they never publish these directly), and by Engram-hosting
     # Dendrites on the response path.

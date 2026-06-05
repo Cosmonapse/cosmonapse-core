@@ -6,15 +6,17 @@ LLM into a workflow without writing any HTTP code.
 
 Requires:
     pip install httpx
-    # And one of:
-    ollama pull llama3          # for the Ollama example
-    docker run … ghcr.io/huggingface/text-generation-inference ...  # for HF TGI
+    # And a HuggingFace token (read scope is enough):
+    export HF_TOKEN=hf_xxxxxxxxxxxxxxxxxxxxxxxx   # https://huggingface.co/settings/tokens
+    # Or, for the commented Ollama alternative:
+    ollama pull llama3
 
 Run with MemorySynapse (no external broker needed):
     python examples/neuron_providers/main.py
 """
 
 import asyncio
+import os
 
 from cosmonapse import (
     Axon,
@@ -26,31 +28,40 @@ from cosmonapse import (
 
 
 # ---------------------------------------------------------------------------
-# 1.  Pick your provider (swap freely — the rest of the code is identical)
+# 1.  Pick your provider (swap freely  -  the rest of the code is identical)
 # ---------------------------------------------------------------------------
 
-# Option A – Ollama running locally
-ollama_fn = Neuron(source="ollama", model="llama3")
+# Option A – HuggingFace Inference Providers router (default; needs HF_TOKEN)
+llm_fn = Neuron(
+    source="huggingface",
+    endpoint="https://router.huggingface.co",
+    model="meta-llama/Llama-3.1-8B-Instruct",
+    api_key=os.environ["HF_TOKEN"],
+    use_chat_api=True,
+)
 
-# Option B – HuggingFace TGI (or vLLM / LM Studio / llama.cpp --server)
-# hf_fn = Neuron(source="huggingface", endpoint="http://localhost:8080")
+# Option B – Ollama running locally (swap source, everything else is identical)
+# llm_fn = Neuron(source="ollama", model="llama3")
 
-# Option C – Hosted HF Inference Endpoint with an auth token
-# hf_fn = Neuron(
+# Option C – Self-hosted HF TGI / vLLM / LM Studio / llama.cpp --server
+# llm_fn = Neuron(source="huggingface", endpoint="http://localhost:8080")
+
+# Option D – Dedicated HF Inference Endpoint with an auth token
+# llm_fn = Neuron(
 #     source="huggingface",
 #     endpoint="https://<your-endpoint>.endpoints.huggingface.cloud",
-#     api_key="hf_…",
+#     api_key=os.environ["HF_TOKEN"],
 #     use_chat_api=True,
 # )
 
 
 # ---------------------------------------------------------------------------
-# 2.  Wrap in an Axon — nothing else changes vs. a hand-written neuron_fn
+# 2.  Wrap in an Axon  -  nothing else changes vs. a hand-written neuron_fn
 # ---------------------------------------------------------------------------
 
 axon = Axon(
     neuron_id="llm-chat",
-    neuron_fn=ollama_fn,
+    neuron_fn=llm_fn,
     capabilities=["text-generation", "chat"],
 )
 
@@ -76,18 +87,4 @@ async def main():
         await orch.emit_final(
             trace_id=sig.trace_id,
             parent_id=sig.id,
-            result=sig.payload["output"],
-        )
-
-    async with orch, worker:
-        await orch.dispatch_task(
-            neuron="llm-chat",
-            input={"prompt": "Explain cosmonapse in one sentence."},
-        )
-        await asyncio.sleep(30)   # give the LLM time to respond
-
-    print("Response:", result.get("response", "<no response>"))
-
-
-if __name__ == "__main__":
-    asyncio.run(main())
+     

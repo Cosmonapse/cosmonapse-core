@@ -3,9 +3,9 @@ step2_worker.py
 ~~~~~~~~~~~~~~~
 Introduces three core primitives in one file:
 
-    Neuron   — a pure async function; it has zero knowledge of the protocol.
-    Axon     — wraps the neuron, turns its output into a protocol-valid Signal.
-    Dendrite — connects the Axon to the Synapse, handles REGISTER / heartbeat /
+    Neuron    -  a pure async function; it has zero knowledge of the protocol.
+    Axon      -  wraps the neuron, turns its output into a protocol-valid Signal.
+    Dendrite  -  connects the Axon to the Synapse, handles REGISTER / heartbeat /
                TASK routing.
 
 Run after the synapse is up (step1):
@@ -13,7 +13,7 @@ Run after the synapse is up (step1):
     python step2_worker.py
 
 You'll see:
-    ✓  Worker ready — neuron 'hello-neuron' registered on namespace 'quickstart'
+    ✓  Worker ready  -  neuron 'hello-neuron' registered on namespace 'quickstart'
 
 The worker then waits silently for TASK Signals.  Send one with step4, or through
 the Flask server in step3, and you'll see it process the task.
@@ -29,7 +29,7 @@ NAMESPACE   = "quickstart"
 
 
 # ---------------------------------------------------------------------------
-# Step 2 — The Neuron
+# Step 2  -  The Neuron
 #
 # A Neuron is just an async function: (input: dict, context: list) -> dict.
 # No imports from cosmonapse, no Signal knowledge, no envelope boilerplate.
@@ -42,7 +42,7 @@ async def hello_neuron(input: dict, context: list) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Step 3 — The Axon
+# Step 3  -  The Axon
 #
 # Axon wraps hello_neuron and gives it an identity on the bus:
 #   - neuron_id      → the address other Dendrites use to dispatch tasks here
@@ -59,7 +59,7 @@ axon = Axon(
 
 
 # ---------------------------------------------------------------------------
-# Step 4 — Dendrite + Synapse
+# Step 4  -  Dendrite + Synapse
 #
 # Dendrite is the synapse-side participant.  It:
 #   - connects to the Synapse (message bus)
@@ -87,7 +87,7 @@ async def main() -> None:
             print(f"  [axon] 'hello-neuron' registered on namespace {NAMESPACE!r}")
 
         async with dendrite:
-            print(f"✓  Worker ready — listening for tasks on namespace {NAMESPACE!r}")
+            print(f"✓  Worker ready  -  listening for tasks on namespace {NAMESPACE!r}")
             print("   Press Ctrl+C to stop.\n")
 
             stop = asyncio.Event()

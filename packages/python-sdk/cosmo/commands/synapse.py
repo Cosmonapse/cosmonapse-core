@@ -87,7 +87,7 @@ def _deregister_state(url: str, namespace: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Management helpers — low-level async TCP calls to DevSynapseServer
+# Management helpers  -  low-level async TCP calls to DevSynapseServer
 # ---------------------------------------------------------------------------
 
 async def _mgmt_send_recv(host: str, port: int, payload: dict[str, Any]) -> dict[str, Any]:
@@ -520,7 +520,7 @@ async def _run_view(url: str, namespace: str | None, output_json: bool = False) 
             writer.write(sub_msg.encode())
             await writer.drain()
 
-            _banner_line(f"  Streaming  cosmonapse.{namespace}.>  — Ctrl-C to stop",
+            _banner_line(f"  Streaming  cosmonapse.{namespace}.>   -  Ctrl-C to stop",
                          "dim" if _HAS_RICH else "")
             _hr()
             _banner_line("")

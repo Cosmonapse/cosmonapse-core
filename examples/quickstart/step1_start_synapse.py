@@ -1,7 +1,7 @@
 """
 step1_start_synapse.py
 ~~~~~~~~~~~~~~~~~~~~~~
-Start a local DevSynapseServer — the message bus every other process connects to.
+Start a local DevSynapseServer  -  the message bus every other process connects to.
 
 Run this first, in its own terminal:
 
@@ -11,6 +11,11 @@ You'll see:
     ✓  Synapse listening at cosmo://127.0.0.1:7070
 
 Leave it running. All workers and servers in this quickstart connect to this URL.
+
+Tip: open the live Prism visualization in a second terminal to watch Signals
+flow as you run the rest of the steps:
+
+    cosmo doppler --prism --url=cosmo://127.0.0.1:7070 -n quickstart
 
 DevSynapseServer is the zero-infrastructure option (TCP + NDJSON, no external
 dependencies). Swap in NatsSynapse or KafkaSynapse with a one-line URL change
@@ -47,13 +52,4 @@ async def main() -> None:
 
     try:
         await stop.wait()
-    except (KeyboardInterrupt, asyncio.CancelledError):
-        pass
-    finally:
-        print("\n   Stopping synapse…")
-        await server.stop()
-        print("   Stopped.")
-
-
-if __name__ == "__main__":
-    asyncio.run(main())
+    except (KeyboardInterrupt, asyncio.Cancelle

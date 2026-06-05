@@ -1,5 +1,5 @@
 /**
- * @cosmonapse/sdk — synapse URL factory
+ * @cosmonapse/sdk  -  synapse URL factory
  *
  * Synapse URL -> Synapse factory and connector. Ported 1:1 from
  * `cosmonapse._url`.
@@ -11,7 +11,7 @@
  *   nats://host:port    -> NatsSynapse
  *   kafka://host:port   -> KafkaSynapse
  *
- * For the in-process MemorySynapse, construct it directly — a URL would be
+ * For the in-process MemorySynapse, construct it directly  -  a URL would be
  * ambiguous across processes.
  */
 
@@ -63,7 +63,7 @@ export function synapseFromUrl(url: string): Synapse {
  * ```
  *
  * Multiple Dendrites and Cortices can share the same Synapse instance. Closing
- * the Synapse is the caller's responsibility — no component will close it.
+ * the Synapse is the caller's responsibility  -  no component will close it.
  */
 export async function connectSynapse(url: string): Promise<Synapse> {
   const synapse = synapseFromUrl(url);

@@ -1,7 +1,7 @@
 """
 cosmo.commands._prism
 ~~~~~~~~~~~~~~~~~~~~~~~
-Prism — the browser visualization for the Doppler.
+Prism  -  the browser visualization for the Doppler.
 
 Architecture
 ------------
@@ -21,7 +21,7 @@ is closed on WS disconnect.
 The frontend is a Vite + React + TypeScript app that lives in
 ``packages/prism-ui`` and is built to static assets bundled into this wheel at
 ``cosmo/commands/prism_dist`` (see that package's README). This module no longer
-templates HTML — it serves the prebuilt SPA and the ``/ws`` bridge. The bridge
+templates HTML  -  it serves the prebuilt SPA and the ``/ws`` bridge. The bridge
 streams one JSON Signal envelope per message; that WS contract is the entire API
 between this server and the SPA.
 """
@@ -84,7 +84,7 @@ the UI yet.</p>
 
 
 # ---------------------------------------------------------------------------
-# Synapse factory (mirrors the one in doppler.py — kept here to avoid an
+# Synapse factory (mirrors the one in doppler.py  -  kept here to avoid an
 # import cycle and so this module is fully self-contained).
 # ---------------------------------------------------------------------------
 

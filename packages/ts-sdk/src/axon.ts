@@ -1,5 +1,5 @@
 /**
- * @cosmonapse/sdk — axon
+ * @cosmonapse/sdk  -  axon
  *
  * Agent-side tool that turns a Neuron's raw output into a protocol-valid
  * Signal. Ported from `cosmonapse.axon`.
@@ -40,7 +40,7 @@ import type { Dendrite } from "./dendrite.js";
  * Package-internal keys for the attach/detach handshake. These are deliberately
  * NOT re-exported from index.ts, so only same-package code (the Dendrite) can
  * name them and invoke the methods. This enforces "internal" at the language
- * level — which a `@internal` JSDoc tag on a `public` method does not. External
+ * level  -  which a `@internal` JSDoc tag on a `public` method does not. External
  * consumers have no way to reference these symbols, so `axon[ATTACH](...)` is
  * effectively private to the package.
  */
@@ -65,7 +65,7 @@ export class Axon {
   private readonly contextFetcher: ContextFetcher;
   private dendrite: Dendrite | null = null;
 
-  /** @internal — lifecycle hooks, driven by the hosting Dendrite. */
+  /** @internal  -  lifecycle hooks, driven by the hosting Dendrite. */
   readonly hooks: LifecycleHooks<Axon> = new LifecycleHooks<Axon>(this);
 
   constructor(opts: AxonOptions) {

@@ -1,7 +1,7 @@
 """
 step4_test_hello.py
 ~~~~~~~~~~~~~~~~~~~
-The simplest possible end-to-end smoke test — no HTTP, no Flask.
+The simplest possible end-to-end smoke test  -  no HTTP, no Flask.
 
 Dispatches a TASK Signal directly from an orchestrator Dendrite and waits
 for the AGENT_OUTPUT to come back from the worker.

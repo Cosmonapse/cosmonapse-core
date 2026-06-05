@@ -22,11 +22,11 @@ Usage:
     # Validate a .jsonl file of captured signals
     cosmo validate signals.jsonl
 
-    # Live mode — validate signals on the Synapse in real time
+    # Live mode  -  validate signals on the Synapse in real time
     cosmo validate --live
     cosmo validate --live --namespace team-a
 
-    # Strict mode — exit 1 on first violation
+    # Strict mode  -  exit 1 on first violation
     cosmo validate signals.jsonl --strict
 """
 
@@ -122,7 +122,7 @@ def _validate_signal(index: int, raw: dict[str, Any]) -> ValidationResult:
 
     # Warnings (non-fatal advisory checks)
     if type_val == "AGENT_OUTPUT" and not raw.get("neuron"):
-        result.warn("AGENT_OUTPUT signal has no 'neuron' field — Cortex won't know who sent it")
+        result.warn("AGENT_OUTPUT signal has no 'neuron' field  -  Cortex won't know who sent it")
 
     if type_val == "TASK" and "input" not in payload:
         result.warn("TASK signal payload has no 'input' field")
@@ -221,7 +221,7 @@ async def _live_validate(namespace: str, strict: bool, show_warnings: bool) -> N
     console.print()
     console.print("  [bold]cosmo validate[/bold]  [dim]--live[/dim]")
     console.print(f"  Namespace: [cyan]{namespace}[/cyan]")
-    console.print("  [dim]Validating signals in real time — Ctrl-C to stop[/dim]")
+    console.print("  [dim]Validating signals in real time  -  Ctrl-C to stop[/dim]")
     console.print("  " + "─" * 56)
     console.print()
 
@@ -235,7 +235,7 @@ async def _live_validate(namespace: str, strict: bool, show_warnings: bool) -> N
         r = _validate_signal(0, raw)
 
         type_label = raw.get("type", "?")
-        neuron = raw.get("neuron", "—")
+        neuron = raw.get("neuron", " - ")
 
         if r.valid and not r.warnings:
             console.print(f"  [green]✓[/green]  {type_label:<18}  [italic]{neuron}[/italic]")

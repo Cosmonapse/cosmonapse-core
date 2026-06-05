@@ -1,5 +1,5 @@
 /**
- * @cosmonapse/sdk — SQLite registry store
+ * @cosmonapse/sdk  -  SQLite registry store
  *
  * Ported from `cosmonapse.storage.sqlite`. A single file on disk (or
  * `:memory:`), backed by `better-sqlite3` (lazy-imported, optional dependency:

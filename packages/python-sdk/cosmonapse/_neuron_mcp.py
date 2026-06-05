@@ -38,7 +38,7 @@ Input dict
 key               meaning
 ================  ===========================================================
 ``tool``          Tool name to call. Falls back to the ``tool=`` constructor
-                  arg, or — if the server exposes exactly one tool — that tool.
+                  arg, or  -  if the server exposes exactly one tool  -  that tool.
 ``arguments`` / ``args``  Tool arguments (dict). If omitted, every input key
                   except ``tool``/``arguments``/``args`` is treated as an
                   argument.
@@ -75,7 +75,7 @@ from typing import Any
 
 from cosmonapse._neuron_base import _BaseNeuron
 
-# Launch specs for standard, separately-published MCP servers. We wrap them —
+# Launch specs for standard, separately-published MCP servers. We wrap them  - 
 # we do not ship them. Anything supplied in the constructor `args` is appended
 # to the preset args (e.g. allowed directories for filesystem, repo for git).
 STANDARD_MCP_SERVERS: dict[str, dict[str, Any]] = {
@@ -318,7 +318,7 @@ class _MCPNeuron(_BaseNeuron):
                         except Exception as exc:  # noqa: BLE001
                             if not fut.done():
                                 fut.set_exception(exc)
-        except Exception as exc:  # noqa: BLE001 — startup / transport failure
+        except Exception as exc:  # noqa: BLE001  -  startup / transport failure
             if not started.done():
                 started.set_exception(exc)
             else:

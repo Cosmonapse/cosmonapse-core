@@ -9,8 +9,8 @@ an Axon, and one orchestrator that dispatches a task and prints the result.
     cosmo init my-app -n demo   # choose the namespace
     cosmo init . --force        # scaffold into the current directory
 
-The generated project is intentionally tiny — two Python files plus a README
-— so a new developer can go from `pip install cosmonapse` to a working
+The generated project is intentionally tiny  -  two Python files plus a README
+ -  so a new developer can go from `pip install cosmonapse` to a working
 Axon + Dendrite round-trip in under a minute.
 """
 
@@ -26,7 +26,7 @@ import click
 # ---------------------------------------------------------------------------
 
 _WORKER_PY = '''"""
-worker.py — a Cosmonapse worker.
+worker.py  -  a Cosmonapse worker.
 
 Hosts one Axon (the `hello` neuron) on the synapse and waits for TASK signals.
 Run the synapse first, then this worker:
@@ -71,7 +71,7 @@ async def main() -> None:
         dendrite.attach_axon(axon)
 
         async with dendrite:
-            print(f"worker ready — neuron 'hello' on namespace {NAMESPACE!r}")
+            print(f"worker ready  -  neuron 'hello' on namespace {NAMESPACE!r}")
             print("Press Ctrl+C to stop.\\n")
 
             stop = asyncio.Event()
@@ -97,7 +97,7 @@ if __name__ == "__main__":
 
 
 _ORCHESTRATOR_PY = '''"""
-orchestrator.py — dispatch one task and print the result.
+orchestrator.py  -  dispatch one task and print the result.
 
 Run the synapse and worker first, then this orchestrator:
 
@@ -197,9 +197,9 @@ cosmo doppler --url=cosmo://127.0.0.1:7070 --namespace=__NAMESPACE__
 
 ## What's here
 
-- `worker.py` — a `Neuron` (plain async fn) wrapped in an `Axon`, hosted by a
+- `worker.py`  -  a `Neuron` (plain async fn) wrapped in an `Axon`, hosted by a
   `Dendrite` that handles REGISTER / heartbeat / TASK routing.
-- `orchestrator.py` — a `Dendrite` that dispatches a TASK and awaits the
+- `orchestrator.py`  -  a `Dendrite` that dispatches a TASK and awaits the
   AGENT_OUTPUT.
 '''
 
