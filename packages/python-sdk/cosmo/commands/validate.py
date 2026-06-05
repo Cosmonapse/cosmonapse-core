@@ -41,11 +41,8 @@ from typing import Any
 
 import click
 from rich.console import Console
-from rich.table import Table
-from rich.text import Text
 
 from cosmonapse import MemorySynapse, Signal, SignalType
-from cosmonapse.envelope import new_event_id, new_trace_id
 
 console = Console()
 
@@ -168,7 +165,7 @@ def _file_validate(file: Path, strict: bool, show_warnings: bool) -> None:
     console.print(f"  [bold]cosmo validate[/bold]  [dim]{file}[/dim]")
     console.print()
 
-    lines = [l.strip() for l in file.read_text().splitlines() if l.strip()]
+    lines = [line.strip() for line in file.read_text().splitlines() if line.strip()]
     results: list[ValidationResult] = []
     total = len(lines)
     error_count = 0

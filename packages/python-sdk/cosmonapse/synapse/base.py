@@ -10,8 +10,7 @@ Adapters translate these into whatever the underlying broker requires.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator, Callable, Awaitable
-from typing import Any
+from collections.abc import Callable, Awaitable
 
 from cosmonapse.envelope import Signal
 

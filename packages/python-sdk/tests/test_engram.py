@@ -15,7 +15,6 @@ The test matrix:
 
 from __future__ import annotations
 
-import asyncio
 import os
 import pytest
 
@@ -24,10 +23,8 @@ from cosmonapse import (
     Dendrite,
     Engram,
     EngramBinding,
-    EngramCancelled,
     EngramNotBound,
     EngramTimeout,
-    Hit,
     ImprintReceipt,
     InMemoryEngram,
     MemorySynapse,

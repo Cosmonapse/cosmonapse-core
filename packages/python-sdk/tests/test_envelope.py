@@ -5,9 +5,6 @@ These tests define correct envelope behaviour.
 Any third-party codec must pass these to be considered conformant.
 """
 
-import json
-import pytest
-from datetime import datetime, timezone
 
 # We test the logic directly without Pydantic since the sandbox has no deps.
 # When running with `pip install -e ".[dev]"`, Pydantic validates everything.

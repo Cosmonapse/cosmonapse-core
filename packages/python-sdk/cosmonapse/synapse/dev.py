@@ -76,10 +76,13 @@ def _matches(pattern: str, subject: str) -> bool:
         if p[i] == ">":
             return True
         if p[i] == "*":
-            i += 1; j += 1; continue
+            i += 1
+            j += 1
+            continue
         if p[i] != s[j]:
             return False
-        i += 1; j += 1
+        i += 1
+        j += 1
     return i == len(p) and j == len(s)
 
 

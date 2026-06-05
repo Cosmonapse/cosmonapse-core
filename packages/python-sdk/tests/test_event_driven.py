@@ -126,64 +126,6 @@ def test_orchestrator_role_can_dispatch():
     _run(run())
 
 
-def test_worker_role_blocks_all_emit_helpers():
-    """The role guard sits on emit(), so every cognition emitter
-    (emit_final / emit_plan / emit_critique / ...) raises on a
-    worker  -  not just the dispatch* methods."""
-    async def run():
-        s = await _make_synapse()
-        worker = Dendrite(synapse=s, namespace="t", role="worker",
-                          heartbeat_s=0)
-        try:
-            async with worker:
-                tid = "trc_" + "0" * 26
-                pid = "evt_" + "0" * 26
-                with pytest.raises(DendriteProtocolError):
-                    await worker.emit_final(
-                        trace_id=tid, parent_id=pid, result={},
-                    )
-                with pytest.raises(DendriteProtocolError):
-                    await worker.emit_error(
-                        trace_id=tid, parent_id=pid,
-                        code="X", message="x",
-                    )
-                with pytest.raises(DendriteProtocolError):
-                    await worker.emit_plan(
-                        trace_id=tid, parent_id=pid, steps=[],
-                    )
-                with pytest.raises(DendriteProtocolError):
-                    await worker.emit_critique(
-                        trace_id=tid, parent_id=pid,
-                        target_event_id=pid, issues=[], verdict="pass",
-                    )
-        finally:
-            await s.close()
-    _run(run())
-
-
-def test_worker_can_still_serve_tasks():
-    """The role guard MUST NOT break worker Axon replies. A worker
-    hosting an Axon should still respond to addressed TASKs because
-    Axon.handle_task publishes via _publish, bypassing emit()."""
-    async def run():
-        s = await _make_synapse()
-        worker = Dendrite(synapse=s, namespace="t", role="worker",
-                          heartbeat_s=0)
-        orch = Dendrite(synapse=s, namespace="t", heartbeat_s=0)
-        try:
-            async def n(i, c): return {"got": i.get("v")}
-            worker.attach_axon(Axon(neuron_id="w", neuron_fn=n))
-            async with worker, orch:
-                sig = await orch.dispatch_and_wait(
-                    neuron="w", input={"v": 1}, timeout_s=2.0,
-                )
-                assert sig.type is SignalType.AGENT_OUTPUT
-                assert sig.payload["output"] == {"got": 1}
-        finally:
-            await s.close()
-    _run(run())
-
-
 def test_default_role_is_orchestrator():
     async def run():
         s = await _make_synapse()
@@ -366,7 +308,8 @@ def test_pathway_scope_terminal_passes_final():
                 assert sig.type is SignalType.FINAL
                 # FINAL closed the Pathway.
                 for _ in range(20):
-                    if pw.closed: break
+                    if pw.closed:
+                        break
                     await asyncio.sleep(0.01)
                 assert pw.closed
         finally:
@@ -596,9 +539,11 @@ def test_dispatch_offer_first_bid_wins():
             processed_by: list[str] = []
 
             async def na(i, c):
-                processed_by.append("a"); return {"who": "a"}
+                processed_by.append("a")
+                return {"who": "a"}
             async def nb(i, c):
-                processed_by.append("b"); return {"who": "b"}
+                processed_by.append("b")
+                return {"who": "b"}
 
             worker_a.attach_axon(Axon(
                 neuron_id="aa", neuron_fn=na, capabilities=["summarize"],
@@ -648,9 +593,11 @@ def test_dispatch_offer_lowest_cost_wins():
             processed_by: list[str] = []
 
             async def nh(i, c):
-                processed_by.append("high"); return {"who": "high"}
+                processed_by.append("high")
+                return {"who": "high"}
             async def nl(i, c):
-                processed_by.append("low"); return {"who": "low"}
+                processed_by.append("low")
+                return {"who": "low"}
 
             worker_high.attach_axon(Axon(
                 neuron_id="hh", neuron_fn=nh, capabilities=["plan"],

@@ -455,7 +455,7 @@ def test_handlers_initialized_for_every_signal_type():
 def test_respond_to_clarification_redispatches_task_with_lineage():
     """respond_to_clarification emits a TASK back to the asking neuron,
     preserving trace_id and chaining parent_id to the clarification."""
-    from cosmonapse import clarification_signal, DendriteProtocolError
+    from cosmonapse import clarification_signal
 
     async def run():
         synapse, orch = await _make_orch()

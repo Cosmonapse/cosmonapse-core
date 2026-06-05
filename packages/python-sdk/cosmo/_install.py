@@ -74,7 +74,7 @@ def _update_path_windows(target: Path) -> bool:
         try:
             current, kind = winreg.QueryValueEx(key, "Path")
         except FileNotFoundError:
-            current, kind = "", winreg.REG_EXPAND_SZ
+            current = ""
 
         target_str = str(target)
         entries = [e for e in current.split(os.pathsep) if e]

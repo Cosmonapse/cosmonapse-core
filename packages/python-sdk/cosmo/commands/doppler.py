@@ -37,7 +37,6 @@ from __future__ import annotations
 import asyncio
 import json
 import signal as _signal
-import webbrowser
 from typing import Optional
 from urllib.parse import urlparse
 

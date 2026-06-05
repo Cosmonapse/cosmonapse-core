@@ -18,9 +18,7 @@ Wildcard matching supports two forms (same as NATS):
 from __future__ import annotations
 
 import asyncio
-import fnmatch
 from collections import defaultdict
-from typing import Any
 
 from cosmonapse.envelope import Signal
 from cosmonapse.synapse.base import MessageHandler, Subscription, Synapse
