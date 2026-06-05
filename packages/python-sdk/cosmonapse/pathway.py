@@ -165,6 +165,7 @@ class Pathway:
         self._waiters: list[
             tuple[frozenset[SignalType], asyncio.Future[Signal]]
         ] = []
+        self._buffered_signals: list[Signal] = []
         self._closed = False
 
     # ------------------------------------------------------------------
@@ -223,6 +224,11 @@ class Pathway:
             raise PathwayClosedError(
                 f"Pathway for trace {self._trace_id!r} is closed"
             )
+        # Return a buffered signal if one already arrived before wait() was called.
+        for i, sig in enumerate(self._buffered_signals):
+            if sig.type in types:
+                self._buffered_signals.pop(i)
+                return sig
         loop = asyncio.get_event_loop()
         fut: asyncio.Future[Signal] = loop.create_future()
         entry = (types, fut)
@@ -357,12 +363,16 @@ class Pathway:
         remaining: list[
             tuple[frozenset[SignalType], asyncio.Future[Signal]]
         ] = []
+        consumed = False
         for types, fut in self._waiters:
             if signal.type in types and not fut.done():
                 fut.set_result(signal)
+                consumed = True
             else:
                 remaining.append((types, fut))
         self._waiters = remaining
+        if not consumed:
+            self._buffered_signals.append(signal)
 
         # 2. Fire per-type callbacks. Exceptions are logged, not propagated
         #    - one buggy handler shouldn't break delivery to the others.
