@@ -226,4 +226,3 @@ export function mcpNeuron(opts: McpNeuronOptions): CloseableNeuronFn {
 
   return fn;
 }
-        
