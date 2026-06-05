@@ -1,4 +1,3 @@
-from typing import Any
 """
 cosmonapse.synapse.memory
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -18,6 +17,7 @@ Wildcard matching supports two forms (same as NATS):
 
 from __future__ import annotations
 
+from typing import Any
 import asyncio
 from collections import defaultdict
 

@@ -138,7 +138,7 @@ class NatsSynapse(Synapse):
                     "NatsSynapse: handler for %s raised: %s", subject, exc,
                 )
 
-        sub = await self._nc.subscribe(subject, queue=queue_group or "", cb=_bridge)
+        sub = await self._nc.subscribe(subject, queue=queue_group, cb=_bridge)  # type: ignore[arg-type]
         return _NatsSubscription(sub)
 
     async def request(

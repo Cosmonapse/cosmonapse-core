@@ -1118,7 +1118,8 @@ class Dendrite(LifecycleHooks):
         # _on_task_awarded -> Axon.handle_task.
         awarded = task_awarded_signal(
             trace_id=tid, parent_id=winner.id,
-            neuron=winner.neuron or self.dendrite_id, input=input,
+            neuron=winner.neuron,  # type: ignore[arg-type]
+            input=input,
             winning_bid={
                 k: winner.payload.get(k)
                 for k in ("cost", "eta_ms", "confidence")

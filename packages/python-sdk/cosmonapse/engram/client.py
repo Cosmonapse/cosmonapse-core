@@ -310,10 +310,10 @@ class EngramClient:
 
     def _on_recall_deadline(self, event_id: str) -> None:
         pending = self._pending_recalls.get(event_id)
-        if pending is None or pending_imp.future.done():
+        if pending is None or pending.future.done():
             return
-        if pending_imp.mode == "first":
-            pending_imp.future.set_exception(EngramTimeout(
+        if pending.mode == "first":
+            pending.future.set_exception(EngramTimeout(
                 f"RECALL {event_id} elapsed deadline without any responder"
             ))
         else:

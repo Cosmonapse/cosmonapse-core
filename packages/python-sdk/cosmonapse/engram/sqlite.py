@@ -155,7 +155,6 @@ class SqliteEngram(Engram):
         min_confidence: float | None = None,
     ) -> list[Hit]:
         assert self._conn is not None, "SqliteEngram.connect() not called"
-        conn = self._conn
 
         query = query or {}
         filters = filters or {}
@@ -223,7 +222,6 @@ class SqliteEngram(Engram):
         imprint_id: str | None = None,
     ) -> ImprintReceipt:
         assert self._conn is not None, "SqliteEngram.connect() not called"
-        conn = self._conn
         t0 = time.monotonic()
 
         async with self._lock:
