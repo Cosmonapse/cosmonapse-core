@@ -431,7 +431,7 @@ class SqliteEngram(Engram):
                         (_now_iso(), target_id),
                     )
                     conn.commit()
-                    return target_id
+                    return str(target_id) if target_id is not None else None
 
                 resulting_id = await self._run(_delete)
                 resulting_version = None
