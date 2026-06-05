@@ -134,4 +134,4 @@ export {
 } from "./neuron-http.js";
 
 /** Recommended entry point for building Neurons (see note above). */
-export { neuron, typ
+export { neuron, type NeuronSource } from "./neuron-factory.js";

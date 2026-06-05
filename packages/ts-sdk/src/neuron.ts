@@ -54,4 +54,11 @@ export function clarify(question: string, context?: Json): ClarificationOutput {
     : { __clarification__: true, question, context };
 }
 
-/** Type guard: did the N
+/** Type guard: did the Neuron return a clarification marker? */
+export function isClarification(output: unknown): output is ClarificationOutput {
+  return (
+    typeof output === "object" &&
+    output !== null &&
+    (output as Record<string, unknown>)["__clarification__"] === true
+  );
+}
