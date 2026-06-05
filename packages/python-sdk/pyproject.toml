@@ -104,35 +104,3 @@ target-version = "py311"
 
 [tool.mypy]
 strict = true
-he SDK (`cosmonapse`) and the developer CLI (`cosmo`).
-[tool.hatch.build.targets.wheel]
-packages = ["cosmonapse", "cosmo"]
-
-[tool.hatch.build.targets.sdist]
-include = [
-    "cosmonapse",
-    "cosmo",
-    "README.md",
-    "pyproject.toml",
-]
-
-# Never ship compiled byte-code caches inside the distribution.
-[tool.hatch.build]
-exclude = [
-    "**/__pycache__",
-    "**/*.pyc",
-    "tests",
-]
-
-# ---------------------------------------------------------------------------
-# Tooling
-# ---------------------------------------------------------------------------
-[tool.pytest.ini_options]
-asyncio_mode = "auto"
-
-[tool.ruff]
-line-length = 100
-target-version = "py311"
-
-[tool.mypy]
-strict = true

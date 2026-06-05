@@ -168,22 +168,3 @@ jobs:
           name: ${{ github.ref_name }}
           body: ${{ steps.changelog.outputs.notes }}
           files: release-assets/**/*
-          path: release-assets/
-
-      - name: Extract changelog for this version
-        id: changelog
-        run: |
-          VERSION="${GITHUB_REF_NAME}"
-          NOTES=$(awk "/^## \[?${VERSION#v}/,/^## /" CHANGELOG.md | head -n -1)
-          echo "notes<<EOF" >> $GITHUB_OUTPUT
-          echo "$NOTES" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
-        working-directory: .
-
-      - name: Publish GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ github.ref_name }}
-          name: ${{ github.ref_name }}
-          body: ${{ steps.changelog.outputs.notes }}
-          files: release-assets/**/*
