@@ -112,7 +112,7 @@ class MemorySynapse(Synapse):
 
     async def publish(self, subject: str, signal: Signal) -> None:
         assert self._connected, "Synapse not connected"
-        await self._deliver(subject, signal)
+        asyncio.create_task(self._deliver(subject, signal))
 
     async def _deliver(self, subject: str, signal: Signal) -> None:
         """Fan out signal to all matching subscribers, respecting queue groups."""
