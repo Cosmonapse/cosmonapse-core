@@ -309,7 +309,7 @@ class SqliteEngram(Engram):
 
             elif op == "upsert":
 
-                def _upsert() -> tuple[str | None, str | None]:
+                def _upsert() -> tuple[tuple[str, int] | None, str | None]:
                     if merge_key is None:
                         return None, "upsert requires merge_key"
                     existing = conn.execute(
@@ -361,7 +361,7 @@ class SqliteEngram(Engram):
 
             elif op == "merge":
 
-                def _merge() -> tuple[str | None, str | None]:
+                def _merge() -> tuple[tuple[str, int] | None, str | None]:
                     if merge_key is None:
                         return None, "merge requires merge_key"
                     existing = conn.execute(
@@ -411,7 +411,7 @@ class SqliteEngram(Engram):
 
             elif op == "delete":
 
-                def _delete() -> tuple[str | None, str | None]:
+                def _delete() -> str | None:
                     target_id = entry.get("id")
                     if target_id is None and merge_key is not None:
                         row = conn.execute(
