@@ -131,6 +131,7 @@ def test_axon_type_set():
     expected = {
         SignalType.AGENT_OUTPUT,
         SignalType.CLARIFICATION,
+        SignalType.PERMISSION,
         SignalType.ERROR,
         SignalType.REGISTER,
         SignalType.DEREGISTER,
