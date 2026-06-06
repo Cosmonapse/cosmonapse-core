@@ -37,6 +37,7 @@ from cosmonapse.envelope import (
     agent_output_signal,
     clarification_signal,
     error_signal,
+    permission_signal,
 )
 
 if TYPE_CHECKING:
@@ -204,6 +205,22 @@ class Axon(LifecycleHooks):
                 parent_id=parent_id,
                 neuron=self.neuron_id,
                 question=raw_output.get("question", ""),
+                context=raw_output.get("context"),
+            )
+
+        # Permission marker: same return-and-resume shape as clarification.
+        # A Neuron typically tries `recall(...)` first and only returns this
+        # marker on a miss; the orchestrator decides, imprints the grant, and
+        # re-dispatches via respond_to_permission so the Neuron resumes (and
+        # can imprint/recall the decision itself).
+        if isinstance(raw_output, dict) and raw_output.get("__permission__"):
+            return permission_signal(
+                trace_id=trace_id,
+                parent_id=parent_id,
+                neuron=self.neuron_id,
+                action=raw_output.get("action", ""),
+                scope=raw_output.get("scope"),
+                reason=raw_output.get("reason"),
                 context=raw_output.get("context"),
             )
 

@@ -25,6 +25,13 @@ delete the corresponding caveat comment from the source.
 - `LifecycleHooks`  -  `onConnect` / `onRefresh` / `onSchedule` (`hooks.ts`),
   wired into `Axon` and `Dendrite`
 - `Neuron` contract + `Axon` + `Dendrite` (incl. the registry mirror)
+- Clarification & permission requests: the `__clarification__` / `__permission__`
+  return-markers (Axon emits `CLARIFICATION` / `PERMISSION`), the new
+  `PERMISSION` / `PERMISSION_DECISION` / `CLARIFICATION_ANSWER` signal types and
+  builders, the `onPermission` handler, and the responder helpers
+  `respondToPermission` / `grantPermission` / `denyPermission` /
+  `answerClarification`. At parity with the Python SDK. There is no blocking
+  "cognition client" in either SDK  -  the Engram + return-marker carry it.
 - Neuron sources: `mcpNeuron`, `ollamaNeuron`, `huggingFaceNeuron`, and the
   unified `neuron()` factory. (The Express / HTTP-app Neuron was removed  -  an
   HTTP API is not a Neuron; front an orchestrator Dendrite with your web
@@ -47,6 +54,12 @@ discovered, should be added here.
 
 ## Known intentional differences (not gaps)
 
+- **Clarification / permission marker helpers.** The TS SDK provides typed
+  marker constructors and guards  -  `clarify()` / `isClarification()` and
+  `permissionRequest()` / `isPermissionRequest()`  -  whereas Python Neurons
+  return the raw `{"__clarification__": True, ...}` / `{"__permission__": True,
+  ...}` dicts. Same wire result; the TS helpers exist because the type system
+  makes them cheap and ergonomic.
 - **Optional-dependency drivers differ by ecosystem.** The Python SDK uses
   stdlib `sqlite3`, `asyncpg`, `aiokafka`, and `httpx`; the TS SDK uses
   `better-sqlite3`, `pg`, `kafkajs`, and the runtime's built-in `fetch`

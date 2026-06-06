@@ -40,7 +40,7 @@ There are four distinct layers. Each has a single, non-overlapping responsibilit
 │  TASK / TASK_OFFER / BID / FINAL / CRITIQUE / etc.  │
 │  (no separate Cortex class  -  `Cortex` is an alias.) │
 └────────────────────────┬────────────────────────────┘
-                         │  TASK in / AGENT_OUTPUT|CLARIFICATION|ERROR out
+                         │  TASK in / AGENT_OUTPUT|CLARIFICATION|PERMISSION|ERROR out
 ┌────────────────────────▼────────────────────────────┐
 │  Axon  (agent-side tool)                            │
 │  unwraps TASK -> calls Neuron                       │
@@ -69,7 +69,8 @@ The agent-side tool. Its complete job:
 4. Call the Neuron with `(input, context)`.
 5. Return one of:
    - `AGENT_OUTPUT`  -  the Neuron returned normally.
-   - `CLARIFICATION`  -  the Neuron's output contained the clarification marker.
+   - `CLARIFICATION`  -  the Neuron's output contained the `__clarification__` marker.
+   - `PERMISSION`  -  the Neuron's output contained the `__permission__` marker.
    - `ERROR`  -  the Neuron raised.
 6. Never touch the Synapse.
 
@@ -79,7 +80,7 @@ The Axon never produces `REGISTER`, `HEARTBEAT`, `DEREGISTER`, `FINAL`, `THOUGHT
 
 The synapse-side participant. The caller builds the Synapse and passes it in; the Dendrite does NOT own it. Behaviour is opt-in:
 
-- **With attached Axons**  -  emits `REGISTER` on start, `HEARTBEAT` periodically, `DEREGISTER` on stop. Subscribes to TASK on the namespace and routes by `signal.neuron`. Publishes the Axon's returned Signal (`AGENT_OUTPUT` / `CLARIFICATION` / `ERROR`).
+- **With attached Axons**  -  emits `REGISTER` on start, `HEARTBEAT` periodically, `DEREGISTER` on stop. Subscribes to TASK on the namespace and routes by `signal.neuron`. Publishes the Axon's returned Signal (`AGENT_OUTPUT` / `CLARIFICATION` / `PERMISSION` / `ERROR`).
 - **With registered handlers**  -  subscribes to that AXON_TYPE on the bus and dispatches matching Signals.
 - **With a `registry_store`**  -  mirrors its own attached Axons into the store and auto-subscribes to REGISTER/DEREGISTER/HEARTBEAT so the store tracks the namespace-wide view.
 - **Always**  -  exposes orchestration primitives (`dispatch_task`, `emit_final`, `emit_error`, `emit`, the handler decorators) for whoever wants to use them. The Dendrite refuses to emit anything outside SYNAPSE_TYPES.
@@ -424,6 +425,48 @@ All cognition events are produced by the **Cortex**. They are optional. A Cortex
 ```
 
 The Cortex (or any consumer with the right capability) routes the questions to wherever the answer comes from  -  a user, another Neuron, an external lookup  -  then re-dispatches the original `TASK` with the answers folded into `payload.input` or an updated `context_ref`.
+
+#### `PERMISSION`  `[D]` (Dendrite publishes; Axon produces the Signal)
+
+A Neuron asks to perform an action *before* doing it. Same return-and-resume shape as `CLARIFICATION`: the Neuron returns a `__permission__` marker (typically only after a `RECALL` against an Engram of standing grants misses), the Axon wraps it as `PERMISSION`, and an answering Dendrite  -  a central Cortex or any peer  -  replies.
+
+```json
+{
+  "type": "PERMISSION",
+  "neuron": "claude-debug",
+  "payload": {
+    "action": "write_file",
+    "scope":  { "path": "/etc/hosts" },
+    "reason": "patch needs a hosts entry"
+  }
+}
+```
+
+| Payload field | Required | Description |
+| ------------- | -------- | ----------- |
+| `action`      | yes      | The action the Neuron wants permission to perform. |
+| `scope`       | no       | Narrows the request (e.g. a path, a resource id). |
+| `reason`      | no       | Human-readable justification. |
+| `context`     | no       | Arbitrary supporting JSON. |
+
+#### `PERMISSION_DECISION` / `CLARIFICATION_ANSWER`  `[D]`
+
+The verdict for a `PERMISSION` / the answer to a (blocking) `CLARIFICATION`. `parent_id` MUST be the request's `id`. There is **no built-in correlation client**: the answering Dendrite either re-dispatches a `TASK` carrying the decision (`respond_to_permission` / `respond_to_clarification`) so the Neuron resumes and can `IMPRINT` / `RECALL` it from an Engram, or emits one of these discrete signals for a peer or observer to consume. Centralised vs decentralised is purely a question of who subscribes to the request.
+
+```json
+{
+  "type": "PERMISSION_DECISION",
+  "parent_id": "evt_01JV...",
+  "payload": { "granted": true, "reason": "allowlisted", "ttl_ms": 3600000 }
+}
+```
+
+| Payload field | Required | Description |
+| ------------- | -------- | ----------- |
+| `granted`     | yes (decision) | Boolean verdict for `PERMISSION_DECISION`. |
+| `answer`      | yes (answer)   | Free-form answer value for `CLARIFICATION_ANSWER`. |
+| `reason`      | no       | Justification for the verdict. |
+| `ttl_ms`      | no       | How long the grant is valid, so the caller can cache it in an Engram. |
 
 ### 7.6 Agent management  `[D]`
 

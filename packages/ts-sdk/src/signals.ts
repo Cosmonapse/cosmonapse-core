@@ -70,6 +70,72 @@ export function clarificationSignal(args: {
   });
 }
 
+/** [A] A Neuron asks permission to perform `action` before doing it. */
+export function permissionSignal(args: {
+  traceId: string;
+  parentId: string;
+  neuron: string;
+  action: string;
+  scope?: Json;
+  reason?: string;
+  context?: Json;
+  meta?: Json;
+}): Signal {
+  const payload: Json = { action: args.action };
+  if (args.scope) payload["scope"] = args.scope;
+  if (args.reason !== undefined) payload["reason"] = args.reason;
+  if (args.context) payload["context"] = args.context;
+  return createSignal({
+    type: SignalType.PERMISSION,
+    trace_id: args.traceId,
+    parent_id: args.parentId,
+    neuron: args.neuron,
+    payload,
+    meta: args.meta ?? {},
+  });
+}
+
+/** [C] Verdict on a PERMISSION request. `parentId` MUST be the PERMISSION's id. */
+export function permissionDecisionSignal(args: {
+  traceId: string;
+  parentId: string;
+  granted: boolean;
+  neuron?: string | null;
+  reason?: string;
+  ttlMs?: number;
+  meta?: Json;
+}): Signal {
+  const payload: Json = { granted: args.granted };
+  if (args.reason !== undefined) payload["reason"] = args.reason;
+  if (args.ttlMs !== undefined) payload["ttl_ms"] = args.ttlMs;
+  return createSignal({
+    type: SignalType.PERMISSION_DECISION,
+    trace_id: args.traceId,
+    parent_id: args.parentId,
+    neuron: args.neuron ?? null,
+    payload,
+    meta: args.meta ?? {},
+  });
+}
+
+/** [C] Answer to a blocking CLARIFICATION. `parentId` MUST be the CLARIFICATION's id. */
+export function clarificationAnswerSignal(args: {
+  traceId: string;
+  parentId: string;
+  answer: unknown;
+  neuron?: string | null;
+  meta?: Json;
+}): Signal {
+  return createSignal({
+    type: SignalType.CLARIFICATION_ANSWER,
+    trace_id: args.traceId,
+    parent_id: args.parentId,
+    neuron: args.neuron ?? null,
+    payload: { answer: args.answer },
+    meta: args.meta ?? {},
+  });
+}
+
 /** [C] Workflow concluded. `result` carries the terminal output. */
 export function finalSignal(args: {
   traceId: string;

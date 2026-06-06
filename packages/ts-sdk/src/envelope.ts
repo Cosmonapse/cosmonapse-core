@@ -64,6 +64,16 @@ export const SignalType = {
   CRITIQUE: "CRITIQUE",
   CLARIFICATION: "CLARIFICATION",
 
+  // Interactive cognition [A] request / [C] response.
+  // CLARIFICATION (above) and PERMISSION are Axon-originated requests a Neuron
+  // returns as a marker; the matching *_ANSWER / *_DECISION are emitted by
+  // whichever Dendrite answers (a central Cortex or a peer). There is no
+  // built-in correlation client - the developer wires the loop (keyed by
+  // parent_id == the request's id where needed).
+  PERMISSION: "PERMISSION",
+  PERMISSION_DECISION: "PERMISSION_DECISION",
+  CLARIFICATION_ANSWER: "CLARIFICATION_ANSWER",
+
   // Agent management [A]
   REGISTER: "REGISTER",
   DEREGISTER: "DEREGISTER",
@@ -76,6 +86,7 @@ export type SignalType = (typeof SignalType)[keyof typeof SignalType];
 export const AXON_TYPES: ReadonlySet<SignalType> = new Set<SignalType>([
   SignalType.AGENT_OUTPUT,
   SignalType.CLARIFICATION,
+  SignalType.PERMISSION,
   SignalType.ERROR,
   SignalType.REGISTER,
   SignalType.DEREGISTER,
@@ -100,6 +111,11 @@ export const SYNAPSE_TYPES: ReadonlySet<SignalType> = new Set<SignalType>([
   SignalType.CONSENSUS,
   SignalType.CONTEXT_SYNC,
   SignalType.CRITIQUE,
+  // Responses to Axon-originated CLARIFICATION / PERMISSION requests, emitted
+  // by the answering Dendrite (central Cortex or peer) and correlated by the
+  // requester's CognitionClient via parent_id.
+  SignalType.PERMISSION_DECISION,
+  SignalType.CLARIFICATION_ANSWER,
 ]);
 
 // ---------------------------------------------------------------------------

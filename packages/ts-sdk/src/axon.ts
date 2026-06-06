@@ -22,8 +22,14 @@ import {
   agentOutputSignal,
   clarificationSignal,
   errorSignal,
+  permissionSignal,
 } from "./signals.js";
-import { isClarification, type ContextFetcher, type NeuronFn } from "./neuron.js";
+import {
+  isClarification,
+  isPermissionRequest,
+  type ContextFetcher,
+  type NeuronFn,
+} from "./neuron.js";
 import {
   LifecycleHooks,
   type ConnectHook,
@@ -144,6 +150,20 @@ export class Axon {
         parentId,
         neuron: this.neuronId,
         question: rawOutput.question,
+        ...(rawOutput.context !== undefined ? { context: rawOutput.context } : {}),
+      });
+    }
+
+    // Permission marker: same return-and-resume shape as clarification. A
+    // Neuron typically tries recall first and only returns this on a miss.
+    if (isPermissionRequest(rawOutput)) {
+      return permissionSignal({
+        traceId,
+        parentId,
+        neuron: this.neuronId,
+        action: rawOutput.action,
+        ...(rawOutput.scope !== undefined ? { scope: rawOutput.scope } : {}),
+        ...(rawOutput.reason !== undefined ? { reason: rawOutput.reason } : {}),
         ...(rawOutput.context !== undefined ? { context: rawOutput.context } : {}),
       });
     }

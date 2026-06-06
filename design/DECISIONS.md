@@ -53,6 +53,7 @@ An **HTTP API is deliberately *not* a Neuron.** Earlier versions shipped a Flask
 **What the Neuron returns:**
 - A JSON-serialisable object. No envelope, no type, no trace ID.
 - Or a `{"__clarification__": True, "question": ..., "context": ...}` dict to request more info.
+- Or a `{"__permission__": True, "action": ..., "scope": ..., "reason": ...}` dict to ask permission before acting (typically only after an Engram `recall` misses).
 
 ---
 
@@ -65,7 +66,8 @@ An **HTTP API is deliberately *not* a Neuron.** Earlier versions shipped a Flask
 | Signal              | When                                            |
 |---|---|
 | `AGENT_OUTPUT`      | Neuron returned a normal result                 |
-| `CLARIFICATION`     | Neuron's output contained the clarification marker |
+| `CLARIFICATION`     | Neuron's output contained the `__clarification__` marker |
+| `PERMISSION`        | Neuron's output contained the `__permission__` marker |
 | `ERROR`             | Neuron raised an exception                      |
 
 The Axon never produces `REGISTER`, `HEARTBEAT`, `DEREGISTER`, `FINAL`, `THOUGHT_DELTA`, or any routing Signal. Those belong to the Dendrite and the Cortex.
@@ -83,7 +85,7 @@ The Axon never produces `REGISTER`, `HEARTBEAT`, `DEREGISTER`, `FINAL`, `THOUGHT
 - pass a `registry_store` → enables the bus-driven registry mirror + auto-subscription to REGISTER/DEREGISTER/HEARTBEAT,
 - set `heartbeat_s=0` → disables the heartbeat loop entirely.
 
-The Dendrite always exposes the orchestration surface  -  `dispatch_task`, `emit_final`, `emit_error`, `emit`, `on_agent_output`, `on_clarification`, etc.  -  regardless of whether you use it.
+The Dendrite always exposes the orchestration surface  -  `dispatch_task`, `emit_final`, `emit_error`, `emit`, `on_agent_output`, `on_clarification`, `on_permission`, `respond_to_clarification`, `respond_to_permission`, etc.  -  regardless of whether you use it.
 
 **The Dendrite does NOT own the Synapse.** The caller builds it via `await connect_synapse(url)` (or directly), passes it in, and closes it. Multiple Dendrites can share one Synapse.
 
@@ -94,7 +96,7 @@ The Dendrite always exposes the orchestration surface  -  `dispatch_task`, `emit
 | `REGISTER`  | On start, and re-emitted on each HEARTBEAT tick (for late-joining peers)             |
 | `HEARTBEAT` | Periodic, configurable interval                                                       |
 | `DEREGISTER` | On stop                                                                              |
-| The Axon's `AGENT_OUTPUT` / `CLARIFICATION` / `ERROR` reply | After invoking `axon.handle_task(task)` |
+| The Axon's `AGENT_OUTPUT` / `CLARIFICATION` / `PERMISSION` / `ERROR` reply | After invoking `axon.handle_task(task)` |
 
 **Rationale:** A "Cortex" was just "a Dendrite with a few subscriptions and convenience methods"  -  making it a separate class added a concept without earning it. Decentralised fabrics in particular benefit from a single symmetric primitive where every peer can take on any role.
 
@@ -156,11 +158,24 @@ These three hooks cover all three needs without baking in a particular discovery
 
 ---
 
-## 12. CLARIFICATION is Axon-produced
+## 12. CLARIFICATION and PERMISSION are Axon-produced markers
 
-**Decision:** The Axon inspects the Neuron's output before wrapping it. If it detects the clarification marker, it returns CLARIFICATION; the Dendrite publishes it directly. The Cortex receives a typed CLARIFICATION envelope and never needs to inspect AGENT_OUTPUT payloads.
+**Decision:** The Axon inspects the Neuron's output before wrapping it. If it detects the `__clarification__` marker it returns CLARIFICATION; if it detects the `__permission__` marker it returns PERMISSION; the Dendrite publishes either directly. The Cortex receives a typed envelope and never needs to inspect AGENT_OUTPUT payloads.
 
-**Rationale:** Detecting clarification at the agent boundary keeps the Cortex's handler dispatch typed and predictable. The convention (a `__clarification__: True` marker) is the agreed contract between Neuron developer and Axon.
+**Rationale:** Detecting these at the agent boundary keeps the Cortex's handler dispatch typed and predictable. The conventions (`__clarification__: True` / `__permission__: True` markers) are the agreed contract between Neuron developer and Axon. PERMISSION is just CLARIFICATION specialised for a boolean verdict.
+
+---
+
+## 12a. No blocking cognition client  -  clarification/permission ride return-markers + Engram
+
+**Decision:** Clarification and permission do **not** get a dedicated caller-side correlation client (an earlier "CognitionClient" prototype was removed). The request is the return-marker above; the answer comes back one of two ways, both built on primitives that already exist:
+
+1. **Re-dispatch a TASK** with the answer/verdict via `respond_to_clarification` / `respond_to_permission` (preserves `trace_id`, sets `parent_id` to the request id). The Neuron resumes and can `IMPRINT` the decision into an Engram.
+2. **Emit a discrete reply** signal (`CLARIFICATION_ANSWER` / `PERMISSION_DECISION`, `parent_id` = request id) for a peer or observer to consume.
+
+The new signal *types* (`PERMISSION`, `PERMISSION_DECISION`, `CLARIFICATION_ANSWER`) ship; the *transport* is the developer's to wire. The canonical pattern: a Neuron `recall`s an Engram of standing grants/answers, returns the marker only on a miss, and the answering Dendrite imprints the decision so future recalls hit  -  centralised (one Cortex) or decentralised (any peer subscribes) with no code difference.
+
+**Rationale:** A blocking correlation client duplicated the Engram round-trip machinery (RECALL/RECALLED) and added per-Dendrite state and lifecycle (deadlines, cancel-on-terminal) for no capability the Engram + return-marker don't already provide. The Engram is the durable memory; the bus is the transport; keeping both as the only moving parts holds the "Dendrite is the only thing that touches the Synapse, and it stays thin" invariant.
 
 ---
 

@@ -46,6 +46,7 @@ from cosmonapse.envelope import (
     Signal,
     SignalType,
     bid_signal,
+    clarification_answer_signal,
     consensus_signal,
     context_sync_signal,
     critique_signal,
@@ -58,6 +59,7 @@ from cosmonapse.envelope import (
     imprinted_signal,
     memory_append_signal,
     new_trace_id,
+    permission_decision_signal,
     plan_signal,
     recalled_signal,
     register_signal,
@@ -402,6 +404,22 @@ class Dendrite(LifecycleHooks):
     def on_clarification(self, fn: SignalHandler | None = None, *, neuron: str | None = None, capability: str | None = None, trace_id: str | None = None) -> Any:
         return self._decorator_or_call(fn, self._on(
             SignalType.CLARIFICATION,
+            neuron=neuron, capability=capability, trace_id=trace_id,
+        ))
+
+    def on_permission(self, fn: SignalHandler | None = None, *, neuron: str | None = None, capability: str | None = None, trace_id: str | None = None) -> Any:
+        """Register a handler fired on inbound PERMISSION requests.
+
+        The handler is the *answering* side: a central Cortex or a peer
+        Dendrite evaluates the request (often consulting an Engram of
+        standing grants, keyed per-neuron) and replies via
+        :meth:`respond_to_permission` (re-dispatch a TASK carrying the
+        verdict) or :meth:`grant_permission` / :meth:`deny_permission`
+        (emit a discrete PERMISSION_DECISION). It may also imprint the
+        decision into an Engram so future RECALLs hit.
+        """
+        return self._decorator_or_call(fn, self._on(
+            SignalType.PERMISSION,
             neuron=neuron, capability=capability, trace_id=trace_id,
         ))
 
@@ -1444,6 +1462,151 @@ class Dendrite(LifecycleHooks):
             parent_id=signal.id,
             meta=meta,
         )
+
+    async def respond_to_permission(
+        self,
+        signal: Signal,
+        *,
+        granted: bool,
+        reason: str | None = None,
+        ttl_ms: int | None = None,
+        extra: dict[str, Any] | None = None,
+        neuron: str | None = None,
+        meta: dict[str, Any] | None = None,
+    ) -> Signal:
+        """Reply to a PERMISSION by re-dispatching a TASK carrying the verdict.
+
+        The mirror of :meth:`respond_to_clarification`. The follow-up TASK is
+        addressed by default to the Neuron that asked (``signal.neuron``), with
+        ``parent_id`` = the PERMISSION's id and the original ``trace_id``
+        carried over, so the Neuron resumes on the same thread and can imprint
+        the decision into an Engram (or recall it next time).
+
+        New TASK input shape::
+
+            {"permission": {
+                "action":  <from signal.payload>,
+                "granted": <granted>,
+                "reason":  <reason>,
+                "ttl_ms":  <ttl_ms>,
+                **(extra or {}),
+             }}
+        """
+        if signal.type is not SignalType.PERMISSION:
+            raise DendriteProtocolError(
+                f"respond_to_permission expects a PERMISSION signal, "
+                f"got {signal.type.value!r}"
+            )
+        target = neuron or signal.neuron
+        if not target:
+            raise DendriteProtocolError(
+                "respond_to_permission: signal has no neuron and no neuron= "
+                "override - nowhere to dispatch the follow-up TASK"
+            )
+        payload: dict[str, Any] = {
+            "action": signal.payload.get("action"),
+            "granted": bool(granted),
+        }
+        if reason is not None:
+            payload["reason"] = reason
+        if ttl_ms is not None:
+            payload["ttl_ms"] = ttl_ms
+        if extra:
+            payload.update(extra)
+        return await self.dispatch_task(
+            neuron=target,
+            input={"permission": payload},
+            trace_id=signal.trace_id,
+            parent_id=signal.id,
+            meta=meta,
+        )
+
+    # -- Cognition decision signals (discrete, decentralised option) ------
+    # Thin, stateless emit helpers for the new response signal types - no
+    # correlation client. Use these when you want the decision to travel as a
+    # discrete PERMISSION_DECISION / CLARIFICATION_ANSWER signal (e.g. for a
+    # peer/observer to imprint into an Engram) rather than as a re-dispatched
+    # TASK. Published via the private ``_publish`` path so any Dendrite -
+    # including a worker-role peer - can answer. Correlation, if needed, is the
+    # developer's choice (parent_id == the request's id).
+
+    async def grant_permission(
+        self,
+        request: Signal,
+        *,
+        reason: str | None = None,
+        ttl_ms: int | None = None,
+        meta: dict[str, Any] | None = None,
+    ) -> Signal:
+        """Approve a PERMISSION request. ``ttl_ms`` optionally advertises how
+        long the grant is valid so the requester can cache it in an Engram."""
+        return await self._decide_permission(
+            request, granted=True, reason=reason, ttl_ms=ttl_ms, meta=meta,
+        )
+
+    async def deny_permission(
+        self,
+        request: Signal,
+        *,
+        reason: str | None = None,
+        meta: dict[str, Any] | None = None,
+    ) -> Signal:
+        """Reject a PERMISSION request."""
+        return await self._decide_permission(
+            request, granted=False, reason=reason, ttl_ms=None, meta=meta,
+        )
+
+    async def _decide_permission(
+        self,
+        request: Signal,
+        *,
+        granted: bool,
+        reason: str | None,
+        ttl_ms: int | None,
+        meta: dict[str, Any] | None,
+    ) -> Signal:
+        if request.type is not SignalType.PERMISSION:
+            raise DendriteProtocolError(
+                f"grant/deny_permission expects a PERMISSION signal, got "
+                f"{request.type.value!r}"
+            )
+        sig = permission_decision_signal(
+            trace_id=request.trace_id,
+            parent_id=request.id,
+            granted=granted,
+            neuron=self.dendrite_id,
+            reason=reason,
+            ttl_ms=ttl_ms,
+            meta=meta,
+        )
+        await self._publish(sig)
+        return sig
+
+    async def answer_clarification(
+        self,
+        request: Signal,
+        *,
+        answer: Any,
+        meta: dict[str, Any] | None = None,
+    ) -> Signal:
+        """Answer a *blocking* CLARIFICATION (the Neuron called ``ask(...)``
+        and is awaiting). This is distinct from
+        :meth:`respond_to_clarification`, which closes the legacy
+        return-marker flow by re-dispatching a TASK."""
+        if request.type is not SignalType.CLARIFICATION:
+            raise DendriteProtocolError(
+                f"answer_clarification expects a CLARIFICATION signal, got "
+                f"{request.type.value!r}"
+            )
+        sig = clarification_answer_signal(
+            trace_id=request.trace_id,
+            parent_id=request.id,
+            answer=answer,
+            neuron=self.dendrite_id,
+            meta=meta,
+        )
+        await self._publish(sig)
+        return sig
 
     async def emit(self, signal: Signal) -> None:
         """Emit a synapse-side Signal (orchestration).

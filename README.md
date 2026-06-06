@@ -10,6 +10,12 @@ signals over a **Synapse** (an in-memory bus, a local dev TCP broker, NATS, or
 Kafka). There is no central orchestrator class  -  any Dendrite can dispatch work
 and react to results.
 
+A Neuron can also pause and *ask* instead of returning a result: a
+`__clarification__` or `__permission__` marker becomes a `CLARIFICATION` /
+`PERMISSION` signal that another Dendrite (a central Cortex or any peer) answers
+ -  pairing naturally with an **Engram** (shared memory) so grants and answers
+are recalled instead of re-asked. See `design/ENVELOPE_SPEC.md` §7.5.
+
 ```python
 import asyncio
 from cosmonapse import Axon, Dendrite, MemoryRegistryStore, connect_synapse

@@ -96,6 +96,17 @@ class SignalType(str, Enum):
     CRITIQUE = "CRITIQUE"
     CLARIFICATION = "CLARIFICATION"
 
+    # Interactive cognition [A] request / [C] response.
+    # CLARIFICATION (above) and PERMISSION are Axon-originated requests a
+    # Neuron returns as a marker; the matching *_ANSWER / *_DECISION are
+    # emitted by whichever Dendrite (a central Cortex or a peer) answers.
+    # There is no built-in correlation client: the developer wires the loop
+    # (recall -> on miss return marker -> orchestrator imprints and/or
+    # responds), keyed by parent_id == the request's id where needed.
+    PERMISSION = "PERMISSION"
+    PERMISSION_DECISION = "PERMISSION_DECISION"
+    CLARIFICATION_ANSWER = "CLARIFICATION_ANSWER"
+
     # Agent management [A]
     REGISTER = "REGISTER"
     DEREGISTER = "DEREGISTER"
@@ -109,6 +120,7 @@ class SignalType(str, Enum):
 AXON_TYPES: frozenset[SignalType] = frozenset({
     SignalType.AGENT_OUTPUT,
     SignalType.CLARIFICATION,
+    SignalType.PERMISSION,
     SignalType.ERROR,
     SignalType.REGISTER,
     SignalType.DEREGISTER,
@@ -134,6 +146,13 @@ SYNAPSE_TYPES: frozenset[SignalType] = frozenset({
     SignalType.CONTEXT_SYNC,
     SignalType.CRITIQUE,
     SignalType.DISCOVER,
+    # Responses to Axon-originated CLARIFICATION / PERMISSION requests.
+    # Emitted by the answering Dendrite (central Cortex or peer). Like
+    # RECALLED/IMPRINTED they ride the synapse side of an interaction the
+    # Neuron triggered; the requesting worker correlates them by parent_id
+    # via its CognitionClient.
+    SignalType.PERMISSION_DECISION,
+    SignalType.CLARIFICATION_ANSWER,
     # Engram (see ENGRAM_DESIGN.md §4.7)  -  emitted by orchestrating
     # Dendrites on behalf of Neurons (Axons hand off via EngramClient,
     # they never publish these directly), and by Engram-hosting
@@ -278,6 +297,99 @@ def clarification_signal(
         parent_id=parent_id,
         neuron=neuron,
         payload=payload,
+        meta=meta or {},
+    )
+
+
+def permission_signal(
+    *,
+    trace_id: str,
+    parent_id: str,
+    neuron: str,
+    action: str,
+    scope: dict[str, Any] | None = None,
+    reason: str | None = None,
+    context: dict[str, Any] | None = None,
+    meta: dict[str, Any] | None = None,
+) -> Signal:
+    """[A] A Neuron asks permission to perform ``action`` before doing it.
+
+    Mirrors CLARIFICATION but expects a boolean verdict rather than free
+    text. ``scope`` narrows the request (e.g. ``{"path": "/etc"}``);
+    ``reason`` is a human-readable justification. The answering Dendrite
+    replies with PERMISSION_DECISION whose ``parent_id`` is this signal's
+    id.
+    """
+    payload: dict[str, Any] = {"action": action}
+    if scope:
+        payload["scope"] = scope
+    if reason is not None:
+        payload["reason"] = reason
+    if context:
+        payload["context"] = context
+    return Signal(
+        type=SignalType.PERMISSION,
+        trace_id=trace_id,
+        parent_id=parent_id,
+        neuron=neuron,
+        payload=payload,
+        meta=meta or {},
+    )
+
+
+def permission_decision_signal(
+    *,
+    trace_id: str,
+    parent_id: str,
+    granted: bool,
+    neuron: str | None = None,
+    reason: str | None = None,
+    ttl_ms: int | None = None,
+    meta: dict[str, Any] | None = None,
+) -> Signal:
+    """[C] Verdict on a PERMISSION request.
+
+    ``parent_id`` MUST be the PERMISSION's id - that is how a consumer
+    correlates the verdict to the request. ``ttl_ms`` optionally tells the
+    caller how long the grant is valid (for caching in an Engram).
+    """
+    payload: dict[str, Any] = {"granted": bool(granted)}
+    if reason is not None:
+        payload["reason"] = reason
+    if ttl_ms is not None:
+        payload["ttl_ms"] = ttl_ms
+    return Signal(
+        type=SignalType.PERMISSION_DECISION,
+        trace_id=trace_id,
+        parent_id=parent_id,
+        neuron=neuron,
+        payload=payload,
+        meta=meta or {},
+    )
+
+
+def clarification_answer_signal(
+    *,
+    trace_id: str,
+    parent_id: str,
+    answer: Any,
+    neuron: str | None = None,
+    meta: dict[str, Any] | None = None,
+) -> Signal:
+    """[C] Answer to a (blocking) CLARIFICATION request.
+
+    ``parent_id`` MUST be the CLARIFICATION's id. This is the response
+    half of the *blocking* clarification flow (Neuron called ``ask(...)``
+    and is awaiting). It is distinct from the legacy return-marker flow,
+    where the orchestrator answers by re-dispatching a TASK via
+    ``respond_to_clarification``.
+    """
+    return Signal(
+        type=SignalType.CLARIFICATION_ANSWER,
+        trace_id=trace_id,
+        parent_id=parent_id,
+        neuron=neuron,
+        payload={"answer": answer},
         meta=meta or {},
     )
 

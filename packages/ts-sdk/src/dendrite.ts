@@ -43,10 +43,12 @@ import {
   type Signal,
 } from "./envelope.js";
 import {
+  clarificationAnswerSignal,
   deregisterSignal,
   errorSignal,
   finalSignal,
   heartbeatSignal,
+  permissionDecisionSignal,
   registerSignal,
   taskSignal,
 } from "./signals.js";
@@ -168,6 +170,18 @@ export class Dendrite {
   }
   onClarification(fn: SignalHandler): SignalHandler {
     return this.on(SignalType.CLARIFICATION, fn);
+  }
+  /**
+   * Register a handler fired on inbound PERMISSION requests - the *answering*
+   * side. A central Cortex or a peer Dendrite evaluates the request (often
+   * consulting an Engram of standing grants, keyed per-neuron) and replies via
+   * {@link respondToPermission} (re-dispatch a TASK with the verdict) or
+   * {@link grantPermission} / {@link denyPermission} (emit a discrete
+   * PERMISSION_DECISION). It may also imprint the decision into an Engram so
+   * future recalls hit.
+   */
+  onPermission(fn: SignalHandler): SignalHandler {
+    return this.on(SignalType.PERMISSION, fn);
   }
   onErrorSignal(fn: SignalHandler): SignalHandler {
     return this.on(SignalType.ERROR, fn);
@@ -437,6 +451,126 @@ export class Dendrite {
   }
 
   /** Emit a synapse-side Signal. Refuses Axon-owned types. */
+  /**
+   * Reply to a PERMISSION by re-dispatching a TASK carrying the verdict.
+   *
+   * The "send it back to the axon" path: the follow-up TASK is addressed by
+   * default to the Neuron that asked (`signal.neuron`), with `parentId` = the
+   * PERMISSION's id and the original `traceId` carried over, so the Neuron
+   * resumes on the same thread and can imprint the decision into an Engram (or
+   * recall it next time). New TASK input: `{ permission: { action, granted,
+   * reason?, ttlMs?, ...extra } }`.
+   */
+  async respondToPermission(
+    request: Signal,
+    opts: {
+      granted: boolean;
+      reason?: string;
+      ttlMs?: number;
+      extra?: Json;
+      neuron?: string;
+      meta?: Json;
+    },
+  ): Promise<Signal> {
+    if (request.type !== SignalType.PERMISSION) {
+      throw new DendriteProtocolError(
+        `respondToPermission expects a PERMISSION signal, got '${request.type}'`,
+      );
+    }
+    const target = opts.neuron ?? request.neuron;
+    if (!target) {
+      throw new DendriteProtocolError(
+        "respondToPermission: signal has no neuron and no neuron override - " +
+          "nowhere to dispatch the follow-up TASK",
+      );
+    }
+    const permission: Json = {
+      action: request.payload["action"] ?? null,
+      granted: opts.granted,
+    };
+    if (opts.reason !== undefined) permission["reason"] = opts.reason;
+    if (opts.ttlMs !== undefined) permission["ttl_ms"] = opts.ttlMs;
+    if (opts.extra !== undefined) Object.assign(permission, opts.extra);
+    return this.dispatchTask({
+      neuron: target,
+      input: { permission },
+      traceId: request.trace_id,
+      parentId: request.id,
+      ...(opts.meta !== undefined ? { meta: opts.meta } : {}),
+    });
+  }
+
+  // -- cognition decision signals (discrete, decentralised option) -----
+  // Thin, stateless emit helpers for the new response signal types - no
+  // correlation client. Use these when you want the decision to travel as a
+  // discrete PERMISSION_DECISION / CLARIFICATION_ANSWER signal (e.g. for a
+  // peer/observer to imprint into an Engram) rather than as a re-dispatched
+  // TASK. Published via `publish` so any Dendrite - including a peer - can
+  // answer; correlation, if needed, is the developer's choice.
+
+  /** Approve a PERMISSION request. `ttlMs` optionally advertises how long the
+   * grant is valid so the requester can cache it (e.g. in an Engram). */
+  async grantPermission(
+    request: Signal,
+    opts: { reason?: string; ttlMs?: number; meta?: Json } = {},
+  ): Promise<Signal> {
+    return this.decidePermission(request, true, opts);
+  }
+
+  /** Reject a PERMISSION request. */
+  async denyPermission(
+    request: Signal,
+    opts: { reason?: string; meta?: Json } = {},
+  ): Promise<Signal> {
+    return this.decidePermission(request, false, opts);
+  }
+
+  private async decidePermission(
+    request: Signal,
+    granted: boolean,
+    opts: { reason?: string; ttlMs?: number; meta?: Json },
+  ): Promise<Signal> {
+    if (request.type !== SignalType.PERMISSION) {
+      throw new DendriteProtocolError(
+        `grant/denyPermission expects a PERMISSION signal, got '${request.type}'`,
+      );
+    }
+    const sig = permissionDecisionSignal({
+      traceId: request.trace_id,
+      parentId: request.id,
+      granted,
+      neuron: this.dendriteId,
+      ...(opts.reason !== undefined ? { reason: opts.reason } : {}),
+      ...(opts.ttlMs !== undefined ? { ttlMs: opts.ttlMs } : {}),
+      ...(opts.meta !== undefined ? { meta: opts.meta } : {}),
+    });
+    await this.publish(sig);
+    return sig;
+  }
+
+  /** Answer a *blocking* CLARIFICATION (the Neuron called ask(...) and is
+   * awaiting). Distinct from the legacy return-marker flow. */
+  async answerClarification(
+    request: Signal,
+    answer: unknown,
+    opts: { meta?: Json } = {},
+  ): Promise<Signal> {
+    if (request.type !== SignalType.CLARIFICATION) {
+      throw new DendriteProtocolError(
+        `answerClarification expects a CLARIFICATION signal, got '${request.type}'`,
+      );
+    }
+    const sig = clarificationAnswerSignal({
+      traceId: request.trace_id,
+      parentId: request.id,
+      answer,
+      neuron: this.dendriteId,
+      ...(opts.meta !== undefined ? { meta: opts.meta } : {}),
+    });
+    await this.publish(sig);
+    return sig;
+  }
+
   async emit(signal: Signal): Promise<void> {
     if (!SYNAPSE_TYPES.has(signal.type)) {
       throw new DendriteProtocolError(

@@ -70,7 +70,7 @@ A typical end-to-end flow (centralised case):
 1. A Cortex calls `await cortex.dispatch_task(neuron=..., input=...)`.
 2. The TASK envelope is published on the Synapse.
 3. The Dendrite hosting the addressed Neuron's Axon receives the TASK.
-4. The Dendrite invokes the Axon's `handle_task(task)`. The Axon resolves any `context_ref`, calls the Neuron function, and returns an `AGENT_OUTPUT` / `CLARIFICATION` / `ERROR` Signal.
+4. The Dendrite invokes the Axon's `handle_task(task)`. The Axon resolves any `context_ref`, calls the Neuron function, and returns an `AGENT_OUTPUT` / `CLARIFICATION` / `PERMISSION` / `ERROR` Signal.
 5. The Dendrite publishes the returned Signal on the Synapse.
 6. The Cortex's `on_agent_output` handler runs and decides what comes next  -  emit FINAL, dispatch another TASK, etc.
 
@@ -127,7 +127,7 @@ The Cortex remains an option, not a requirement.
 
 The Neuron itself has zero protocol knowledge. The Axon is the only piece of Cosmonapse that lives inside the Neuron's process. In v1 the Axon is an in-process Python helper; in v2 it ships as an MCP server, so an arbitrary LLM-driven agent can talk to a remote Dendrite over HTTP without ever importing Python from Cosmonapse.
 
-The Dendrite is the only thing that touches the Synapse. Everything that crosses the wire  -  REGISTER, HEARTBEAT, DEREGISTER, TASK routing, AGENT_OUTPUT, CLARIFICATION, ERROR  -  is the Dendrite's responsibility. The Axon hands the Dendrite an already-valid Signal and is done.
+The Dendrite is the only thing that touches the Synapse. Everything that crosses the wire  -  REGISTER, HEARTBEAT, DEREGISTER, TASK routing, AGENT_OUTPUT, CLARIFICATION, PERMISSION, ERROR  -  is the Dendrite's responsibility. The Axon hands the Dendrite an already-valid Signal and is done.
 
 `Cortex` is a back-compat alias for `Dendrite`  -  there is no separate subclass. A Dendrite that calls `dispatch_task` and registers `on_agent_output` handlers is effectively a Cortex. It is still just another participant on the Synapse  -  there is nothing privileged about it from the protocol's point of view.
 
@@ -199,7 +199,9 @@ The Dendrite handles REGISTER on start, HEARTBEAT on the configured interval, DE
 | `emit_error(trace_id, parent_id, code, message)` | ERROR |
 | `emit(signal)` | refuses anything outside `SYNAPSE_TYPES` |
 | `find_neurons(capability=...)` / `registry_snapshot(...)` | reads from RegistryStore (requires `registry_store`) |
-| `on_agent_output(fn)` / `on_clarification(fn)` / `on_error(fn)` | inbound AXON-type handlers |
+| `on_agent_output(fn)` / `on_clarification(fn)` / `on_permission(fn)` / `on_error(fn)` | inbound AXON-type handlers |
+| `respond_to_clarification(sig, answer=...)` / `respond_to_permission(sig, granted=...)` | re-dispatch a TASK carrying the answer/verdict so the Neuron resumes |
+| `answer_clarification(...)` / `grant_permission(...)` / `deny_permission(...)` | emit a discrete `CLARIFICATION_ANSWER` / `PERMISSION_DECISION` reply |
 | `on_register(fn)` / `on_deregister(fn)` / `on_heartbeat(fn)` | inbound lifecycle handlers |
 
 The canonical method names are `on_error_signal`, `on_register_signal`, `on_deregister_signal`, `on_heartbeat_signal`; the shorter forms above are convenient aliases.
@@ -469,14 +471,27 @@ See **ENVELOPE_SPEC.md** for the full spec. Summary:
 |---|---|---|
 | `TASK`         | Cortex    | unit of work addressed to a neuron                                   |
 | `AGENT_OUTPUT` | Dendrite  | wraps the Axon's raw output                                          |
-| `CLARIFICATION` | Dendrite | Neuron returned a clarification marker                               |
+| `CLARIFICATION` | Dendrite | Neuron returned a `__clarification__` marker                        |
+| `PERMISSION`   | Dendrite  | Neuron returned a `__permission__` marker (asks before acting)      |
+| `CLARIFICATION_ANSWER` / `PERMISSION_DECISION` | Dendrite | answer / verdict to a request; `parent_id` = the request's id |
 | `ERROR`        | Dendrite / Cortex | exception during handling, or orchestration-level failure    |
 | `FINAL`        | Cortex    | workflow terminated successfully                                     |
 | `REGISTER` / `DEREGISTER` / `HEARTBEAT` | Dendrite | per-Axon lifecycle                          |
 | `TASK_OFFER` / `BID` / `TASK_AWARDED` / `TASK_DECLINED` | Cortex | optional bid-based routing |
 | `THOUGHT_DELTA` / `PLAN` / `TOOL_CALL` / `TOOL_RESULT` / `MEMORY_APPEND` / `CRITIQUE` / `ESCALATION` / `CONSENSUS` / `CONTEXT_SYNC` | Cortex | optional cognition-style envelopes for richer workflows |
 
-The Cortex refuses to emit any Signal whose type isn't in `SYNAPSE_TYPES`; the Axon only ever returns `AGENT_OUTPUT / CLARIFICATION / ERROR`. This is enforced in code, not just convention.
+The Cortex refuses to emit any Signal whose type isn't in `SYNAPSE_TYPES`; the Axon only ever returns `AGENT_OUTPUT / CLARIFICATION / PERMISSION / ERROR`. This is enforced in code, not just convention.
+
+### 7.1 Clarification & permission: ask-and-resume, no extra client
+
+`CLARIFICATION` and `PERMISSION` are *requests* a Neuron raises by returning a marker  -  `{"__clarification__": True, ...}` or `{"__permission__": True, "action": ...}`  -  rather than a normal result. The Axon turns the marker into the matching Signal; the Dendrite publishes it. A Neuron typically tries an Engram `RECALL` first and only returns the marker on a miss.
+
+The answering side is a `Dendrite` with an `on_clarification` / `on_permission` handler  -  a central Cortex or any peer (centralised vs decentralised is just *who subscribes*). It can:
+
+- **re-dispatch a TASK** carrying the answer/verdict via `respond_to_clarification` / `respond_to_permission` (preserving `trace_id`, `parent_id` = the request id) so the Neuron resumes and can `IMPRINT` the decision into an Engram for next time; or
+- **emit a discrete reply** (`CLARIFICATION_ANSWER` / `PERMISSION_DECISION`) for a peer or observer to consume.
+
+There is deliberately **no blocking correlation client**: the Engram is the durable memory and the return-marker is the request channel, so no extra per-Dendrite state is introduced (see DECISIONS.md).
 
 ---
 

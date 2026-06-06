@@ -18,7 +18,8 @@ import type { Json } from "./envelope.js";
  * The Neuron function type.
  *   input    -  `payload.input` from the TASK envelope (arbitrary JSON).
  *   context  -  resolved by the Axon from `payload.context_ref` (empty if none).
- *   returns  -  a JSON-serialisable object, or a {@link ClarificationOutput}.
+ *   returns  -  a JSON-serialisable object, a {@link ClarificationOutput}, or a
+ *               {@link PermissionRequestOutput}.
  */
 export type NeuronFn = (
   input: Json,
@@ -60,5 +61,42 @@ export function isClarification(output: unknown): output is ClarificationOutput 
     typeof output === "object" &&
     output !== null &&
     (output as Record<string, unknown>)["__clarification__"] === true
+  );
+}
+
+/**
+ * Marker a Neuron returns to request permission to perform `action` instead of
+ * producing a result. The Axon converts this into a PERMISSION signal. Same
+ * return-and-resume shape as {@link ClarificationOutput}: the Neuron typically
+ * tries `recall(...)` against an Engram first and only returns this on a miss.
+ */
+export interface PermissionRequestOutput {
+  __permission__: true;
+  action: string;
+  scope?: Json;
+  reason?: string;
+  context?: Json;
+}
+
+/** Build a permission-request result for a Neuron to return. */
+export function permissionRequest(
+  action: string,
+  opts: { scope?: Json; reason?: string; context?: Json } = {},
+): PermissionRequestOutput {
+  return {
+    __permission__: true,
+    action,
+    ...(opts.scope !== undefined ? { scope: opts.scope } : {}),
+    ...(opts.reason !== undefined ? { reason: opts.reason } : {}),
+    ...(opts.context !== undefined ? { context: opts.context } : {}),
+  };
+}
+
+/** Type guard: did the Neuron return a permission-request marker? */
+export function isPermissionRequest(output: unknown): output is PermissionRequestOutput {
+  return (
+    typeof output === "object" &&
+    output !== null &&
+    (output as Record<string, unknown>)["__permission__"] === true
   );
 }

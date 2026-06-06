@@ -80,6 +80,42 @@ cosmo synapse start memory --namespace=demo
 
 ---
 
+## Clarification & permission
+
+A Neuron can pause and ask instead of returning a result, by returning a marker.
+The Axon turns it into a `CLARIFICATION` or `PERMISSION` signal; an answering
+Dendrite (a central Cortex or any peer) replies. No extra client  -  the Engram
+is the memory, the return-marker is the request.
+
+```python
+async def writer(input, context, *, recall, imprint):
+    # 1. Try the Engram of standing grants first.
+    if input.get("permission"):                      # resumed with a verdict
+        if input["permission"]["granted"]:
+            await imprint("grants", op="upsert", merge_key="action",
+                          entry={"action": "write_file", "granted": True})
+            return {"wrote": True}
+        return {"wrote": False}
+    hit = await recall("grants", query={"action": "write_file"})
+    if hit.hits:
+        return {"wrote": True}                        # already allowed
+    # 2. Miss -> ask. Same shape as {"__clarification__": True, ...}.
+    return {"__permission__": True, "action": "write_file",
+            "scope": {"path": "/tmp/out"}, "reason": "persist output"}
+
+# Answering side (centralised or decentralised  -  just who subscribes):
+@cortex.on_permission
+async def decide(sig):
+    granted = sig.payload["action"] == "write_file"
+    # Re-dispatch a TASK carrying the verdict so the Neuron resumes:
+    await cortex.respond_to_permission(sig, granted=granted, reason="allowlisted")
+    # ...or emit a discrete signal instead:
+    # await cortex.grant_permission(sig, reason="allowlisted", ttl_ms=3_600_000)
+```
+
+`on_clarification` / `respond_to_clarification` / `answer_clarification` are the
+clarification-side equivalents. See `design/ENVELOPE_SPEC.md` §7.5.
+
 ## Provider-backed Neurons
 
 Drop an LLM into any workflow with `Neuron(source=...)`:

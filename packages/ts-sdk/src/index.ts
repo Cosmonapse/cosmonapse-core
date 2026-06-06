@@ -34,6 +34,9 @@ export {
   taskSignal,
   agentOutputSignal,
   clarificationSignal,
+  clarificationAnswerSignal,
+  permissionSignal,
+  permissionDecisionSignal,
   finalSignal,
   errorSignal,
   registerSignal,
@@ -93,10 +96,13 @@ export {
 export {
   clarify,
   isClarification,
+  permissionRequest,
+  isPermissionRequest,
   type NeuronFn,
   type CloseableNeuronFn,
   type ContextFetcher,
   type ClarificationOutput,
+  type PermissionRequestOutput,
 } from "./neuron.js";
 
 export { Axon, type AxonOptions } from "./axon.js";
