@@ -133,5 +133,16 @@ export {
   type HuggingFaceNeuronOptions,
 } from "./neuron-http.js";
 
+export {
+  openaiNeuron,
+  anthropicNeuron,
+  type OpenAINeuronOptions,
+  type AnthropicNeuronOptions,
+} from "./neuron-openai.js";
+
 /** Recommended entry point for building Neurons (see note above). */
-export { neuron, type NeuronSource } from "./neuron-factory.js";
+export {
+  neuron,
+  type NeuronSource,
+  type OpenAICompatNeuronOptions,
+} from "./neuron-factory.js";

@@ -29,11 +29,17 @@ delete the corresponding caveat comment from the source.
   unified `neuron()` factory. (The Express / HTTP-app Neuron was removed  -  an
   HTTP API is not a Neuron; front an orchestrator Dendrite with your web
   framework instead.)
+- Hosted-LLM provider neurons: `openaiNeuron`, `anthropicNeuron`, and the
+  OpenAI-compatible aliases `groq` / `openrouter` / `together` / `mistral`
+  via `neuron(source, opts)` (`neuron-openai.ts`). Uses the runtime `fetch`;
+  keys resolve from `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / provider env
+  vars. At parity with the Python `Neuron(source=...)` registry.
 
 ## Still to port (tracked, not yet implemented)
 
-Nothing outstanding from the original parity gap list  -  every row below has
-been closed. New gaps, if any are discovered, should be added here.
+Nothing outstanding  -  the LLM provider neurons added to the Python SDK in
+0.1.1 were ported to TypeScript in the same release. New gaps, if any are
+discovered, should be added here.
 
 | Area | Gap | Python reference | Notes |
 | --- | --- | --- | --- |
@@ -46,10 +52,4 @@ been closed. New gaps, if any are discovered, should be added here.
   `better-sqlite3`, `pg`, `kafkajs`, and the runtime's built-in `fetch`
   (Node 18+). These are the idiomatic Node equivalents and are lazy-imported as
   optional dependencies, so the core package installs without any of them.
-- **`NeuronRecord` timestamps are RFC 3339 strings** in the TS store interface
-  (`last_heartbeat`, `registered_at`), where Python uses `datetime`. This is the
-  existing `storage.ts` contract and is preserved by the sqlite/postgres ports.
-
-- **`NeuronRecord` field naming is snake_case** (`neuron_id`, `last_heartbeat`,
-  `registered_at`). This is deliberate: the record is the on-the-wire / on-disk
-  shape shared with the Python SDK and must round-trip verba
+- **`NeuronRecord` timestamps are RFC 3339 strings** in the

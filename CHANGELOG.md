@@ -6,6 +6,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-06-05
+
+### Added
+- **New LLM provider Neurons** in both SDKs' `Neuron(source=...)` / `neuron(source, opts)` factory. First-class `"openai"` (Chat Completions) and `"anthropic"` (Messages API) sources, each a dedicated provider class (`httpx` in Python, the runtime `fetch` in TypeScript  -  no provider SDK dependency) resolving credentials from an explicit key or the `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` env vars. Plus OpenAI-compatible hosted aliases  -  `"groq"`, `"openrouter"`, `"together"`, and `"mistral"`  -  pre-configured on the existing HuggingFace neuron. All are soft dependencies (lazy-imported) and return the standard `{"response": ..., "meta": ...}` shape. The TypeScript SDK ships these at parity with the Python reference (`packages/ts-sdk/src/neuron-openai.ts`).
+
 ### Removed
 - **The HTTP-app Neuron type** (`Neuron(source="flask" | "wsgi" | "api")` and
   the module `cosmonapse._neuron_http`; the TypeScript `expressNeuron` and the

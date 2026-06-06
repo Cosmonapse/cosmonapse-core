@@ -33,7 +33,7 @@ function readMessages(input: Dict): Array<Dict> | null {
   return Array.isArray(m) ? (m as Dict[]) : null;
 }
 
-function requireInput(input: Dict, provider: string): { prompt: string | null; messages: Dict[] | null } {
+export function requireInput(input: Dict, provider: string): { prompt: string | null; messages: Dict[] | null } {
   const prompt = readPrompt(input);
   const messages = readMessages(input);
   if (!prompt && !messages) {
@@ -45,7 +45,7 @@ function requireInput(input: Dict, provider: string): { prompt: string | null; m
   return { prompt, messages };
 }
 
-async function postJson(url: string, body: Dict, headers: Record<string, string>, timeoutMs: number): Promise<Json> {
+export async function postJson(url: string, body: Dict, headers: Record<string, string>, timeoutMs: number): Promise<Json> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
