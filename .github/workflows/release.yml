@@ -90,28 +90,3 @@ jobs:
       - name: Publish
         run: npm publish --access public
 
-  # --- 3. GitHub Release -------------------------------------------------------
-  github-release:
-    name: Create GitHub Release
-    needs: [publish-python, publish-npm]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Extract changelog for this version
-        id: changelog
-        run: |
-          VERSION="${GITHUB_REF_NAME}"
-          NOTES=$(awk "/^## \[?${VERSION#v}/,/^## /" CHANGELOG.md | head -n -1)
-          echo "notes<<EOF" >> $GITHUB_OUTPUT
-          echo "$NOTES" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
-
-      - name: Publish GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ github.ref_name }}
-          name: ${{ github.ref_name }}
-          body: ${{ steps.changelog.outputs.notes }}
