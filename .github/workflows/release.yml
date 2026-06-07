@@ -61,6 +61,8 @@ jobs:
   publish-npm:
     name: Publish TS SDK to npm
     runs-on: ubuntu-latest
+    permissions:
+      id-token: write   # needed for OIDC trusted publishing
     defaults:
       run:
         working-directory: packages/ts-sdk
@@ -87,69 +89,16 @@ jobs:
 
       - name: Publish
         run: npm publish --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
-  # --- 3. CLI binaries -> GitHub Release ---------------------------------------
-  build-cli:
-    name: Build CLI binary (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        include:
-          - os: ubuntu-latest
-            artifact: cosmo-linux-amd64
-          - os: macos-latest
-            artifact: cosmo-macos-arm64
-          - os: windows-latest
-            artifact: cosmo-windows-amd64.exe
-    defaults:
-      run:
-        working-directory: dist/cli-freeze
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0   # so the frozen CLI reports the tagged version
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Install SDK + PyInstaller
-        run: |
-          pip install pyinstaller
-          pip install -e ../../packages/python-sdk
-
-      - name: Freeze binary
-        run: pyinstaller --clean --noconfirm cosmo.spec
-
-      - name: Rename binary (Unix)
-        if: runner.os != 'Windows'
-        run: mv build/cosmo/cosmo ${{ matrix.artifact }}
-
-      - name: Rename binary (Windows)
-        if: runner.os == 'Windows'
-        run: mv build/cosmo/cosmo.exe ${{ matrix.artifact }}
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.artifact }}
-          path: dist/cli-freeze/${{ matrix.artifact }}
-
-  # --- 4. Attach binaries to the GitHub Release --------------------------------
+  # --- 3. GitHub Release -------------------------------------------------------
   github-release:
     name: Create GitHub Release
-    needs: [publish-python, publish-npm, build-cli]
+    needs: [publish-python, publish-npm]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
-
-      - name: Download all CLI artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: release-assets/
 
       - name: Extract changelog for this version
         id: changelog
@@ -159,7 +108,6 @@ jobs:
           echo "notes<<EOF" >> $GITHUB_OUTPUT
           echo "$NOTES" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
-        working-directory: .
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
@@ -167,4 +115,3 @@ jobs:
           tag_name: ${{ github.ref_name }}
           name: ${{ github.ref_name }}
           body: ${{ steps.changelog.outputs.notes }}
-          files: release-assets/**/*
