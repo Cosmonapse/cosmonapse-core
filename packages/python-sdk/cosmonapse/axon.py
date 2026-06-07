@@ -31,7 +31,7 @@ import json
 import logging
 import re
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from cosmonapse._hooks import LifecycleHooks, RefreshEvent
 from cosmonapse.engram.base import EngramBinding, EngramNotBound
@@ -168,7 +168,10 @@ class Axon(LifecycleHooks):
         """
         from cosmonapse.neuron import Neuron  # lazy: avoids import cycle
 
-        neuron_fn = Neuron(source=source, **source_kwargs)
+        # Neuron(...) returns a callable _BaseNeuron at runtime, but its
+        # __new__ return type leaves mypy inferring the nominal `Neuron`;
+        # cast to the NeuronFn the Axon expects.
+        neuron_fn = cast(NeuronFn, Neuron(source=source, **source_kwargs))
         parser: OutputParser | None = None
         if recognize:
             parser = (
