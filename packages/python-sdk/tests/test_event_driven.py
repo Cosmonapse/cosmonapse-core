@@ -176,9 +176,9 @@ def test_capability_routed_task_reaches_matching_dendrite():
                 )
                 assert sig.type is SignalType.AGENT_OUTPUT
                 assert sig.payload["output"]["summary"] == "sum:hello"
-                # Reply was emitted by the Axon, so neuron field is the
+                # Reply was emitted by the Axon, so directed.id is the
                 # Axon's neuron_id, not the addressed name (there was none).
-                assert sig.neuron == "summarizer"
+                assert (sig.directed.id if sig.directed else None) == "summarizer"
         finally:
             await s.close()
     _run(run())

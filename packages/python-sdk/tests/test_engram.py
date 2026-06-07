@@ -21,6 +21,7 @@ import pytest
 from cosmonapse import (
     Axon,
     Dendrite,
+    Directed,
     Engram,
     EngramBinding,
     EngramNotBound,
@@ -49,7 +50,7 @@ from cosmonapse import (
 class TestEnvelope:
 
     def test_recall_signal_requires_engram_id_or_kind(self):
-        with pytest.raises(ValueError, match="engram_id"):
+        with pytest.raises(ValueError, match="directed"):
             recall_signal(
                 trace_id=new_trace_id(),
                 parent_id=new_event_id(),
@@ -61,7 +62,7 @@ class TestEnvelope:
             recall_signal(
                 trace_id=new_trace_id(),
                 parent_id=new_event_id(),
-                engram_id="x",
+                directed=Directed(id="x"),
                 query={"text": "x"},
                 recall_mode="bogus",
             )
@@ -70,17 +71,18 @@ class TestEnvelope:
         sig = recall_signal(
             trace_id=new_trace_id(),
             parent_id=new_event_id(),
-            engram_id="ctx",
+            directed=Directed(id="ctx"),
             query={"text": "k8s"},
             deadline_ms=400,
             recall_mode="merge",
         )
         assert sig.type is SignalType.RECALL
-        assert sig.payload["engram_id"] == "ctx"
+        assert sig.directed.id == "ctx"
         assert sig.payload["recall_mode"] == "merge"
         encoded = sig.encode()
         decoded = Signal.decode(encoded)
         assert decoded.payload == sig.payload
+        assert decoded.directed == sig.directed
 
     def test_recalled_signal_carries_hits(self):
         sig = recalled_signal(
@@ -97,7 +99,7 @@ class TestEnvelope:
             imprint_signal(
                 trace_id=new_trace_id(),
                 parent_id=new_event_id(),
-                engram_id="ctx",
+                directed=Directed(id="ctx"),
                 op="foo",
                 entry={"content": "x"},
             )
@@ -107,7 +109,7 @@ class TestEnvelope:
             imprint_signal(
                 trace_id=new_trace_id(),
                 parent_id=new_event_id(),
-                engram_id="ctx",
+                directed=Directed(id="ctx"),
                 op="merge",
                 entry={"content": {"a": 1}},
             )
@@ -316,14 +318,14 @@ class TestAxonBinding:
 
         axon = Axon(
             neuron_id="fancy", neuron_fn=fancy,
-            engrams=[EngramBinding(name="ctx", engram_id="ctx-default")],
+            engrams=[EngramBinding(name="ctx", directed_id="ctx-default")],
         )
         assert "ctx" in axon.engram_bindings
         assert axon._fn_accepts_recall is True
         assert axon._fn_accepts_imprint is True
 
     def test_engram_binding_requires_id_or_kind(self):
-        with pytest.raises(ValueError, match="engram_id"):
+        with pytest.raises(ValueError, match="directed_id"):
             EngramBinding(name="ctx")
 
     @pytest.mark.asyncio
@@ -340,7 +342,7 @@ class TestAxonBinding:
         )
         axon = Axon(
             neuron_id="bad", neuron_fn=fn,
-            engrams=[EngramBinding(name="ctx", engram_id="ctx")],
+            engrams=[EngramBinding(name="ctx", directed_id="ctx")],
         )
         worker.attach_axon(axon)
         await worker.start()
@@ -399,7 +401,7 @@ class TestEndToEnd:
             neuron_id="researcher",
             neuron_fn=neuron_fn,
             capabilities=["research"],
-            engrams=[EngramBinding(name="ctx", engram_id="ctx")],
+            engrams=[EngramBinding(name="ctx", directed_id="ctx")],
         ))
 
         # Cortex

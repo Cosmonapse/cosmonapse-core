@@ -37,6 +37,7 @@ from cosmonapse.engram.base import (
     RecallResult,
 )
 from cosmonapse.envelope import (
+    Directed,
     Signal,
     SignalType,
     imprint_signal,
@@ -105,10 +106,15 @@ class EngramClient:
         neuron: str | None = None,
         meta: dict[str, Any] | None = None,
     ) -> RecallResult:
-        """Emit RECALL, await matching RECALLED(s) per recall_mode, return."""
+        """Emit RECALL, await matching RECALLED(s) per recall_mode, return.
+
+        ``neuron`` is accepted for caller observability; it is not part of
+        the envelope addressing (a RECALL's ``directed`` addresses the
+        target Engram, not the producer).
+        """
         if binding is not None:
-            engram_id = engram_id or binding.engram_id
-            engram_kind = engram_kind or binding.engram_kind
+            engram_id = engram_id or binding.directed_id
+            engram_kind = engram_kind or binding.directed_type
             if deadline_ms is None:
                 deadline_ms = binding.default_deadline_ms
             if recall_mode is None:
@@ -119,9 +125,7 @@ class EngramClient:
         sig = recall_signal(
             trace_id=trace_id,
             parent_id=parent_id,
-            neuron=neuron,
-            engram_id=engram_id,
-            engram_kind=engram_kind,
+            directed=Directed(id=engram_id, type=engram_kind),
             query=query,
             filters=filters,
             context_ref=context_ref,
@@ -179,17 +183,20 @@ class EngramClient:
     ) -> ImprintReceipt | None:
         """Emit IMPRINT. With ``await_ack=False`` (default) return as soon as
         the envelope is on the wire. With ``await_ack=True`` await the
-        matching IMPRINTED and return a receipt."""
+        matching IMPRINTED and return a receipt.
+
+        ``neuron`` is accepted for caller observability; it is not part of
+        the envelope addressing (an IMPRINT's ``directed`` addresses the
+        target Engram, not the producer).
+        """
         if binding is not None:
-            engram_id = engram_id or binding.engram_id
-            engram_kind = engram_kind or binding.engram_kind
+            engram_id = engram_id or binding.directed_id
+            engram_kind = engram_kind or binding.directed_type
 
         sig = imprint_signal(
             trace_id=trace_id,
             parent_id=parent_id,
-            neuron=neuron,
-            engram_id=engram_id,
-            engram_kind=engram_kind,
+            directed=Directed(id=engram_id, type=engram_kind),
             op=op,
             entry=entry,
             merge_key=merge_key,

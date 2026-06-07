@@ -16,6 +16,7 @@ import pytest
 from cosmonapse import (
     Dendrite,
     DendriteProtocolError,
+    Directed,
     MemorySynapse,
     register_signal,
     heartbeat_signal,
@@ -66,9 +67,9 @@ def test_emit_rejects_axon_owned_types():
             # REGISTER and HEARTBEAT are Axon-owned: a Dendrite must not emit them
             # directly via the public emit() path.
             with pytest.raises(DendriteProtocolError):
-                await dendrite.emit(register_signal(neuron="x", capabilities=[]))
+                await dendrite.emit(register_signal(directed=Directed(id="x"), capabilities=[]))
             with pytest.raises(DendriteProtocolError):
-                await dendrite.emit(heartbeat_signal(neuron="x"))
+                await dendrite.emit(heartbeat_signal(directed=Directed(id="x")))
         finally:
             await synapse.close()
     _run(run())
@@ -81,7 +82,7 @@ def test_emit_accepts_synapse_types():
         try:
             await synapse.subscribe("cosmonapse.t.FINAL", lambda s: seen.append(s))
             sig = final_signal(trace_id=new_trace_id(), parent_id=new_event_id(),
-                               neuron="d", result={"ok": True})
+                               directed=Directed(id="d"), result={"ok": True})
             await dendrite.emit(sig)  # FINAL is a synapse-side type -> allowed
             await asyncio.sleep(0.01)
             assert len(seen) == 1
@@ -141,7 +142,7 @@ def test_detach_axon_emits_deregister_and_stops_hosting():
 
             # Axon is no longer hosted and a DEREGISTER went out for it.
             assert "a" not in dendrite.axons
-            assert any(s.neuron == "a" for s in deregs)
+            assert any((s.directed.id if s.directed else None) == "a" for s in deregs)
             assert all(s.type is SignalType.DEREGISTER for s in deregs)
 
             # stop() must not emit a second DEREGISTER for the detached Axon.

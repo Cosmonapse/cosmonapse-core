@@ -26,13 +26,17 @@ emits CLARIFICATION instead of AGENT_OUTPUT.
 
 from __future__ import annotations
 
+import inspect
+import json
 import logging
+import re
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
 from cosmonapse._hooks import LifecycleHooks, RefreshEvent
 from cosmonapse.engram.base import EngramBinding, EngramNotBound
 from cosmonapse.envelope import (
+    Directed,
     Signal,
     agent_output_signal,
     clarification_signal,
@@ -48,6 +52,13 @@ logger = logging.getLogger(__name__)
 
 NeuronFn = Callable[[dict[str, Any], list[Any]], Awaitable[dict[str, Any]]]
 ContextFetcher = Callable[[str], Awaitable[list[Any]]]
+# An OutputParser recognises a Neuron's *native* output (an LLM's
+# ``{"response": text}``, an MCP server's ``{"is_error", "content", ...}``)
+# and normalises it into the marker dict the Axon already understands:
+# ``__clarification__`` / ``__permission__`` / ``__error__`` markers, or a
+# plain result dict. It is the per-source recognition the Axon applies before
+# wrapping. Pure and synchronous; raising inside it yields an ERROR Signal.
+OutputParser = Callable[[dict[str, Any]], dict[str, Any]]
 
 
 async def _noop_context_fetcher(ref: str) -> list[Any]:
@@ -66,6 +77,7 @@ class Axon(LifecycleHooks):
         version: str | None = None,
         context_fetcher: ContextFetcher | None = None,
         engrams: list[EngramBinding] | None = None,
+        output_parser: OutputParser | None = None,
     ) -> None:
         LifecycleHooks.__init__(self)
         self.neuron_id = neuron_id
@@ -73,7 +85,19 @@ class Axon(LifecycleHooks):
         self.version = version
         self._fn = neuron_fn
         self._context_fetcher = context_fetcher or _noop_context_fetcher
+        self._output_parser = output_parser
         self._dendrite: "Dendrite | None" = None
+
+        # Decorator-registered recognisers, one bucket per capability. Each
+        # entry is a detector (sync or async) that inspects the Neuron's raw
+        # output and returns the intent's fields (dict) on a match, or None to
+        # fall through. Applied in fixed precedence by ``_apply_recognisers``.
+        self._recognisers: dict[str, list[Callable[[Any], Any]]] = {
+            "error": [],
+            "clarification": [],
+            "permission": [],
+            "output": [],
+        }
 
         # Engram bindings the Neuron may address. Keyed by binding.name  - 
         # the Neuron passes that name to recall(...) / imprint(...). The
@@ -110,6 +134,158 @@ class Axon(LifecycleHooks):
             # Builtins / C functions have no inspectable signature. Skip
             # helper injection and fall back to the 2-arg legacy call.
             pass
+
+    # -- source-paired factories --------------------------------------
+    # An Axon wraps a Neuron. These build an Axon already paired with one
+    # of the existing ``Neuron(source=...)`` providers AND wired with the
+    # matching recogniser, so the Axon handles the protocol interactions
+    # (output / clarification / permission / error) out of the box. No new
+    # class: the result is a plain Axon.
+
+    @classmethod
+    def from_source(
+        cls,
+        source: str,
+        *,
+        neuron_id: str,
+        capabilities: list[str] | None = None,
+        version: str | None = None,
+        context_fetcher: ContextFetcher | None = None,
+        engrams: list[EngramBinding] | None = None,
+        recognize: bool = True,
+        **source_kwargs: Any,
+    ) -> "Axon":
+        """Build an Axon around ``Neuron(source=source, **source_kwargs)``.
+
+        Works for every registered source (``ollama``, ``huggingface``/``hf``,
+        ``openai``, ``anthropic``, ``groq``, ``openrouter``, ``together``,
+        ``mistral``, ``mcp``). When ``recognize`` is True (default) the Axon is
+        given the recogniser matching the source family: the MCP recogniser for
+        ``mcp`` (maps ``is_error`` -> ERROR), the LLM recogniser otherwise
+        (parses a ``{"cosmo": ...}`` intent block out of the model's text).
+        Pass ``recognize=False`` to treat the Neuron's raw output as a plain
+        AGENT_OUTPUT.
+        """
+        from cosmonapse.neuron import Neuron  # lazy: avoids import cycle
+
+        neuron_fn = Neuron(source=source, **source_kwargs)
+        parser: OutputParser | None = None
+        if recognize:
+            parser = (
+                _parse_mcp_intents
+                if source.lower() == "mcp"
+                else _parse_llm_intents
+            )
+        return cls(
+            neuron_id=neuron_id,
+            neuron_fn=neuron_fn,
+            capabilities=capabilities,
+            version=version,
+            context_fetcher=context_fetcher,
+            engrams=engrams,
+            output_parser=parser,
+        )
+
+    @classmethod
+    def ollama(cls, neuron_id: str, **kw: Any) -> "Axon":
+        """Axon paired with a local Ollama daemon. kwargs: ``model`` (required),
+        ``endpoint``, ``system``, ``temperature``, ``max_tokens``, ``timeout``."""
+        return cls.from_source("ollama", neuron_id=neuron_id, **kw)
+
+    @classmethod
+    def huggingface(cls, neuron_id: str, **kw: Any) -> "Axon":
+        """Axon paired with a HuggingFace TGI / OpenAI-compatible endpoint.
+        kwargs: ``endpoint`` (required), ``model``, ``use_chat_api``,
+        ``temperature``, ``max_new_tokens``, ``api_key``, ``timeout``."""
+        return cls.from_source("huggingface", neuron_id=neuron_id, **kw)
+
+    # Alias matching the Neuron factory's ``"hf"``.
+    hf = huggingface
+
+    @classmethod
+    def openai(cls, neuron_id: str, **kw: Any) -> "Axon":
+        """Axon paired with the OpenAI Chat Completions API. kwargs: ``model``
+        (required), ``api_key`` (or ``OPENAI_API_KEY``), ``endpoint``,
+        ``temperature``, ``max_tokens``, ``system``, ``timeout``."""
+        return cls.from_source("openai", neuron_id=neuron_id, **kw)
+
+    @classmethod
+    def anthropic(cls, neuron_id: str, **kw: Any) -> "Axon":
+        """Axon paired with the Anthropic Messages API. kwargs: ``model``
+        (required), ``api_key`` (or ``ANTHROPIC_API_KEY``), ``system``,
+        ``max_tokens``, ``temperature``, ``timeout``."""
+        return cls.from_source("anthropic", neuron_id=neuron_id, **kw)
+
+    @classmethod
+    def mcp(cls, neuron_id: str, **kw: Any) -> "Axon":
+        """Axon paired with a stdio MCP server. kwargs: ``command`` + ``args``
+        or ``server`` (preset) + ``args``, plus ``env``, ``cwd``, ``tool``."""
+        return cls.from_source("mcp", neuron_id=neuron_id, **kw)
+
+    # -- recognition decorators ---------------------------------------
+    # The decorator model. These are the asking side: ``detects_*`` registers
+    # a *detector* over the Neuron's raw output, deliberately named apart from
+    # the Dendrite's ``on_*`` handlers (which consume inbound Signals off the
+    # bus). Each detector returns the intent's fields (a dict) to match, or
+    # None to fall through to the next detector / capability. Detectors may be
+    # sync or async; multiple per capability are tried in registration order.
+    # Applied in precedence error -> clarification -> permission -> output by
+    # ``_apply_recognisers``; they compose with (and run after) any
+    # ``output_parser`` and before the literal ``__marker__`` checks.
+
+    def detects_output(self, fn: Callable[[Any], Any]) -> Callable[[Any], Any]:
+        """Detector returning the AGENT_OUTPUT payload dict, or None to leave
+        the raw output to be wrapped verbatim."""
+        self._recognisers["output"].append(fn)
+        return fn
+
+    def detects_clarification(self, fn: Callable[[Any], Any]) -> Callable[[Any], Any]:
+        """Detector returning ``{"question": ..., "context": ...}`` to emit
+        CLARIFICATION, or None."""
+        self._recognisers["clarification"].append(fn)
+        return fn
+
+    def detects_permission(self, fn: Callable[[Any], Any]) -> Callable[[Any], Any]:
+        """Detector returning ``{"action": ..., "scope": ..., "reason": ...,
+        "context": ...}`` to emit PERMISSION, or None."""
+        self._recognisers["permission"].append(fn)
+        return fn
+
+    def detects_error(self, fn: Callable[[Any], Any]) -> Callable[[Any], Any]:
+        """Detector returning ``{"code": ..., "message": ..., "recoverable":
+        ...}`` to emit ERROR, or None."""
+        self._recognisers["error"].append(fn)
+        return fn
+
+    async def _apply_recognisers(self, raw: Any) -> Any:
+        """Run registered detectors in precedence; return a marker dict on the
+        first match, else the unchanged ``raw``."""
+        rec = self._recognisers
+        if not any(rec.values()):
+            return raw
+
+        async def _first(fns: list[Callable[[Any], Any]]) -> Any:
+            for fn in fns:
+                r = fn(raw)
+                if inspect.isawaitable(r):
+                    r = await r
+                if r is not None:
+                    return r
+            return None
+
+        hit = await _first(rec["error"])
+        if hit is not None:
+            return {"__error__": True, **hit}
+        hit = await _first(rec["clarification"])
+        if hit is not None:
+            return {"__clarification__": True, **hit}
+        hit = await _first(rec["permission"])
+        if hit is not None:
+            return {"__permission__": True, **hit}
+        hit = await _first(rec["output"])
+        if hit is not None:
+            return hit
+        return raw
 
     # -- attachment ----------------------------------------------------
 
@@ -188,22 +364,44 @@ class Axon(LifecycleHooks):
                 )
             else:
                 raw_output = await self._fn(input_data, context)
+            # Per-source recognition: turn the Neuron's native output (LLM
+            # text, MCP result) into the marker dict the branches below
+            # understand. Runs inside the try so a parser failure surfaces
+            # as an ERROR Signal rather than crashing the Dendrite.
+            if self._output_parser is not None:
+                raw_output = self._output_parser(raw_output)
+            # Decorator-registered recognisers (@axon.detects_clarification,
+            # ...) run after the parser and may convert output into a marker.
+            raw_output = await self._apply_recognisers(raw_output)
         except Exception as exc:
             logger.exception("Axon %s: Neuron raised", self.neuron_id)
             return error_signal(
                 trace_id=trace_id,
                 parent_id=parent_id,
-                neuron=self.neuron_id,
+                directed=Directed(id=self.neuron_id),
                 code="NEURON_EXCEPTION",
                 message=str(exc),
                 recoverable=False,
+            )
+
+        # Error marker: a recogniser (e.g. MCP ``is_error``) can request an
+        # ERROR Signal without raising. Same return-surface as a raised
+        # exception, but with a recogniser-supplied code/message.
+        if isinstance(raw_output, dict) and raw_output.get("__error__"):
+            return error_signal(
+                trace_id=trace_id,
+                parent_id=parent_id,
+                directed=Directed(id=self.neuron_id),
+                code=raw_output.get("code", "NEURON_ERROR"),
+                message=raw_output.get("message", ""),
+                recoverable=bool(raw_output.get("recoverable", False)),
             )
 
         if isinstance(raw_output, dict) and raw_output.get("__clarification__"):
             return clarification_signal(
                 trace_id=trace_id,
                 parent_id=parent_id,
-                neuron=self.neuron_id,
+                directed=Directed(id=self.neuron_id),
                 question=raw_output.get("question", ""),
                 context=raw_output.get("context"),
             )
@@ -217,7 +415,7 @@ class Axon(LifecycleHooks):
             return permission_signal(
                 trace_id=trace_id,
                 parent_id=parent_id,
-                neuron=self.neuron_id,
+                directed=Directed(id=self.neuron_id),
                 action=raw_output.get("action", ""),
                 scope=raw_output.get("scope"),
                 reason=raw_output.get("reason"),
@@ -227,7 +425,7 @@ class Axon(LifecycleHooks):
         return agent_output_signal(
             trace_id=trace_id,
             parent_id=parent_id,
-            neuron=self.neuron_id,
+            directed=Directed(id=self.neuron_id),
             output=raw_output if isinstance(raw_output, dict) else {"value": raw_output},
         )
 
@@ -312,3 +510,114 @@ class Axon(LifecycleHooks):
     @property
     def engram_bindings(self) -> dict[str, EngramBinding]:
         return dict(self._engram_bindings)
+
+
+# ---------------------------------------------------------------------------
+# Per-source recognisers
+# ---------------------------------------------------------------------------
+# These map a Neuron's *native* output onto the marker dict Axon.handle_task
+# already understands. They are the recognition half of the adapter and belong
+# to the Axon, not the Neuron.
+#
+# Intent convention (LLM sources)
+# -------------------------------
+# A provider LLM returns free text. To request something other than a plain
+# answer it emits a single JSON object carrying a ``cosmo`` key - as the whole
+# response or inside a ```json fenced block:
+#
+#   {"cosmo": "clarification", "question": "which region?"}
+#   {"cosmo": "permission", "action": "delete", "scope": "/db", "reason": "..."}
+#   {"cosmo": "error", "code": "REFUSED", "message": "..."}
+#   {"cosmo": "output", "output": {"answer": "..."}}
+#
+# Anything else (prose, or JSON without a ``cosmo`` key) is a normal output, so
+# ordinary text never misfires.
+
+_INTENT_KEY = "cosmo"
+_FENCED_JSON = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.DOTALL)
+
+
+def _extract_cosmo_intent(text: str) -> dict[str, Any] | None:
+    """Return the ``cosmo`` intent object embedded in ``text``, or None.
+
+    Inspects the whole trimmed string and any ```json fenced blocks. Only an
+    object with a string ``cosmo`` key counts.
+    """
+    if not text:
+        return None
+    candidates: list[str] = [text.strip()]
+    candidates.extend(m.group(1) for m in _FENCED_JSON.finditer(text))
+    for cand in candidates:
+        try:
+            obj = json.loads(cand)
+        except (ValueError, TypeError):
+            continue
+        if isinstance(obj, dict) and isinstance(obj.get(_INTENT_KEY), str):
+            return obj
+    return None
+
+
+def _intent_to_marker(intent: dict[str, Any]) -> dict[str, Any] | None:
+    """Translate a ``cosmo`` intent object into an Axon marker dict."""
+    kind = intent.get(_INTENT_KEY)
+    if kind == "clarification":
+        return {
+            "__clarification__": True,
+            "question": intent.get("question", ""),
+            "context": intent.get("context"),
+        }
+    if kind == "permission":
+        return {
+            "__permission__": True,
+            "action": intent.get("action", ""),
+            "scope": intent.get("scope"),
+            "reason": intent.get("reason"),
+            "context": intent.get("context"),
+        }
+    if kind == "error":
+        return {
+            "__error__": True,
+            "code": intent.get("code", "NEURON_ERROR"),
+            "message": intent.get("message", ""),
+            "recoverable": bool(intent.get("recoverable", False)),
+        }
+    if kind == "output":
+        out = intent.get("output")
+        return out if isinstance(out, dict) else {"value": out}
+    return None
+
+
+def _parse_llm_intents(raw: Any) -> dict[str, Any]:
+    """Recogniser for LLM sources returning ``{"response": text, "meta": ...}``."""
+    if not isinstance(raw, dict):
+        return {"value": raw}
+    text = raw.get("response")
+    if isinstance(text, str):
+        intent = _extract_cosmo_intent(text)
+        if intent is not None:
+            marker = _intent_to_marker(intent)
+            if marker is not None:
+                return marker
+    return raw
+
+
+def _parse_mcp_intents(raw: Any) -> dict[str, Any]:
+    """Recogniser for the ``mcp`` source.
+
+    ``is_error`` becomes an ERROR marker. Otherwise, if the tool's text
+    response carries a ``cosmo`` intent it is honoured (an MCP server can drive
+    clarification/permission too); else the result passes through as output.
+    """
+    if not isinstance(raw, dict):
+        return {"value": raw}
+    if raw.get("is_error"):
+        msg = raw.get("response") or raw.get("content") or "MCP tool returned is_error"
+        return {"__error__": True, "code": "MCP_TOOL_ERROR", "message": str(msg)}
+    text = raw.get("response")
+    if isinstance(text, str):
+        intent = _extract_cosmo_intent(text)
+        if intent is not None:
+            marker = _intent_to_marker(intent)
+            if marker is not None:
+                return marker
+    return raw

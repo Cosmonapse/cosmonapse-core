@@ -20,6 +20,7 @@ import pytest
 from cosmonapse import (
     Axon,
     Dendrite,
+    Directed,
     MemoryRegistryStore,
     MemorySynapse,
     Signal,
@@ -128,7 +129,7 @@ def test_bare_on_agent_output_still_works():
             from cosmonapse import agent_output_signal
             sig = agent_output_signal(
                 trace_id=new_trace_id(), parent_id=new_event_id(),
-                neuron="n", output={"r": 1},
+                directed=Directed(id="n"), output={"r": 1},
             )
             await synapse.publish(f"cosmonapse.cog.{SignalType.AGENT_OUTPUT.value}", sig)
             await asyncio.sleep(0.02)
@@ -164,12 +165,12 @@ def test_on_agent_output_filter_by_neuron():
                     f"cosmonapse.cog.{SignalType.AGENT_OUTPUT.value}",
                     agent_output_signal(
                         trace_id=new_trace_id(), parent_id=new_event_id(),
-                        neuron=nid, output={"ok": True},
+                        directed=Directed(id=nid), output={"ok": True},
                     ),
                 )
             await asyncio.sleep(0.05)
 
-            assert [s.neuron for s in for_answerer] == ["answerer", "answerer"]
+            assert [(s.directed.id if s.directed else None) for s in for_answerer] == ["answerer", "answerer"]
             assert len(all_outputs) == 3
         finally:
             await orch.stop()
@@ -197,21 +198,21 @@ def test_on_agent_output_filter_by_trace_id():
                 f"cosmonapse.cog.{SignalType.AGENT_OUTPUT.value}",
                 agent_output_signal(
                     trace_id=target_trace, parent_id=new_event_id(),
-                    neuron="x", output={"a": 1},
+                    directed=Directed(id="x"), output={"a": 1},
                 ),
             )
             await synapse.publish(
                 f"cosmonapse.cog.{SignalType.AGENT_OUTPUT.value}",
                 agent_output_signal(
                     trace_id=new_trace_id(), parent_id=new_event_id(),
-                    neuron="x", output={"a": 2},
+                    directed=Directed(id="x"), output={"a": 2},
                 ),
             )
             await synapse.publish(
                 f"cosmonapse.cog.{SignalType.AGENT_OUTPUT.value}",
                 agent_output_signal(
                     trace_id=new_trace_id(), parent_id=new_event_id(),
-                    neuron="x", output={"a": 3},
+                    directed=Directed(id="x"), output={"a": 3},
                 ),
             )
             await asyncio.sleep(0.05)
@@ -255,12 +256,12 @@ def test_on_agent_output_filter_by_capability_via_attached_axon():
                     f"cosmonapse.cog.{SignalType.AGENT_OUTPUT.value}",
                     agent_output_signal(
                         trace_id=new_trace_id(), parent_id=new_event_id(),
-                        neuron=nid, output={"r": 1},
+                        directed=Directed(id=nid), output={"r": 1},
                     ),
                 )
             await asyncio.sleep(0.05)
 
-            assert [s.neuron for s in seen] == ["summarizer"]
+            assert [(s.directed.id if s.directed else None) for s in seen] == ["summarizer"]
         finally:
             await orch.stop()
             await synapse.close()
@@ -297,12 +298,12 @@ def test_on_agent_output_capability_filter_via_registry():
                     f"cosmonapse.cog.{SignalType.AGENT_OUTPUT.value}",
                     agent_output_signal(
                         trace_id=new_trace_id(), parent_id=new_event_id(),
-                        neuron=nid, output={"r": 1},
+                        directed=Directed(id=nid), output={"r": 1},
                     ),
                 )
             await asyncio.sleep(0.05)
 
-            assert [s.neuron for s in seen] == ["summarizer"]
+            assert [(s.directed.id if s.directed else None) for s in seen] == ["summarizer"]
         finally:
             await orch.stop()
             await synapse.close()
@@ -336,7 +337,7 @@ def test_emit_critique_produces_valid_envelope():
             assert sig.payload["target_event_id"] == target
             assert sig.payload["verdict"] == "fail"
             assert sig.payload["issues"] == [{"type": "logic"}]
-            assert sig.neuron == orch.dendrite_id
+            assert (sig.directed.id if sig.directed else None) == orch.dendrite_id
         finally:
             await synapse.close()
     _run(run())
@@ -406,14 +407,14 @@ def test_on_trace_collects_signals_for_one_workflow():
                 f"cosmonapse.cog.{SignalType.AGENT_OUTPUT.value}",
                 agent_output_signal(
                     trace_id=target, parent_id=new_event_id(),
-                    neuron="n", output={"x": 1},
+                    directed=Directed(id="n"), output={"x": 1},
                 ),
             )
             await synapse.publish(
                 f"cosmonapse.cog.{SignalType.AGENT_OUTPUT.value}",
                 agent_output_signal(
                     trace_id=other, parent_id=new_event_id(),
-                    neuron="n", output={"x": 2},
+                    directed=Directed(id="n"), output={"x": 2},
                 ),
             )
             await asyncio.sleep(0.05)
@@ -471,7 +472,7 @@ def test_respond_to_clarification_redispatches_task_with_lineage():
             clar = clarification_signal(
                 trace_id=trace,
                 parent_id=original_task_id,
-                neuron="answerer",
+                directed=Directed(id="answerer"),
                 question="Which year?",
                 context={"orig_input": {"q": "How old?"}},
             )
@@ -484,7 +485,7 @@ def test_respond_to_clarification_redispatches_task_with_lineage():
             assert len(tasks) == 1
             t = tasks[0]
             assert t.type is SignalType.TASK
-            assert t.neuron == "answerer"           # back to asker
+            assert (t.directed.id if t.directed else None) == "answerer"           # back to asker
             assert t.trace_id == trace              # lineage preserved
             assert t.parent_id == clar.id           # chain to clarification
             assert new_task.id == t.id              # returned the dispatched signal
@@ -512,13 +513,13 @@ def test_respond_to_clarification_neuron_override():
             )
             clar = clarification_signal(
                 trace_id=new_trace_id(), parent_id=new_event_id(),
-                neuron="asker", question="?",
+                directed=Directed(id="asker"), question="?",
             )
             await orch.respond_to_clarification(
                 clar, answer="x", neuron="reroute-target",
             )
             await asyncio.sleep(0.02)
-            assert tasks and tasks[0].neuron == "reroute-target"
+            assert tasks and (tasks[0].directed.id if tasks[0].directed else None) == "reroute-target"
         finally:
             await synapse.close()
     _run(run())
@@ -533,7 +534,7 @@ def test_respond_to_clarification_wrong_type_raises():
         try:
             not_a_clar = agent_output_signal(
                 trace_id=new_trace_id(), parent_id=new_event_id(),
-                neuron="x", output={"r": 1},
+                directed=Directed(id="x"), output={"r": 1},
             )
             with pytest.raises(DendriteProtocolError):
                 await orch.respond_to_clarification(not_a_clar, answer="ok")
@@ -558,7 +559,7 @@ def test_respond_to_escalation_routes_to_payload_target():
             trace = new_trace_id()
             esc = escalation_signal(
                 trace_id=trace, parent_id=new_event_id(),
-                neuron="frontline",
+                directed=Directed(id="frontline"),
                 reason="rate_limited",
                 target="senior-agent",
                 context={"attempts": 3},
@@ -568,7 +569,7 @@ def test_respond_to_escalation_routes_to_payload_target():
 
             assert len(tasks) == 1
             t = tasks[0]
-            assert t.neuron == "senior-agent"
+            assert (t.directed.id if t.directed else None) == "senior-agent"
             assert t.trace_id == trace
             assert t.parent_id == esc.id
             assert t.payload["input"]["escalation"] == {
@@ -595,7 +596,7 @@ def test_respond_to_escalation_neuron_and_input_override():
             )
             esc = escalation_signal(
                 trace_id=new_trace_id(), parent_id=new_event_id(),
-                neuron="frontline", reason="x", target="suggested",
+                directed=Directed(id="frontline"), reason="x", target="suggested",
             )
             await orch.respond_to_escalation(
                 esc, neuron="override-target",
@@ -603,7 +604,7 @@ def test_respond_to_escalation_neuron_and_input_override():
             )
             await asyncio.sleep(0.02)
             t = tasks[0]
-            assert t.neuron == "override-target"
+            assert (t.directed.id if t.directed else None) == "override-target"
             assert t.payload["input"] == {"custom": "payload"}
         finally:
             await synapse.close()
@@ -619,7 +620,7 @@ def test_respond_to_escalation_missing_target_raises():
         try:
             esc = escalation_signal(
                 trace_id=new_trace_id(), parent_id=new_event_id(),
-                neuron="frontline", reason="x",  # no target
+                directed=Directed(id="frontline"), reason="x",  # no target
             )
             with pytest.raises(DendriteProtocolError):
                 await orch.respond_to_escalation(esc)
@@ -636,7 +637,7 @@ def test_respond_to_escalation_wrong_type_raises():
         try:
             not_an_esc = agent_output_signal(
                 trace_id=new_trace_id(), parent_id=new_event_id(),
-                neuron="x", output={"r": 1},
+                directed=Directed(id="x"), output={"r": 1},
             )
             with pytest.raises(DendriteProtocolError):
                 await orch.respond_to_escalation(not_an_esc)

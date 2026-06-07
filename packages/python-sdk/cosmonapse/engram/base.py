@@ -44,25 +44,32 @@ class EngramBinding:
     The Axon stores a list of these at construction time so the Neuron
     can address Engrams by a stable local name (e.g. ``"ctx"``) rather
     than the deployment-specific engram_id. ``name`` is what the Neuron
-    sees; ``engram_id`` and ``engram_kind`` determine how RECALL/IMPRINT
-    are routed on the wire.
+    sees; ``directed_id`` and ``directed_type`` determine how
+    RECALL/IMPRINT are routed on the wire (they become ``directed.id`` /
+    ``directed.type`` on the envelope).
 
-    At least one of ``engram_id`` or ``engram_kind`` must be set.
-    ``engram_id`` is preferred for predictable routing; ``engram_kind``
-    is for slot-based routing where deployment owns the concrete impl.
+    At least one of ``directed_id`` or ``directed_type`` must be set.
+    ``directed_id`` (the engram_id) is preferred for predictable routing;
+    ``directed_type`` (the engram_kind) is for slot-based routing where
+    deployment owns the concrete impl.
     """
 
     name: str
-    engram_id: str | None = None
-    engram_kind: str | None = None
+    directed_id: str | None = None
+    directed_type: str | None = None
     default_deadline_ms: int | None = None
     default_recall_mode: str = "first"
 
+    def to_directed(self) -> "Any":
+        """Build a :class:`cosmonapse.envelope.Directed` addressing this Engram."""
+        from cosmonapse.envelope import Directed
+        return Directed(id=self.directed_id, type=self.directed_type)
+
     def __post_init__(self) -> None:
-        if not self.engram_id and not self.engram_kind:
+        if not self.directed_id and not self.directed_type:
             raise ValueError(
-                f"EngramBinding {self.name!r} requires engram_id= or "
-                f"engram_kind= (or both)"
+                f"EngramBinding {self.name!r} requires directed_id= "
+                f"(engram_id) or directed_type= (engram_kind), or both"
             )
         if self.default_recall_mode not in ("first", "merge", "all"):
             raise ValueError(

@@ -109,6 +109,8 @@ from cosmonapse.storage import (
 from cosmonapse.envelope import (
     Signal,
     SignalType,
+    Directed,
+    directed_to,
     AXON_TYPES,
     SYNAPSE_TYPES,
     new_event_id,
@@ -173,6 +175,8 @@ __version__ = "0.1.0"
 __all__ = [
     "Signal",
     "SignalType",
+    "Directed",
+    "directed_to",
     "AXON_TYPES",
     "SYNAPSE_TYPES",
     "new_event_id",

@@ -43,6 +43,7 @@ from cosmonapse.engram.client import EngramClient
 from cosmonapse.envelope import (
     AXON_TYPES,
     SYNAPSE_TYPES,
+    Directed,
     Signal,
     SignalType,
     bid_signal,
@@ -147,6 +148,17 @@ class Dendrite(LifecycleHooks):
         self._engrams: dict[str, Engram] = {}
         self._engram_kind_index: dict[str, list[str]] = {}
         self._engram_client: EngramClient = EngramClient(self)
+
+        # Engrams learned from REGISTER signals (possibly out-of-process).
+        # Keyed by directed.id (engram_id); a kind index mirrors
+        # directed.type (engram_kind). These record the namespace-wide view
+        # of reachable Engrams - the actual RECALL/IMPRINT delivery to an
+        # out-of-process participant rides the broadcast RECALL/IMPRINT
+        # subject (the hosting Dendrite serves it). In-process Engrams
+        # attached via attach_engram are served directly and additionally
+        # announce themselves with REGISTER on start.
+        self._engram_registrations: dict[str, Directed] = {}
+        self._engram_reg_kind_index: dict[str, set[str]] = {}
 
     # ------------------------------------------------------------------
     # Properties
@@ -333,12 +345,13 @@ class Dendrite(LifecycleHooks):
             return fn
 
         async def filtered(sig: Signal) -> None:
-            if neuron is not None and sig.neuron != neuron:
+            sig_neuron = sig.directed.id if sig.directed else None
+            if neuron is not None and sig_neuron != neuron:
                 return
             if trace_id is not None and sig.trace_id != trace_id:
                 return
             if capability is not None:
-                if not await self._neuron_has_capability(sig.neuron, capability):
+                if not await self._neuron_has_capability(sig_neuron, capability):
                     return
             await fn(sig)
 
@@ -641,6 +654,18 @@ class Dendrite(LifecycleHooks):
                     )
             await self._ensure_inbound_sub(SignalType.RECALL)
             await self._ensure_inbound_sub(SignalType.IMPRINT)
+            # Engrams are Synapse participants: announce each hosted Engram
+            # with REGISTER (engram=True) so peers can learn it, and listen
+            # for peer Engram registrations.
+            await self._ensure_inbound_sub(SignalType.REGISTER)
+            for engram in self._engrams.values():
+                try:
+                    await self._emit_engram_register(engram)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "Dendrite: Engram %s REGISTER emit failed: %s",
+                        engram.engram_id, exc,
+                    )
         # Always listen for RECALLED/IMPRINTED  -  the Dendrite owns the
         # EngramClient's correlation table even when it hosts no Axons,
         # because a Cortex calls dendrite.recall/imprint directly.
@@ -811,7 +836,8 @@ class Dendrite(LifecycleHooks):
                 "capabilities=[...] (capability-routed)"
             )
         sig = task_signal(
-            trace_id=trace_id, parent_id=parent_id, neuron=neuron,
+            trace_id=trace_id, parent_id=parent_id,
+            directed=Directed(id=neuron) if neuron else None,
             input=input, context_ref=context_ref,
             capabilities=capabilities, meta=meta,
         )
@@ -821,12 +847,12 @@ class Dendrite(LifecycleHooks):
     async def _publish_task(self, sig: Signal) -> None:
         """Publish a TASK to the correct subject for its routing mode.
 
-        Addressed (``sig.neuron`` set) → broadcast subject.
-        Capability-routed (no neuron, capabilities in payload) → routed
+        Addressed (``sig.directed.id`` set) → broadcast subject.
+        Capability-routed (no directed.id, capabilities in payload) → routed
         subject (queue-grouped on receivers, once-only delivery within
         a matching cap profile).
         """
-        if sig.neuron:
+        if sig.directed and sig.directed.id:
             subject = self._subject(SignalType.TASK)
         elif sig.payload.get("capabilities"):
             subject = self._routed_subject()
@@ -917,7 +943,8 @@ class Dendrite(LifecycleHooks):
         self._pathways[tid] = pathway
 
         sig = task_signal(
-            trace_id=tid, parent_id=parent_id, neuron=neuron,
+            trace_id=tid, parent_id=parent_id,
+            directed=Directed(id=neuron) if neuron else None,
             input=input, context_ref=context_ref,
             capabilities=capabilities, meta=meta,
         )
@@ -1123,22 +1150,25 @@ class Dendrite(LifecycleHooks):
         for b in bids:
             if b.id == winner.id:
                 continue
+            b_neuron = b.directed.id if b.directed else None
             try:
                 await self.emit(task_declined_signal(
                     trace_id=tid, parent_id=b.id,
-                    neuron=b.neuron, reason="not selected",
+                    directed=Directed(id=b_neuron) if b_neuron else None,
+                    reason="not selected",
                 ))
             except Exception as exc:
                 logger.warning(
                     "dispatch_offer: TASK_DECLINED emit failed for %s: %s",
-                    b.neuron, exc,
+                    b_neuron, exc,
                 )
 
         # Award. The winning Axon's Dendrite will handle it via
         # _on_task_awarded -> Axon.handle_task.
+        winner_neuron = winner.directed.id if winner.directed else None
         awarded = task_awarded_signal(
             trace_id=tid, parent_id=winner.id,
-            neuron=winner.neuron,  # type: ignore[arg-type]
+            directed=Directed(id=winner_neuron) if winner_neuron else None,
             input=input,
             winning_bid={
                 k: winner.payload.get(k)
@@ -1201,7 +1231,7 @@ class Dendrite(LifecycleHooks):
             )
         sig = bid_signal(
             trace_id=offer.trace_id, parent_id=offer.id,
-            neuron=neuron, cost=cost, eta_ms=eta_ms,
+            directed=Directed(id=neuron), cost=cost, eta_ms=eta_ms,
             confidence=confidence, meta=meta,
         )
         # _publish bypasses the orchestrator guard in emit()  -  a worker
@@ -1246,14 +1276,14 @@ class Dendrite(LifecycleHooks):
 
     async def emit_final(self, *, trace_id: str, parent_id: str, result: Any, meta: dict[str, Any] | None = None) -> Signal:
         sig = final_signal(trace_id=trace_id, parent_id=parent_id,
-                           neuron=self.dendrite_id, result=result, meta=meta)
+                           directed=Directed(id=self.dendrite_id), result=result, meta=meta)
         await self.emit(sig)
         return sig
 
     async def emit_error(self, *, trace_id: str, parent_id: str, code: str, message: str,
                          recoverable: bool = False, meta: dict[str, Any] | None = None) -> Signal:
         sig = error_signal(trace_id=trace_id, parent_id=parent_id,
-                           neuron=self.dendrite_id, code=code, message=message,
+                           directed=Directed(id=self.dendrite_id), code=code, message=message,
                            recoverable=recoverable, meta=meta)
         await self.emit(sig)
         return sig
@@ -1264,7 +1294,7 @@ class Dendrite(LifecycleHooks):
                         rationale: str | None = None, neuron: str | None = None, meta: dict[str, Any] | None = None) -> Signal:
         sig = plan_signal(
             trace_id=trace_id, parent_id=parent_id,
-            neuron=neuron or self.dendrite_id,
+            directed=Directed(id=neuron or self.dendrite_id),
             steps=steps, rationale=rationale, meta=meta,
         )
         await self.emit(sig)
@@ -1274,7 +1304,7 @@ class Dendrite(LifecycleHooks):
                                  seq: int | None = None, neuron: str | None = None, meta: dict[str, Any] | None = None) -> Signal:
         sig = thought_delta_signal(
             trace_id=trace_id, parent_id=parent_id,
-            neuron=neuron or self.dendrite_id,
+            directed=Directed(id=neuron or self.dendrite_id),
             delta=delta, seq=seq, meta=meta,
         )
         await self.emit(sig)
@@ -1284,7 +1314,7 @@ class Dendrite(LifecycleHooks):
                              call_id: str | None = None, neuron: str | None = None, meta: dict[str, Any] | None = None) -> Signal:
         sig = tool_call_signal(
             trace_id=trace_id, parent_id=parent_id,
-            neuron=neuron or self.dendrite_id,
+            directed=Directed(id=neuron or self.dendrite_id),
             tool=tool, args=args, call_id=call_id, meta=meta,
         )
         await self.emit(sig)
@@ -1295,7 +1325,7 @@ class Dendrite(LifecycleHooks):
                                neuron: str | None = None, meta: dict[str, Any] | None = None) -> Signal:
         sig = tool_result_signal(
             trace_id=trace_id, parent_id=parent_id,
-            neuron=neuron or self.dendrite_id,
+            directed=Directed(id=neuron or self.dendrite_id),
             tool=tool, result=result, error=error, call_id=call_id, meta=meta,
         )
         await self.emit(sig)
@@ -1305,7 +1335,7 @@ class Dendrite(LifecycleHooks):
                                  neuron: str | None = None, meta: dict[str, Any] | None = None) -> Signal:
         sig = memory_append_signal(
             trace_id=trace_id, parent_id=parent_id,
-            neuron=neuron or self.dendrite_id,
+            directed=Directed(id=neuron or self.dendrite_id),
             key=key, value=value, meta=meta,
         )
         await self.emit(sig)
@@ -1315,7 +1345,7 @@ class Dendrite(LifecycleHooks):
                             issues: list[Any], verdict: str, neuron: str | None = None, meta: dict[str, Any] | None = None) -> Signal:
         sig = critique_signal(
             trace_id=trace_id, parent_id=parent_id,
-            neuron=neuron or self.dendrite_id,
+            directed=Directed(id=neuron or self.dendrite_id),
             target_event_id=target_event_id,
             issues=issues, verdict=verdict, meta=meta,
         )
@@ -1327,7 +1357,7 @@ class Dendrite(LifecycleHooks):
                               neuron: str | None = None, meta: dict[str, Any] | None = None) -> Signal:
         sig = escalation_signal(
             trace_id=trace_id, parent_id=parent_id,
-            neuron=neuron or self.dendrite_id,
+            directed=Directed(id=neuron or self.dendrite_id),
             reason=reason, target=target, context=context, meta=meta,
         )
         await self.emit(sig)
@@ -1337,7 +1367,7 @@ class Dendrite(LifecycleHooks):
                              votes: dict[str, Any] | None = None, neuron: str | None = None, meta: dict[str, Any] | None = None) -> Signal:
         sig = consensus_signal(
             trace_id=trace_id, parent_id=parent_id,
-            neuron=neuron or self.dendrite_id,
+            directed=Directed(id=neuron or self.dendrite_id),
             members=members, verdict=verdict, votes=votes, meta=meta,
         )
         await self.emit(sig)
@@ -1347,7 +1377,7 @@ class Dendrite(LifecycleHooks):
                                 version: str | None = None, neuron: str | None = None, meta: dict[str, Any] | None = None) -> Signal:
         sig = context_sync_signal(
             trace_id=trace_id, parent_id=parent_id,
-            neuron=neuron or self.dendrite_id,
+            directed=Directed(id=neuron or self.dendrite_id),
             snapshot=snapshot, version=version, meta=meta,
         )
         await self.emit(sig)
@@ -1392,7 +1422,7 @@ class Dendrite(LifecycleHooks):
                 f"respond_to_clarification expects a CLARIFICATION signal, "
                 f"got {signal.type.value!r}"
             )
-        target = neuron or signal.neuron
+        target = neuron or (signal.directed.id if signal.directed else None)
         if not target:
             raise DendriteProtocolError(
                 "respond_to_clarification: signal has no neuron and no "
@@ -1430,7 +1460,7 @@ class Dendrite(LifecycleHooks):
             {"escalation": {
                 "reason":  signal.payload['reason'],
                 "context": signal.payload.get('context'),
-                "from":    signal.neuron,
+                "from":    signal.directed.id,
              }}
 
         Pass ``input=`` to override.
@@ -1453,7 +1483,7 @@ class Dendrite(LifecycleHooks):
             input = {"escalation": {
                 "reason": signal.payload.get("reason"),
                 "context": signal.payload.get("context"),
-                "from": signal.neuron,
+                "from": signal.directed.id if signal.directed else None,
             }}
         return await self.dispatch_task(
             neuron=target,
@@ -1497,7 +1527,7 @@ class Dendrite(LifecycleHooks):
                 f"respond_to_permission expects a PERMISSION signal, "
                 f"got {signal.type.value!r}"
             )
-        target = neuron or signal.neuron
+        target = neuron or (signal.directed.id if signal.directed else None)
         if not target:
             raise DendriteProtocolError(
                 "respond_to_permission: signal has no neuron and no neuron= "
@@ -1574,7 +1604,7 @@ class Dendrite(LifecycleHooks):
             trace_id=request.trace_id,
             parent_id=request.id,
             granted=granted,
-            neuron=self.dendrite_id,
+            directed=Directed(id=self.dendrite_id),
             reason=reason,
             ttl_ms=ttl_ms,
             meta=meta,
@@ -1602,7 +1632,7 @@ class Dendrite(LifecycleHooks):
             trace_id=request.trace_id,
             parent_id=request.id,
             answer=answer,
-            neuron=self.dendrite_id,
+            directed=Directed(id=self.dendrite_id),
             meta=meta,
         )
         await self._publish(sig)
@@ -1683,7 +1713,7 @@ class Dendrite(LifecycleHooks):
         Dendrite if multiple have a covering Axon (at-least-once across
         the matching set). Use TASK_OFFER / BID for atomic claim.
         """
-        target = task.neuron
+        target = task.directed.id if task.directed else None
         axon: Axon | None = None
 
         if target:
@@ -1709,7 +1739,7 @@ class Dendrite(LifecycleHooks):
             logger.exception("Dendrite: Axon %s raised unexpectedly", target)
             reply = error_signal(
                 trace_id=task.trace_id, parent_id=task.id,
-                neuron=target, code="AXON_EXCEPTION",
+                directed=Directed(id=target), code="AXON_EXCEPTION",
                 message=str(exc), recoverable=False,
             )
         await self._publish(reply)
@@ -1753,13 +1783,35 @@ class Dendrite(LifecycleHooks):
 
     async def _emit_register(self, axon: Axon) -> None:
         await self._publish(register_signal(
-            neuron=axon.neuron_id,
+            directed=Directed(id=axon.neuron_id, capabilities=list(axon.capabilities)),
             capabilities=axon.capabilities,
             version=axon.version,
         ))
 
+    async def _emit_engram_register(self, engram: Engram) -> None:
+        """Announce a hosted Engram on the Synapse via REGISTER.
+
+        ``directed.id`` = engram_id, ``directed.type`` = engram_kind,
+        ``directed.capabilities`` = the Engram's capabilities; the
+        ``engram=True`` flag tells receivers to record it as an Engram
+        registration rather than a Neuron.
+        """
+        caps = list(getattr(engram, "capabilities", []) or [])
+        await self._publish(register_signal(
+            directed=Directed(
+                id=engram.engram_id,
+                type=engram.engram_kind,
+                capabilities=caps,
+            ),
+            capabilities=caps,
+            version=getattr(engram, "version", None),
+            engram=True,
+        ))
+
     async def _emit_deregister(self, axon: Axon, *, reason: str | None) -> None:
-        await self._publish(deregister_signal(neuron=axon.neuron_id, reason=reason))
+        await self._publish(deregister_signal(
+            directed=Directed(id=axon.neuron_id), reason=reason,
+        ))
 
     async def _emit_discover(
         self,
@@ -1801,7 +1853,7 @@ class Dendrite(LifecycleHooks):
                         await self._emit_register(axon)
                     await self._synapse.publish(
                         self._subject(SignalType.HEARTBEAT),
-                        heartbeat_signal(neuron=axon.neuron_id),
+                        heartbeat_signal(directed=Directed(id=axon.neuron_id)),
                     )
                 except Exception as exc:
                     logger.warning("Heartbeat publish failed for %s: %s",
@@ -1856,11 +1908,11 @@ class Dendrite(LifecycleHooks):
         # TASK_AWARDED targeting one of our Axons: synthesise a TASK
         # and route through the existing Axon handler.
         if signal.type is SignalType.TASK_AWARDED:
-            target = signal.neuron
+            target = signal.directed.id if signal.directed else None
             if target and target in self._axons:
                 synthetic = task_signal(
                     trace_id=signal.trace_id, parent_id=signal.id,
-                    neuron=target,
+                    directed=Directed(id=target),
                     input=signal.payload.get("input", {}),
                     context_ref=signal.payload.get("context_ref"),
                     meta=signal.meta,
@@ -1877,6 +1929,15 @@ class Dendrite(LifecycleHooks):
                         "Dendrite: Pathway delivery failed for %s on trace %s: %s",
                         signal.type.value, signal.trace_id, exc,
                     )
+
+        # Engram registration: a REGISTER carrying the engram flag (or a
+        # directed.type matching a known engram kind) announces an Engram
+        # participant, not a Neuron. Record it in the engram-registration
+        # table and stop - it must not pollute the Neuron registry store or
+        # fire on_register_signal Neuron handlers.
+        if signal.type is SignalType.REGISTER and self._is_engram_register(signal):
+            self._record_engram_registration(signal)
+            return
 
         if signal.type in AXON_TYPES and self._registry_store is not None:
             try:
@@ -1899,10 +1960,63 @@ class Dendrite(LifecycleHooks):
                         signal.type.value, r, exc_info=r,
                     )
 
+    # ------------------------------------------------------------------
+    # Engram registration (learned via REGISTER)
+    # ------------------------------------------------------------------
+
+    def _is_engram_register(self, signal: Signal) -> bool:
+        """A REGISTER announces an Engram when it carries the ``engram``
+        payload flag, or when its ``directed.type`` matches an engram kind
+        this Dendrite already knows (hosted or previously registered)."""
+        if signal.payload.get("engram"):
+            return True
+        d = signal.directed
+        if d is not None and d.type:
+            if d.type in self._engram_kind_index:
+                return True
+            if d.type in self._engram_reg_kind_index:
+                return True
+        return False
+
+    def _record_engram_registration(self, signal: Signal) -> None:
+        """Store an Engram registration learned from a REGISTER signal so
+        future RECALL/IMPRINT addressed to its ``directed.id`` /
+        ``directed.type`` are known to reach a participant on the Synapse."""
+        d = signal.directed
+        if d is None or (not d.id and not d.type):
+            return
+        caps = list(d.capabilities)
+        if not caps:
+            caps = list(signal.payload.get("capabilities", []) or [])
+        directed = Directed(id=d.id, type=d.type, capabilities=caps)
+        key = d.id or d.type
+        assert key is not None
+        self._engram_registrations[key] = directed
+        if d.type:
+            self._engram_reg_kind_index.setdefault(d.type, set()).add(key)
+
+    @property
+    def engram_registrations(self) -> dict[str, Directed]:
+        """Engrams learned via REGISTER, keyed by directed.id (or
+        directed.type when no id), including in-process ones."""
+        return dict(self._engram_registrations)
+
+    def is_engram_known(self, *, engram_id: str | None = None,
+                        engram_kind: str | None = None) -> bool:
+        """True when an Engram with this id/kind is reachable - hosted
+        in-process or learned from a peer's REGISTER."""
+        if engram_id:
+            if engram_id in self._engrams or engram_id in self._engram_registrations:
+                return True
+        if engram_kind:
+            if engram_kind in self._engram_kind_index or engram_kind in self._engram_reg_kind_index:
+                return True
+        return False
+
     async def _update_registry(self, signal: Signal) -> None:
         if self._registry_store is None:
             return
-        neuron_id = signal.neuron
+        neuron_id = signal.directed.id if signal.directed else None
         if not neuron_id:
             return
         reason: str | None = None
@@ -1937,16 +2051,17 @@ class Dendrite(LifecycleHooks):
     def _resolve_engram_targets(self, signal: Signal) -> list[Engram]:
         """Pick the hosted Engrams that should respond to a RECALL/IMPRINT.
 
-        engram_id wins over engram_kind. If neither matches a hosted
-        Engram, returns []. If engram_kind matches multiple hosted
-        Engrams, every match is returned  -  recall_mode handles the
-        winner-selection on the caller side.
+        directed.id (engram_id) wins over directed.type (engram_kind). If
+        neither matches a hosted Engram, returns []. If directed.type
+        matches multiple hosted Engrams, every match is returned  -
+        recall_mode handles the winner-selection on the caller side.
         """
-        eid = signal.payload.get("engram_id")
+        d = signal.directed
+        eid = d.id if d else None
         if eid:
             ent = self._engrams.get(eid)
             return [ent] if ent is not None else []
-        ekind = signal.payload.get("engram_kind")
+        ekind = d.type if d else None
         if ekind:
             return [
                 self._engrams[i]
@@ -1989,7 +2104,7 @@ class Dendrite(LifecycleHooks):
                     {"id": h.id, "entry": h.entry, "score": h.score}
                     for h in hits
                 ],
-                neuron=self.dendrite_id,
+                directed=Directed(id=self.dendrite_id),
             )
             try:
                 await self._publish(reply)
@@ -2024,7 +2139,7 @@ class Dendrite(LifecycleHooks):
                     engram_id=engram.engram_id,
                     op=op,
                     error=err_msg,
-                    neuron=self.dendrite_id,
+                    directed=Directed(id=self.dendrite_id),
                 )
             else:
                 assert receipt is not None
@@ -2037,7 +2152,7 @@ class Dendrite(LifecycleHooks):
                     version=receipt.version,
                     took_ms=receipt.took_ms,
                     error=receipt.error,
-                    neuron=self.dendrite_id,
+                    directed=Directed(id=self.dendrite_id),
                 )
             try:
                 await self._publish(reply)

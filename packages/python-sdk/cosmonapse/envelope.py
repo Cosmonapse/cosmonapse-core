@@ -7,6 +7,12 @@ Every message crossing the Synapse is a Signal - a JSON object that conforms
 to this schema. The envelope carries the protocol mechanics (id, trace_id,
 type, ts). The payload carries the content specific to each Signal type.
 
+Addressing is unified under a single ``directed`` field (see :class:`Directed`):
+``directed.id`` is a direct address (a neuron_id or an engram_id),
+``directed.type`` is type-based routing (a neuron type or an engram_kind), and
+``directed.capabilities`` is capability-based routing. Precedence on the
+receiving side is id > type > capabilities.
+
 Producer tags (who emits each type):
   [A]  Axon (skill/connector)
   [C]  Cortex (developer-built orchestrating component)
@@ -165,6 +171,39 @@ SYNAPSE_TYPES: frozenset[SignalType] = frozenset({
 
 
 # ---------------------------------------------------------------------------
+# Directed addressing
+# ---------------------------------------------------------------------------
+
+
+class Directed(BaseModel):
+    """Unified addressing for a Signal.
+
+    A Signal may be addressed three ways, in precedence order:
+
+    * ``id``           - direct address. A ``neuron_id`` for TASK-family
+                         routing, or an ``engram_id`` for RECALL/IMPRINT.
+    * ``type``         - type-based routing. A neuron type, or an
+                         ``engram_kind``.
+    * ``capabilities`` - capability-based routing.
+
+    ``id`` wins over ``type``, which wins over ``capabilities`` on the
+    receiving side. All three are optional so the same model can carry a
+    pure producer-identity (``id`` only), a typed address, or a capability
+    request.
+    """
+
+    model_config = {"populate_by_name": True}
+
+    id: str | None = Field(default=None, description="Direct address (neuron_id or engram_id)")
+    type: str | None = Field(default=None, description="Type-based routing (neuron type or engram_kind)")
+    capabilities: list[str] = Field(default_factory=list, description="Capability-based routing")
+
+    def is_empty(self) -> bool:
+        """True when no addressing information is present at all."""
+        return not self.id and not self.type and not self.capabilities
+
+
+# ---------------------------------------------------------------------------
 # Base envelope
 # ---------------------------------------------------------------------------
 
@@ -179,7 +218,7 @@ class Signal(BaseModel):
     trace_id: str = Field(default_factory=new_trace_id, description="Trace group ID (trc_<ULID>)")
     parent_id: str | None = Field(default=None, description="Parent event ID")
     type: SignalType = Field(..., description="Signal type")
-    neuron: str | None = Field(default=None, description="Neuron identifier")
+    directed: Directed | None = Field(default=None, description="Unified addressing (id/type/capabilities)")
     ts: datetime = Field(default_factory=_now_utc, description="UTC emission timestamp")
     payload: dict[str, Any] = Field(default_factory=dict, description="Type-specific payload")
     meta: dict[str, Any] = Field(default_factory=dict, description="Non-semantic annotations")
@@ -218,17 +257,38 @@ class Signal(BaseModel):
         self,
         type: SignalType,
         payload: dict[str, Any] | None = None,
-        neuron: str | None = None,
+        directed: Directed | None = None,
         meta: dict[str, Any] | None = None,
     ) -> "Signal":
+        """Build a child Signal sharing this one's trace, parented to its id.
+
+        ``directed`` propagates: when not overridden, the reply carries this
+        Signal's own ``directed`` so the responder keeps the addressing
+        context (e.g. echoing back which neuron produced the chain).
+        """
         return Signal(
             type=type,
             trace_id=self.trace_id,
             parent_id=self.id,
             payload=payload or {},
-            neuron=neuron or self.neuron,
+            directed=directed if directed is not None else self.directed,
             meta=meta or {},
         )
+
+
+# ---------------------------------------------------------------------------
+# Convenience
+# ---------------------------------------------------------------------------
+
+
+def directed_to(
+    id: str | None = None,
+    *,
+    type: str | None = None,
+    capabilities: list[str] | None = None,
+) -> Directed:
+    """Small helper for building a :class:`Directed` at call sites."""
+    return Directed(id=id, type=type, capabilities=list(capabilities or []))
 
 
 # ---------------------------------------------------------------------------
@@ -240,7 +300,7 @@ def task_signal(
     *,
     trace_id: str | None = None,
     parent_id: str | None = None,
-    neuron: str | None = None,
+    directed: Directed | None = None,
     input: dict[str, Any],
     context_ref: str | None = None,
     capabilities: list[str] | None = None,
@@ -255,7 +315,7 @@ def task_signal(
         type=SignalType.TASK,
         trace_id=trace_id or new_trace_id(),
         parent_id=parent_id,
-        neuron=neuron,
+        directed=directed,
         payload=payload,
         meta=meta or {},
     )
@@ -265,7 +325,7 @@ def agent_output_signal(
     *,
     trace_id: str,
     parent_id: str,
-    neuron: str,
+    directed: Directed | None = None,
     output: dict[str, Any],
     meta: dict[str, Any] | None = None,
 ) -> Signal:
@@ -273,7 +333,7 @@ def agent_output_signal(
         type=SignalType.AGENT_OUTPUT,
         trace_id=trace_id,
         parent_id=parent_id,
-        neuron=neuron,
+        directed=directed,
         payload={"output": output},
         meta=meta or {},
     )
@@ -283,7 +343,7 @@ def clarification_signal(
     *,
     trace_id: str,
     parent_id: str,
-    neuron: str,
+    directed: Directed | None = None,
     question: str,
     context: dict[str, Any] | None = None,
     meta: dict[str, Any] | None = None,
@@ -295,7 +355,7 @@ def clarification_signal(
         type=SignalType.CLARIFICATION,
         trace_id=trace_id,
         parent_id=parent_id,
-        neuron=neuron,
+        directed=directed,
         payload=payload,
         meta=meta or {},
     )
@@ -305,7 +365,7 @@ def permission_signal(
     *,
     trace_id: str,
     parent_id: str,
-    neuron: str,
+    directed: Directed | None = None,
     action: str,
     scope: dict[str, Any] | None = None,
     reason: str | None = None,
@@ -331,7 +391,7 @@ def permission_signal(
         type=SignalType.PERMISSION,
         trace_id=trace_id,
         parent_id=parent_id,
-        neuron=neuron,
+        directed=directed,
         payload=payload,
         meta=meta or {},
     )
@@ -342,7 +402,7 @@ def permission_decision_signal(
     trace_id: str,
     parent_id: str,
     granted: bool,
-    neuron: str | None = None,
+    directed: Directed | None = None,
     reason: str | None = None,
     ttl_ms: int | None = None,
     meta: dict[str, Any] | None = None,
@@ -362,7 +422,7 @@ def permission_decision_signal(
         type=SignalType.PERMISSION_DECISION,
         trace_id=trace_id,
         parent_id=parent_id,
-        neuron=neuron,
+        directed=directed,
         payload=payload,
         meta=meta or {},
     )
@@ -373,7 +433,7 @@ def clarification_answer_signal(
     trace_id: str,
     parent_id: str,
     answer: Any,
-    neuron: str | None = None,
+    directed: Directed | None = None,
     meta: dict[str, Any] | None = None,
 ) -> Signal:
     """[C] Answer to a (blocking) CLARIFICATION request.
@@ -388,7 +448,7 @@ def clarification_answer_signal(
         type=SignalType.CLARIFICATION_ANSWER,
         trace_id=trace_id,
         parent_id=parent_id,
-        neuron=neuron,
+        directed=directed,
         payload={"answer": answer},
         meta=meta or {},
     )
@@ -398,7 +458,7 @@ def final_signal(
     *,
     trace_id: str,
     parent_id: str,
-    neuron: str | None = None,
+    directed: Directed | None = None,
     result: dict[str, Any],
     cost: dict[str, Any] | None = None,
     meta: dict[str, Any] | None = None,
@@ -410,7 +470,7 @@ def final_signal(
         type=SignalType.FINAL,
         trace_id=trace_id,
         parent_id=parent_id,
-        neuron=neuron,
+        directed=directed,
         payload=payload,
         meta=meta or {},
     )
@@ -420,7 +480,7 @@ def error_signal(
     *,
     trace_id: str,
     parent_id: str | None = None,
-    neuron: str | None = None,
+    directed: Directed | None = None,
     code: str,
     message: str,
     recoverable: bool = False,
@@ -430,7 +490,7 @@ def error_signal(
         type=SignalType.ERROR,
         trace_id=trace_id,
         parent_id=parent_id,
-        neuron=neuron,
+        directed=directed,
         payload={"code": code, "message": message, "recoverable": recoverable},
         meta=meta or {},
     )
@@ -438,18 +498,34 @@ def error_signal(
 
 def register_signal(
     *,
-    neuron: str,
-    capabilities: list[str],
+    directed: Directed,
+    capabilities: list[str] | None = None,
     version: str | None = None,
+    engram: bool = False,
     meta: dict[str, Any] | None = None,
 ) -> Signal:
-    payload: dict[str, Any] = {"capabilities": capabilities}
+    """[A] A participant announces itself on the Synapse.
+
+    Both Neurons and Engrams register the same way. ``directed.id`` is the
+    participant id (neuron_id or engram_id), ``directed.type`` its type
+    (neuron type or engram_kind), and ``directed.capabilities`` its
+    capability list. Pass ``engram=True`` when the participant is an Engram
+    so the receiving Dendrite records it as an Engram registration and
+    routes RECALL/IMPRINT to it.
+
+    ``capabilities`` is mirrored into the payload for registry stores; when
+    omitted it falls back to ``directed.capabilities``.
+    """
+    caps = list(capabilities) if capabilities is not None else list(directed.capabilities)
+    payload: dict[str, Any] = {"capabilities": caps}
     if version:
         payload["version"] = version
+    if engram:
+        payload["engram"] = True
     return Signal(
         type=SignalType.REGISTER,
         trace_id=new_trace_id(),
-        neuron=neuron,
+        directed=directed,
         payload=payload,
         meta=meta or {},
     )
@@ -457,7 +533,7 @@ def register_signal(
 
 def deregister_signal(
     *,
-    neuron: str,
+    directed: Directed,
     reason: str | None = None,
     meta: dict[str, Any] | None = None,
 ) -> Signal:
@@ -467,7 +543,7 @@ def deregister_signal(
     return Signal(
         type=SignalType.DEREGISTER,
         trace_id=new_trace_id(),
-        neuron=neuron,
+        directed=directed,
         payload=payload,
         meta=meta or {},
     )
@@ -475,14 +551,14 @@ def deregister_signal(
 
 def heartbeat_signal(
     *,
-    neuron: str,
+    directed: Directed,
     status: str = "ok",
     meta: dict[str, Any] | None = None,
 ) -> Signal:
     return Signal(
         type=SignalType.HEARTBEAT,
         trace_id=new_trace_id(),
-        neuron=neuron,
+        directed=directed,
         payload={"status": status},
         meta=meta or {},
     )
@@ -492,7 +568,7 @@ def memory_append_signal(
     *,
     trace_id: str,
     parent_id: str,
-    neuron: str | None = None,
+    directed: Directed | None = None,
     key: str,
     value: Any,
     meta: dict[str, Any] | None = None,
@@ -501,7 +577,7 @@ def memory_append_signal(
         type=SignalType.MEMORY_APPEND,
         trace_id=trace_id,
         parent_id=parent_id,
-        neuron=neuron,
+        directed=directed,
         payload={"key": key, "value": value},
         meta=meta or {},
     )
@@ -534,7 +610,7 @@ def bid_signal(
     *,
     trace_id: str,
     parent_id: str,
-    neuron: str,
+    directed: Directed | None = None,
     cost: float,
     eta_ms: int | None = None,
     confidence: float | None = None,
@@ -549,7 +625,7 @@ def bid_signal(
         type=SignalType.BID,
         trace_id=trace_id,
         parent_id=parent_id,
-        neuron=neuron,
+        directed=directed,
         payload=payload,
         meta=meta or {},
     )
@@ -559,15 +635,15 @@ def task_awarded_signal(
     *,
     trace_id: str,
     parent_id: str,
-    neuron: str,
+    directed: Directed | None = None,
     input: dict[str, Any],
     winning_bid: dict[str, Any] | None = None,
     context_ref: str | None = None,
     meta: dict[str, Any] | None = None,
 ) -> Signal:
     """[C] Award a TASK_OFFER to one bidder. The winning Axon should treat
-    this exactly like a TASK: ``input`` is the work payload, ``neuron``
-    is the addressee. ``winning_bid`` carries the bid the producer
+    this exactly like a TASK: ``input`` is the work payload, ``directed``
+    addresses the winner. ``winning_bid`` carries the bid the producer
     accepted (cost / eta_ms / confidence) for observability."""
     payload: dict[str, Any] = {"input": input}
     if winning_bid is not None:
@@ -578,7 +654,7 @@ def task_awarded_signal(
         type=SignalType.TASK_AWARDED,
         trace_id=trace_id,
         parent_id=parent_id,
-        neuron=neuron,
+        directed=directed,
         payload=payload,
         meta=meta or {},
     )
@@ -588,7 +664,7 @@ def task_declined_signal(
     *,
     trace_id: str,
     parent_id: str,
-    neuron: str | None = None,
+    directed: Directed | None = None,
     reason: str | None = None,
     meta: dict[str, Any] | None = None,
 ) -> Signal:
@@ -602,7 +678,7 @@ def task_declined_signal(
         type=SignalType.TASK_DECLINED,
         trace_id=trace_id,
         parent_id=parent_id,
-        neuron=neuron,
+        directed=directed,
         payload=payload,
         meta=meta or {},
     )
@@ -616,7 +692,11 @@ def discover_signal(
     parent_id: str | None = None,
     meta: dict[str, Any] | None = None,
 ) -> Signal:
-    """Solicit a REGISTER snapshot from peers on a namespace."""
+    """Solicit a REGISTER snapshot from peers on a namespace.
+
+    ``neuron`` / ``capabilities`` here are *filter* fields carried in the
+    payload (which participants to discover), not envelope addressing.
+    """
     payload: dict[str, Any] = {}
     if neuron is not None:
         payload["neuron"] = neuron
@@ -635,7 +715,7 @@ def critique_signal(
     *,
     trace_id: str,
     parent_id: str,
-    neuron: str | None = None,
+    directed: Directed | None = None,
     target_event_id: str,
     issues: list[dict[str, Any]],
     verdict: str,
@@ -646,7 +726,7 @@ def critique_signal(
         type=SignalType.CRITIQUE,
         trace_id=trace_id,
         parent_id=parent_id,
-        neuron=neuron,
+        directed=directed,
         payload={
             "target_event_id": target_event_id,
             "issues": issues,
@@ -660,7 +740,7 @@ def plan_signal(
     *,
     trace_id: str,
     parent_id: str,
-    neuron: str | None = None,
+    directed: Directed | None = None,
     steps: list[dict[str, Any]],
     rationale: str | None = None,
     meta: dict[str, Any] | None = None,
@@ -673,7 +753,7 @@ def plan_signal(
         type=SignalType.PLAN,
         trace_id=trace_id,
         parent_id=parent_id,
-        neuron=neuron,
+        directed=directed,
         payload=payload,
         meta=meta or {},
     )
@@ -683,7 +763,7 @@ def thought_delta_signal(
     *,
     trace_id: str,
     parent_id: str,
-    neuron: str | None = None,
+    directed: Directed | None = None,
     delta: str,
     seq: int | None = None,
     meta: dict[str, Any] | None = None,
@@ -696,7 +776,7 @@ def thought_delta_signal(
         type=SignalType.THOUGHT_DELTA,
         trace_id=trace_id,
         parent_id=parent_id,
-        neuron=neuron,
+        directed=directed,
         payload=payload,
         meta=meta or {},
     )
@@ -706,7 +786,7 @@ def tool_call_signal(
     *,
     trace_id: str,
     parent_id: str,
-    neuron: str | None = None,
+    directed: Directed | None = None,
     tool: str,
     args: dict[str, Any],
     call_id: str | None = None,
@@ -720,7 +800,7 @@ def tool_call_signal(
         type=SignalType.TOOL_CALL,
         trace_id=trace_id,
         parent_id=parent_id,
-        neuron=neuron,
+        directed=directed,
         payload=payload,
         meta=meta or {},
     )
@@ -730,7 +810,7 @@ def tool_result_signal(
     *,
     trace_id: str,
     parent_id: str,
-    neuron: str | None = None,
+    directed: Directed | None = None,
     tool: str,
     result: Any = None,
     error: str | None = None,
@@ -749,7 +829,7 @@ def tool_result_signal(
         type=SignalType.TOOL_RESULT,
         trace_id=trace_id,
         parent_id=parent_id,
-        neuron=neuron,
+        directed=directed,
         payload=payload,
         meta=meta or {},
     )
@@ -759,7 +839,7 @@ def escalation_signal(
     *,
     trace_id: str,
     parent_id: str,
-    neuron: str | None = None,
+    directed: Directed | None = None,
     reason: str,
     target: str | None = None,
     context: dict[str, Any] | None = None,
@@ -775,7 +855,7 @@ def escalation_signal(
         type=SignalType.ESCALATION,
         trace_id=trace_id,
         parent_id=parent_id,
-        neuron=neuron,
+        directed=directed,
         payload=payload,
         meta=meta or {},
     )
@@ -785,7 +865,7 @@ def consensus_signal(
     *,
     trace_id: str,
     parent_id: str,
-    neuron: str | None = None,
+    directed: Directed | None = None,
     members: list[str],
     verdict: str,
     votes: dict[str, Any] | None = None,
@@ -799,7 +879,7 @@ def consensus_signal(
         type=SignalType.CONSENSUS,
         trace_id=trace_id,
         parent_id=parent_id,
-        neuron=neuron,
+        directed=directed,
         payload=payload,
         meta=meta or {},
     )
@@ -809,7 +889,7 @@ def context_sync_signal(
     *,
     trace_id: str,
     parent_id: str,
-    neuron: str | None = None,
+    directed: Directed | None = None,
     snapshot: dict[str, Any],
     version: str | None = None,
     meta: dict[str, Any] | None = None,
@@ -822,7 +902,7 @@ def context_sync_signal(
         type=SignalType.CONTEXT_SYNC,
         trace_id=trace_id,
         parent_id=parent_id,
-        neuron=neuron,
+        directed=directed,
         payload=payload,
         meta=meta or {},
     )
@@ -843,9 +923,7 @@ def recall_signal(
     *,
     trace_id: str,
     parent_id: str,
-    neuron: str | None = None,
-    engram_id: str | None = None,
-    engram_kind: str | None = None,
+    directed: Directed | None = None,
     query: dict[str, Any],
     filters: dict[str, Any] | None = None,
     context_ref: str | None = None,
@@ -856,18 +934,20 @@ def recall_signal(
 ) -> Signal:
     """[D] Memory-recall request. Inherits trace_id from the containing TASK.
 
-    Routing is addressed by default: at least one of ``engram_id`` or
-    ``engram_kind`` MUST be set. ``engram_id`` beats ``engram_kind`` on
+    Routing is addressed by default via the envelope ``directed`` field: at
+    least one of ``directed.id`` (engram_id) or ``directed.type``
+    (engram_kind) MUST be set. ``directed.id`` beats ``directed.type`` on
     the receiving side. ``recall_mode`` controls fan-out semantics:
 
     - ``"first"`` (default) - one responder wins, others drop the request.
     - ``"merge"`` - caller merges every RECALLED arriving by deadline.
     - ``"all"``   - caller treats each RECALLED as a separate stream item.
     """
-    if not engram_id and not engram_kind:
+    if directed is None or (not directed.id and not directed.type):
         raise ValueError(
-            "recall_signal requires engram_id= or engram_kind= (or both); "
-            "addressed routing is the default per ENGRAM_DESIGN.md S4.1"
+            "recall_signal requires directed.id (engram_id) or directed.type "
+            "(engram_kind); addressed routing is the default per "
+            "ENGRAM_DESIGN.md S4.1"
         )
     if recall_mode not in _RECALL_MODES:
         raise ValueError(
@@ -875,10 +955,6 @@ def recall_signal(
             f"got {recall_mode!r}"
         )
     payload: dict[str, Any] = {"query": query, "recall_mode": recall_mode}
-    if engram_id is not None:
-        payload["engram_id"] = engram_id
-    if engram_kind is not None:
-        payload["engram_kind"] = engram_kind
     if filters is not None:
         payload["filters"] = filters
     if context_ref is not None:
@@ -891,7 +967,7 @@ def recall_signal(
         type=SignalType.RECALL,
         trace_id=trace_id,
         parent_id=parent_id,
-        neuron=neuron,
+        directed=directed,
         payload=payload,
         meta=meta or {},
     )
@@ -905,14 +981,16 @@ def recalled_signal(
     hits: list[dict[str, Any]],
     truncated: bool = False,
     took_ms: int | None = None,
-    neuron: str | None = None,
+    directed: Directed | None = None,
     meta: dict[str, Any] | None = None,
 ) -> Signal:
     """[D] Response from one Engram to a RECALL.
 
-    ``parent_id`` MUST be the RECALL's id. Multiple Engrams may emit
-    RECALLED for the same RECALL when ``recall_mode`` is ``"merge"`` or
-    ``"all"``.
+    ``parent_id`` MUST be the RECALL's id. ``engram_id`` in the payload
+    identifies *which* Engram responded (response metadata, not routing -
+    the response is correlated back to the caller by ``parent_id``).
+    Multiple Engrams may emit RECALLED for the same RECALL when
+    ``recall_mode`` is ``"merge"`` or ``"all"``.
     """
     payload: dict[str, Any] = {
         "engram_id": engram_id,
@@ -925,7 +1003,7 @@ def recalled_signal(
         type=SignalType.RECALLED,
         trace_id=trace_id,
         parent_id=parent_id,
-        neuron=neuron,
+        directed=directed,
         payload=payload,
         meta=meta or {},
     )
@@ -935,9 +1013,7 @@ def imprint_signal(
     *,
     trace_id: str,
     parent_id: str,
-    neuron: str | None = None,
-    engram_id: str | None = None,
-    engram_kind: str | None = None,
+    directed: Directed | None = None,
     op: str,
     entry: dict[str, Any],
     merge_key: str | None = None,
@@ -947,33 +1023,31 @@ def imprint_signal(
 
     ``op`` is one of ``add | append | merge | upsert | delete``.
     ``merge_key`` is required when ``op`` is ``merge`` or ``upsert``.
-    Addressed by default - at least one of ``engram_id`` or ``engram_kind``
-    MUST be set.
+    Addressed by default via the envelope ``directed`` field - at least one
+    of ``directed.id`` (engram_id) or ``directed.type`` (engram_kind) MUST
+    be set.
     """
     if op not in _IMPRINT_OPS:
         raise ValueError(
             f"imprint op must be one of {sorted(_IMPRINT_OPS)}, got {op!r}"
         )
-    if not engram_id and not engram_kind:
+    if directed is None or (not directed.id and not directed.type):
         raise ValueError(
-            "imprint_signal requires engram_id= or engram_kind= (or both)"
+            "imprint_signal requires directed.id (engram_id) or directed.type "
+            "(engram_kind)"
         )
     if op in ("merge", "upsert") and not merge_key:
         raise ValueError(
             f"imprint op={op!r} requires merge_key="
         )
     payload: dict[str, Any] = {"op": op, "entry": entry}
-    if engram_id is not None:
-        payload["engram_id"] = engram_id
-    if engram_kind is not None:
-        payload["engram_kind"] = engram_kind
     if merge_key is not None:
         payload["merge_key"] = merge_key
     return Signal(
         type=SignalType.IMPRINT,
         trace_id=trace_id,
         parent_id=parent_id,
-        neuron=neuron,
+        directed=directed,
         payload=payload,
         meta=meta or {},
     )
@@ -989,15 +1063,16 @@ def imprinted_signal(
     version: int | None = None,
     took_ms: int | None = None,
     error: str | None = None,
-    neuron: str | None = None,
+    directed: Directed | None = None,
     meta: dict[str, Any] | None = None,
 ) -> Signal:
     """[D] Receipt of a completed IMPRINT.
 
-    ``parent_id`` MUST be the IMPRINT's id. ``id`` is the resulting Engram
-    entry id when applicable (``eng_<ULID>``); absent for ``op="delete"``
-    of a non-existent key. ``error`` is set when the imprint failed but
-    the Engram chose to respond rather than emit a separate ERROR.
+    ``parent_id`` MUST be the IMPRINT's id. ``engram_id`` in the payload
+    identifies which Engram responded. ``id`` is the resulting Engram entry
+    id when applicable (``eng_<ULID>``); absent for ``op="delete"`` of a
+    non-existent key. ``error`` is set when the imprint failed but the
+    Engram chose to respond rather than emit a separate ERROR.
     """
     payload: dict[str, Any] = {"engram_id": engram_id, "op": op}
     if id is not None:
@@ -1012,7 +1087,7 @@ def imprinted_signal(
         type=SignalType.IMPRINTED,
         trace_id=trace_id,
         parent_id=parent_id,
-        neuron=neuron,
+        directed=directed,
         payload=payload,
         meta=meta or {},
     )

@@ -36,13 +36,13 @@ def test_event_ids_are_unique():
 
 def test_signal_round_trips_json():
     """A Signal encodes to JSON and decodes back to an identical object."""
-    from cosmonapse import Signal, SignalType, new_trace_id
+    from cosmonapse import Signal, SignalType, Directed, new_trace_id
 
     original = Signal(
         type=SignalType.TASK,
         trace_id=new_trace_id(),
         payload={"input": {"text": "hello"}},
-        neuron="test-neuron",
+        directed=Directed(id="test-neuron"),
     )
     encoded = original.encode()
     decoded = Signal.decode(encoded)
@@ -51,7 +51,8 @@ def test_signal_round_trips_json():
     assert decoded.trace_id == original.trace_id
     assert decoded.type == original.type
     assert decoded.payload == original.payload
-    assert decoded.neuron == original.neuron
+    assert decoded.directed == original.directed
+    assert decoded.directed.id == "test-neuron"
 
 
 def test_task_signal_constructor():
@@ -67,31 +68,31 @@ def test_task_signal_constructor():
 
 def test_agent_output_signal_constructor():
     """agent_output_signal() wraps output in a neutral AGENT_OUTPUT envelope."""
-    from cosmonapse import agent_output_signal, SignalType, new_trace_id, new_event_id
+    from cosmonapse import agent_output_signal, SignalType, Directed, new_trace_id, new_event_id
 
     trace = new_trace_id()
     parent = new_event_id()
     sig = agent_output_signal(
         trace_id=trace,
         parent_id=parent,
-        neuron="my-neuron",
+        directed=Directed(id="my-neuron"),
         output={"result": 42},
     )
     assert sig.type == SignalType.AGENT_OUTPUT
     assert sig.trace_id == trace
     assert sig.parent_id == parent
-    assert sig.neuron == "my-neuron"
+    assert sig.directed.id == "my-neuron"
     assert sig.payload["output"] == {"result": 42}
 
 
 def test_clarification_signal():
     """clarification_signal() produces a CLARIFICATION with question field."""
-    from cosmonapse import clarification_signal, SignalType, new_trace_id, new_event_id
+    from cosmonapse import clarification_signal, SignalType, Directed, new_trace_id, new_event_id
 
     sig = clarification_signal(
         trace_id=new_trace_id(),
         parent_id=new_event_id(),
-        neuron="agent-1",
+        directed=Directed(id="agent-1"),
         question="Which database?",
         context={"options": ["postgres", "mysql"]},
     )
@@ -114,10 +115,10 @@ def test_signal_reply():
 
 def test_register_signal_has_own_trace():
     """Management signals (REGISTER) get their own trace_id, not a workflow trace."""
-    from cosmonapse import register_signal, SignalType, new_trace_id
+    from cosmonapse import register_signal, SignalType, Directed, new_trace_id
 
     workflow_trace = new_trace_id()
-    sig = register_signal(neuron="my-agent", capabilities=["nlp"])
+    sig = register_signal(directed=Directed(id="my-agent"), capabilities=["nlp"])
 
     assert sig.type == SignalType.REGISTER
     assert sig.trace_id != workflow_trace  # its own independent trace
@@ -311,7 +312,7 @@ def test_dendrite_emits_register_and_deregister_for_its_axons():
 def test_dendrite_routes_task_and_publishes_agent_output():
     """A TASK on the Synapse is routed to the matching Axon; the result is published as AGENT_OUTPUT."""
     import asyncio
-    from cosmonapse import Axon, Dendrite, MemorySynapse, SignalType, task_signal
+    from cosmonapse import Axon, Dendrite, Directed, MemorySynapse, SignalType, task_signal
 
     outputs = []
 
@@ -332,7 +333,7 @@ def test_dendrite_routes_task_and_publishes_agent_output():
         )
 
         async with dendrite:
-            sig = task_signal(neuron="answerer", input={"q": "42"})
+            sig = task_signal(directed=Directed(id="answerer"), input={"q": "42"})
             await synapse.publish("cosmonapse.t.TASK", sig)
             await asyncio.sleep(0.05)
 
@@ -347,7 +348,7 @@ def test_dendrite_routes_task_and_publishes_agent_output():
 def test_axon_emits_clarification_when_neuron_signals_it():
     """When the Neuron returns {'__clarification__': True, ...} the Dendrite publishes CLARIFICATION."""
     import asyncio
-    from cosmonapse import Axon, Dendrite, MemorySynapse, SignalType, task_signal
+    from cosmonapse import Axon, Dendrite, Directed, MemorySynapse, SignalType, task_signal
 
     clarifications = []
 
@@ -374,7 +375,7 @@ def test_axon_emits_clarification_when_neuron_signals_it():
         async with dendrite:
             await synapse.publish(
                 "cosmonapse.c.TASK",
-                task_signal(neuron="clarifier", input={"task": "build api"}),
+                task_signal(directed=Directed(id="clarifier"), input={"task": "build api"}),
             )
             await asyncio.sleep(0.05)
 
@@ -389,7 +390,7 @@ def test_axon_emits_clarification_when_neuron_signals_it():
 def test_axon_emits_error_on_neuron_exception():
     """If the Neuron raises, the Axon returns an ERROR Signal and the Dendrite publishes it."""
     import asyncio
-    from cosmonapse import Axon, Dendrite, MemorySynapse, SignalType, task_signal
+    from cosmonapse import Axon, Dendrite, Directed, MemorySynapse, SignalType, task_signal
 
     errors = []
 
@@ -412,7 +413,7 @@ def test_axon_emits_error_on_neuron_exception():
         async with dendrite:
             await synapse.publish(
                 "cosmonapse.e.TASK",
-                task_signal(neuron="breaker", input={}),
+                task_signal(directed=Directed(id="breaker"), input={}),
             )
             await asyncio.sleep(0.05)
 
