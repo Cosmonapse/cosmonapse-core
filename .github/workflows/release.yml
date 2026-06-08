@@ -14,6 +14,8 @@ jobs:
   publish-python:
     name: Publish Python SDK to PyPI
     runs-on: ubuntu-latest
+    permissions:
+      id-token: write
     defaults:
       run:
         working-directory: packages/python-sdk
@@ -52,7 +54,6 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: packages/python-sdk/dist/
-          password: ${{ secrets.PYPI_TOKEN }}
 
   # --- 2. TypeScript SDK -> npm ------------------------------------------------
   publish-npm:
