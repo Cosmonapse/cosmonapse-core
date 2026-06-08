@@ -8,40 +8,54 @@ export interface Signal {
   trace_id: string;
   parent_id?: string | null;
   type: SignalType;
-  neuron?: string | null;
+  directed?: { id: string | null; type: string | null; capabilities: string[] } | null;
   ts: string;
   payload?: Record<string, unknown>;
   meta?: Record<string, unknown>;
 }
 
 export type SignalType =
+  // ── Core: lifecycle ────────────────────────────────────────────────────
+  | "REGISTER"
+  | "DEREGISTER"
+  | "HEARTBEAT"
+  // ── Core: task / workflow ──────────────────────────────────────────────
   | "TASK"
   | "AGENT_OUTPUT"
   | "FINAL"
   | "ERROR"
-  | "CLARIFICATION"
-  | "REGISTER"
-  | "DEREGISTER"
-  | "HEARTBEAT"
   | "TASK_OFFER"
   | "BID"
   | "TASK_AWARDED"
   | "TASK_DECLINED"
+  // ── Core: cognition ───────────────────────────────────────────────────
   | "THOUGHT_DELTA"
   | "PLAN"
   | "TOOL_CALL"
   | "TOOL_RESULT"
-  | "MEMORY_APPEND"
   | "ESCALATION"
   | "CONSENSUS"
-  | "CONTEXT_SYNC"
   | "CRITIQUE"
-  | "DISCOVER";
+  | "DISCOVER"
+  // ── Core: clarification / permission ──────────────────────────────────
+  | "CLARIFICATION"
+  | "CLARIFICATION_ANSWER"
+  | "PERMISSION"
+  | "PERMISSION_DECISION"
+  // ── Engram: memory ────────────────────────────────────────────────────
+  | "RECALL"
+  | "RECALLED"
+  | "IMPRINT"
+  | "IMPRINTED"
+  // ── Legacy aliases (still emitted by older SDK versions) ──────────────
+  | "MEMORY_APPEND"
+  | "CONTEXT_SYNC";
 
 // A neuron as Prism accumulates it from the signal stream.
 export interface NeuronView {
   id: string;
   count: number;
+  kind: "neuron" | "engram";
   capabilities: string[];
   version?: string;
   firstSeen: string;
@@ -57,21 +71,31 @@ export function isPrismError(sig: Signal): boolean {
 
 export const SYNAPSE_NODE = "__synapse__";
 
-// Signal types whose flow is neuron → synapse (Axon/Dendrite emitted).
+// Signal types emitted by the Axon/Dendrite side (neuron → synapse).
+// Matches cosmonapse.envelope.AXON_TYPES.
 export const AXON_TYPES = new Set<SignalType>([
   "AGENT_OUTPUT",
   "CLARIFICATION",
+  "PERMISSION",
   "ERROR",
   "REGISTER",
   "DEREGISTER",
   "HEARTBEAT",
-  "BID",
+  // Engram request side (Axon → Engram backend)
+  "RECALL",
+  "IMPRINT",
 ]);
 
-// Signal types whose flow is synapse → neuron (targeted at a consumer).
+// Signal types targeted at a specific neuron (synapse → neuron).
 export const TARGET_TYPES = new Set<SignalType>([
   "TASK",
   "TASK_OFFER",
   "TASK_AWARDED",
   "TASK_DECLINED",
+  // Engram reply side (Engram backend → Axon)
+  "RECALLED",
+  "IMPRINTED",
+  // Responses to clarification / permission requests
+  "CLARIFICATION_ANSWER",
+  "PERMISSION_DECISION",
 ]);

@@ -54,19 +54,26 @@ export function useSignalStream(
       setTotal((t) => t + 1);
       setSignals((prev) => [sig, ...prev].slice(0, bufferSize));
 
-      const nid = sig.neuron;
+      const nid = sig.directed?.id ?? null;
       if (!nid) return;
       setNeurons((prev) => {
         const next = new Map(prev);
+        const isEngram =
+          sig.directed?.type === "engram" ||
+          nid.startsWith("eng_") ||
+          sig.type === "RECALL" || sig.type === "IMPRINT" ||
+          sig.type === "RECALLED" || sig.type === "IMPRINTED";
         const ex: NeuronView = next.get(nid) ?? {
           id: nid,
           count: 0,
+          kind: isEngram ? "engram" : "neuron",
           capabilities: [],
           firstSeen: sig.ts,
         };
         const updated: NeuronView = {
           ...ex,
           count: ex.count + 1,
+          kind: ex.kind,
           lastType: sig.type as SignalType,
           lastTs: sig.ts,
         };

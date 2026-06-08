@@ -40,6 +40,15 @@ const TYPE_COLOR: Record<string, string> = {
   CONTEXT_SYNC: "#22d3ee",
   CRITIQUE: "#fbbf24",
   DISCOVER: "#f472b6",
+  // Engram
+  RECALL: "#a78bfa",
+  RECALLED: "#a78bfa",
+  IMPRINT: "#c084fc",
+  IMPRINTED: "#c084fc",
+  // Clarification / permission
+  PERMISSION: "#fbbf24",
+  PERMISSION_DECISION: "#d97706",
+  CLARIFICATION_ANSWER: "#d97706",
 };
 
 export function colorFor(type: SignalType | string | undefined): string {

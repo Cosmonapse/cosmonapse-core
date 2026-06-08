@@ -108,7 +108,7 @@ export const PrismCanvas = forwardRef<PrismCanvasHandle, Props>(function PrismCa
 
   useImperativeHandle(ref, () => ({
     emit(sig: Signal) {
-      const nid = sig.neuron ?? null;
+      const nid = sig.directed?.id ?? null;
       let src = SYNAPSE_NODE;
       let dst = SYNAPSE_NODE;
       if (nid && AXON_TYPES.has(sig.type)) { src = nid; dst = SYNAPSE_NODE; }
@@ -185,8 +185,9 @@ export const PrismCanvas = forwardRef<PrismCanvasHandle, Props>(function PrismCa
         const color = ne.deregistered ? C.textFaint : colorFor(ne.lastType ?? "REGISTER");
         return (
           <NeuronNode key={ne.id} x={p.x} y={p.y} color={color} pulse={pulses.has(ne.id)}
+            kind={ne.kind}
             label={ne.id.length > 18 ? ne.id.slice(0, 16) + "…" : ne.id}
-            sublabel={ne.capabilities[0] ?? ""}
+            sublabel={ne.kind === "engram" ? "engram" : (ne.capabilities[0] ?? "")}
             onHover={() => onHover(ne.id)} onLeave={() => onHover(null)}
           />
         );
@@ -259,13 +260,61 @@ function SynapseNode({ x, y, pulse, label, sublabel }: {
   );
 }
 
-// ── neuron node ───────────────────────────────────────────────────────────
-function NeuronNode({ x, y, color, pulse, label, sublabel, onHover, onLeave }: {
-  x: number; y: number; color: string; pulse: boolean;
+// ── neuron / engram node ─────────────────────────────────────────────────
+// kind="neuron"  →  circle  (axon-backed participant)
+// kind="engram"  →  diamond (Engram memory backend)
+function NeuronNode({ x, y, color, pulse, kind = "neuron", label, sublabel, onHover, onLeave }: {
+  x: number; y: number; color: string; pulse: boolean; kind?: "neuron" | "engram";
   label?: string; sublabel?: string; onHover?: () => void; onLeave?: () => void;
 }) {
   const R = 18;
   const glowStr = pulse ? 14 : 7;
+  const engramColor = "#a78bfa";
+  const nodeColor = kind === "engram" ? engramColor : color;
+
+  if (kind === "engram") {
+    // Diamond (rotated square) for Engram nodes
+    const D = R * 1.22; // half-diagonal of the diamond
+    const pts = `0,${-D} ${D},0 0,${D} ${-D},0`;
+    const ptsOuter = `0,${-D * 2.6} ${D * 2.6},0 0,${D * 2.6} ${-D * 2.6},0`;
+    return (
+      <g transform={`translate(${x},${y})`} style={{ cursor: "pointer" }} onMouseEnter={onHover} onMouseLeave={onLeave}>
+        {/* Ambient bloom */}
+        <polygon points={ptsOuter} fill={nodeColor} fillOpacity={pulse ? 0.16 : 0.06} filter="url(#blur-md)" style={{ transition: "fill-opacity 0.4s" }} />
+        {/* Pulse ripple */}
+        {pulse && (
+          <polygon points={pts} fill="none" stroke={nodeColor} strokeOpacity="0.8" strokeWidth="1.5">
+            <animateTransform attributeName="transform" type="scale" from="1" to="3.5" dur="0.9s" repeatCount="1" />
+            <animate attributeName="stroke-opacity" from="0.8" to="0" dur="0.9s" repeatCount="1" />
+          </polygon>
+        )}
+        {/* Outer ring diamond */}
+        <polygon points={`0,${-D * 1.4} ${D * 1.4},0 0,${D * 1.4} ${-D * 1.4},0`}
+          fill="none" stroke={nodeColor} strokeOpacity={pulse ? 0.45 : 0.2} strokeWidth="0.8"
+          style={{ transition: "stroke-opacity 0.4s" }} />
+        {/* Body */}
+        <polygon points={pts} fill="#07080c" stroke={nodeColor} strokeWidth="1.5"
+          style={{ filter: `drop-shadow(0 0 ${glowStr}px ${nodeColor})`, transition: "filter 0.4s" }} />
+        {/* Inner glow fill */}
+        <polygon points={`0,${-D * 0.6} ${D * 0.6},0 0,${D * 0.6} ${-D * 0.6},0`}
+          fill={nodeColor} fillOpacity="0.13" />
+        {/* Rotating inner ring (memory pulse) */}
+        <polygon points={`0,${-D * 0.38} ${D * 0.38},0 0,${D * 0.38} ${-D * 0.38},0`}
+          fill="none" stroke={nodeColor} strokeWidth="1" strokeOpacity="0.55">
+          <animateTransform attributeName="transform" type="rotate" from="45" to="405" dur="8s" repeatCount="indefinite" />
+        </polygon>
+        {/* Nucleus */}
+        <circle r={R * 0.28} fill={nodeColor} fillOpacity={pulse ? 0.95 : 0.7} filter="url(#glow-soft)"
+          style={{ transition: "fill-opacity 0.3s" }}>
+          <animate attributeName="r" values={`${R * 0.22};${R * 0.34};${R * 0.22}`} dur="3.2s" repeatCount="indefinite" />
+        </circle>
+        {label && <text y={D + 18} textAnchor="middle" fontSize="11" fontWeight="500" fill={C.text} style={{ fontFamily: MONO }}>{label}</text>}
+        {sublabel && <text y={D + 32} textAnchor="middle" fontSize="9" fill={nodeColor} style={{ fontFamily: MONO }}>{sublabel}</text>}
+      </g>
+    );
+  }
+
+  // Circle — standard Neuron node
   return (
     <g transform={`translate(${x},${y})`} style={{ cursor: "pointer" }} onMouseEnter={onHover} onMouseLeave={onLeave}>
       <circle r={R * 2.8} fill={color} fillOpacity={pulse ? 0.18 : 0.07} filter="url(#blur-md)" style={{ transition: "fill-opacity 0.4s" }} />

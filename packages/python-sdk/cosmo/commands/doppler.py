@@ -136,7 +136,7 @@ def _render_signal(subject: str, sig: Signal, show_payload: bool = False) -> Non
     if _HAS_RICH:
         colour = _TYPE_COLOURS.get(sig.type.value, "white")
         ts = sig.ts.strftime("%H:%M:%S.%f")[:-3]
-        neuron = sig.neuron or " - "
+        neuron = (sig.directed.id if sig.directed else None) or " - "
         trace = sig.trace_id[4:12]
         t = Text()
         t.append(f"  {ts}  ", style="dim")
@@ -151,7 +151,7 @@ def _render_signal(subject: str, sig: Signal, show_payload: bool = False) -> Non
         console.print(t)
     else:
         ts = sig.ts.strftime("%H:%M:%S")
-        print(f"  {ts}  {sig.type.value:<18}  {sig.trace_id[4:12]}  {sig.neuron or ' - '}")
+        print(f"  {ts}  {sig.type.value:<18}  {sig.trace_id[4:12]}  {(sig.directed.id if sig.directed else None) or ' - '}")
 
 
 # ---------------------------------------------------------------------------
@@ -292,7 +292,7 @@ async def _run_cli(
             return
         if trace and sig.trace_id != trace:
             return
-        if neuron_filter and sig.neuron != neuron_filter:
+        if neuron_filter and (not sig.directed or sig.directed.id != neuron_filter):
             return
         signal_count += 1
         if output_json:
