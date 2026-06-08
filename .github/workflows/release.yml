@@ -48,7 +48,7 @@ jobs:
       - name: Build wheel + sdist
         run: |
           pip install build
-          python -m build            # version comes from the git tag via hatch-vcs
+          SETUPTOOLS_SCM_PRETEND_VERSION="${GITHUB_REF_NAME#v}" python -m build
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
