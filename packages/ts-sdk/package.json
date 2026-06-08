@@ -30,7 +30,7 @@
   "scripts": {
     "build": "tsup src/index.ts --format esm,cjs --dts --clean --external @modelcontextprotocol/sdk --external nats --external kafkajs --external better-sqlite3 --external pg",
     "typecheck": "tsc --noEmit",
-    "test": "node --test"
+    "test": "node --import tsx --test \"test/**/*.test.ts\""
   },
   "dependencies": {
     "ulid": "^2.3.0"
@@ -62,6 +62,7 @@
   "devDependencies": {
     "@types/node": "^20.0.0",
     "tsup": "^8.0.0",
+    "tsx": "^4.19.0",
     "typescript": "^5.4.0"
   },
   "publishConfig": {

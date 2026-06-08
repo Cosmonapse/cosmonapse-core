@@ -400,7 +400,7 @@ export class Dendrite {
     meta?: Json;
   }): Promise<Signal> {
     const sig = taskSignal({
-      neuron: args.neuron,
+      directed: { id: args.neuron },
       input: args.input,
       ...(args.traceId !== undefined ? { traceId: args.traceId } : {}),
       ...(args.parentId !== undefined ? { parentId: args.parentId } : {}),
@@ -422,7 +422,7 @@ export class Dendrite {
       traceId: args.traceId,
       parentId: args.parentId,
       result: args.result,
-      neuron: this.dendriteId,
+      directed: { id: this.dendriteId },
       ...(args.meta !== undefined ? { meta: args.meta } : {}),
     });
     await this.emit(sig);
@@ -441,7 +441,7 @@ export class Dendrite {
       traceId: args.traceId,
       code: args.code,
       message: args.message,
-      neuron: this.dendriteId,
+      directed: { id: this.dendriteId },
       ...(args.parentId !== undefined ? { parentId: args.parentId } : {}),
       ...(args.recoverable !== undefined ? { recoverable: args.recoverable } : {}),
       ...(args.meta !== undefined ? { meta: args.meta } : {}),
@@ -477,7 +477,7 @@ export class Dendrite {
         `respondToPermission expects a PERMISSION signal, got '${request.type}'`,
       );
     }
-    const target = opts.neuron ?? request.neuron;
+    const target = opts.neuron ?? request.directed?.id ?? null;
     if (!target) {
       throw new DendriteProtocolError(
         "respondToPermission: signal has no neuron and no neuron override - " +
@@ -539,7 +539,7 @@ export class Dendrite {
       traceId: request.trace_id,
       parentId: request.id,
       granted,
-      neuron: this.dendriteId,
+      directed: { id: this.dendriteId },
       ...(opts.reason !== undefined ? { reason: opts.reason } : {}),
       ...(opts.ttlMs !== undefined ? { ttlMs: opts.ttlMs } : {}),
       ...(opts.meta !== undefined ? { meta: opts.meta } : {}),
@@ -564,7 +564,7 @@ export class Dendrite {
       traceId: request.trace_id,
       parentId: request.id,
       answer,
-      neuron: this.dendriteId,
+      directed: { id: this.dendriteId },
       ...(opts.meta !== undefined ? { meta: opts.meta } : {}),
     });
     await this.publish(sig);
@@ -606,7 +606,7 @@ export class Dendrite {
   }
 
   private async onTask(task: Signal): Promise<void> {
-    const target = task.neuron;
+    const target = task.directed?.id ?? null;
     if (!target) return;
     const axon = this._axons.get(target);
     if (!axon) return;
@@ -618,7 +618,7 @@ export class Dendrite {
       reply = errorSignal({
         traceId: task.trace_id,
         parentId: task.id,
-        neuron: target,
+        directed: { id: target },
         code: "AXON_EXCEPTION",
         message: err instanceof Error ? err.message : String(err),
         recoverable: false,
@@ -630,7 +630,7 @@ export class Dendrite {
   private async emitRegister(axon: Axon): Promise<void> {
     await this.publish(
       registerSignal({
-        neuron: axon.neuronId,
+        directed: { id: axon.neuronId, capabilities: [...axon.capabilities] },
         capabilities: axon.capabilities,
         ...(axon.version !== undefined ? { version: axon.version } : {}),
       }),
@@ -640,7 +640,7 @@ export class Dendrite {
   private async emitDeregister(axon: Axon, reason?: string): Promise<void> {
     await this.publish(
       deregisterSignal({
-        neuron: axon.neuronId,
+        directed: { id: axon.neuronId },
         ...(reason !== undefined ? { reason } : {}),
       }),
     );
@@ -654,7 +654,7 @@ export class Dendrite {
         if (this.reregisterOnHeartbeat) await this.emitRegister(axon);
         await this.synapse.publish(
           this.subject(SignalType.HEARTBEAT),
-          heartbeatSignal({ neuron: axon.neuronId }),
+          heartbeatSignal({ directed: { id: axon.neuronId } }),
         );
       } catch {
         /* best-effort heartbeat */
@@ -704,7 +704,10 @@ export class Dendrite {
 
   private async updateRegistry(signal: Signal): Promise<void> {
     if (this.registryStore === null) return;
-    const neuronId = signal.neuron;
+    // Engram registrations (REGISTER with the `engram` flag) are not Neurons;
+    // do not mirror them into the Neuron registry store.
+    if (signal.payload["engram"]) return;
+    const neuronId = signal.directed?.id ?? null;
     if (!neuronId) return;
     let reason: string | null = null;
     if (signal.type === SignalType.REGISTER) {

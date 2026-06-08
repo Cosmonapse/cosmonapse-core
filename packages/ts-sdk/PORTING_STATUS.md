@@ -41,6 +41,19 @@ delete the corresponding caveat comment from the source.
   via `neuron(source, opts)` (`neuron-openai.ts`). Uses the runtime `fetch`;
   keys resolve from `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / provider env
   vars. At parity with the Python `Neuron(source=...)` registry.
+- Source-paired Axon factories + recognition (`axon.ts`). At parity with the
+  Python additions:
+  - `Axon.fromSource(source, neuronId, opts, extra?)` plus `Axon.openai` /
+    `ollama` / `huggingface` / `anthropic` / `mcp` static factories that pair a
+    `neuron(source, ...)` with its recogniser.
+  - `outputParser` option + the `__error__` marker (yields ERROR without
+    throwing); `errorResult()` / `isErrorOutput()` in `neuron.ts`.
+  - `parseLlmIntents` / `parseMcpIntents` recognisers (the `{"cosmo": ...}`
+    intent convention; MCP `is_error` -> ERROR).
+  - The decorator model `detectsOutput` / `detectsClarification` /
+    `detectsPermission` / `detectsError` (the asking side; named apart from the
+    Dendrite's `on*` inbound handlers), applied in precedence
+    error -> clarification -> permission -> output. Sync or async detectors.
 
 ## Still to port (tracked, not yet implemented)
 

@@ -41,7 +41,7 @@ test("end-to-end: TASK -> Neuron -> Axon -> AGENT_OUTPUT", async () => {
   assert.equal(received.length, 1);
   const out = received[0]!;
   assert.equal(out.type, "AGENT_OUTPUT");
-  assert.equal(out.neuron, "echo");
+  assert.equal(out.directed?.id, "echo");
   assert.equal(out.trace_id, task.trace_id); // same workflow
   assert.equal(out.parent_id, task.id); // caused by the task
   assert.deepEqual(out.payload["output"], { seen: { hi: "there" } });

@@ -28,7 +28,7 @@ test("validateSignal rejects bad id prefixes", () => {
       trace_id: "trc_x",
       parent_id: null,
       type: SignalType.TASK,
-      neuron: null,
+      directed: null,
       ts: new Date().toISOString(),
       payload: {},
       meta: {},
@@ -37,7 +37,7 @@ test("validateSignal rejects bad id prefixes", () => {
 });
 
 test("encode/decode round-trips", () => {
-  const s = taskSignal({ input: { hello: "world" }, neuron: "demo" });
+  const s = taskSignal({ input: { hello: "world" }, directed: { id: "demo" } });
   const back = decode(encode(s));
   assert.deepEqual(back.payload, { input: { hello: "world" } });
   assert.equal(back.trace_id, s.trace_id);
@@ -45,7 +45,7 @@ test("encode/decode round-trips", () => {
 
 test("reply shares trace_id and links parent_id", () => {
   const task = taskSignal({ input: {} });
-  const out = reply(task, { type: SignalType.AGENT_OUTPUT, neuron: "n1" });
+  const out = reply(task, { type: SignalType.AGENT_OUTPUT, directed: { id: "n1" } });
   assert.equal(out.trace_id, task.trace_id);
   assert.equal(out.parent_id, task.id);
 });

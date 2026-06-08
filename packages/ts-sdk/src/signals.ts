@@ -4,16 +4,28 @@
  * Convenience constructors for the common Signal types. These are NOT required
  * by the protocol  -  the protocol only requires a valid Signal with the correct
  * `type` and `payload`. They mirror the helpers in `cosmonapse.envelope`.
+ *
+ * Addressing is carried by the envelope `directed` field (see {@link Directed}).
+ * Builders accept a `directed` (full or partial) rather than a bare `neuron`
+ * string; higher-level helpers (e.g. `Dendrite.dispatchTask`) keep a `neuron`
+ * argument for ergonomics and wrap it into `{ id: neuron }`.
  */
 
-import { createSignal, newTraceId, SignalType, type Json, type Signal } from "./envelope.js";
+import {
+  createSignal,
+  newTraceId,
+  SignalType,
+  type DirectedInput,
+  type Json,
+  type Signal,
+} from "./envelope.js";
 
 /** [C] Dispatch a unit of work to a Neuron. */
 export function taskSignal(args: {
   input: Json;
   traceId?: string;
   parentId?: string | null;
-  neuron?: string | null;
+  directed?: DirectedInput;
   contextRef?: string;
   capabilities?: string[];
   meta?: Json;
@@ -25,7 +37,7 @@ export function taskSignal(args: {
     type: SignalType.TASK,
     trace_id: args.traceId ?? newTraceId(),
     parent_id: args.parentId ?? null,
-    neuron: args.neuron ?? null,
+    directed: args.directed ?? null,
     payload,
     meta: args.meta ?? {},
   });
@@ -35,7 +47,7 @@ export function taskSignal(args: {
 export function agentOutputSignal(args: {
   traceId: string;
   parentId: string;
-  neuron: string;
+  directed?: DirectedInput;
   output: Json;
   meta?: Json;
 }): Signal {
@@ -43,7 +55,7 @@ export function agentOutputSignal(args: {
     type: SignalType.AGENT_OUTPUT,
     trace_id: args.traceId,
     parent_id: args.parentId,
-    neuron: args.neuron,
+    directed: args.directed ?? null,
     payload: { output: args.output },
     meta: args.meta ?? {},
   });
@@ -53,7 +65,7 @@ export function agentOutputSignal(args: {
 export function clarificationSignal(args: {
   traceId: string;
   parentId: string;
-  neuron: string;
+  directed?: DirectedInput;
   question: string;
   context?: Json;
   meta?: Json;
@@ -64,7 +76,7 @@ export function clarificationSignal(args: {
     type: SignalType.CLARIFICATION,
     trace_id: args.traceId,
     parent_id: args.parentId,
-    neuron: args.neuron,
+    directed: args.directed ?? null,
     payload,
     meta: args.meta ?? {},
   });
@@ -74,7 +86,7 @@ export function clarificationSignal(args: {
 export function permissionSignal(args: {
   traceId: string;
   parentId: string;
-  neuron: string;
+  directed?: DirectedInput;
   action: string;
   scope?: Json;
   reason?: string;
@@ -89,7 +101,7 @@ export function permissionSignal(args: {
     type: SignalType.PERMISSION,
     trace_id: args.traceId,
     parent_id: args.parentId,
-    neuron: args.neuron,
+    directed: args.directed ?? null,
     payload,
     meta: args.meta ?? {},
   });
@@ -100,7 +112,7 @@ export function permissionDecisionSignal(args: {
   traceId: string;
   parentId: string;
   granted: boolean;
-  neuron?: string | null;
+  directed?: DirectedInput;
   reason?: string;
   ttlMs?: number;
   meta?: Json;
@@ -112,7 +124,7 @@ export function permissionDecisionSignal(args: {
     type: SignalType.PERMISSION_DECISION,
     trace_id: args.traceId,
     parent_id: args.parentId,
-    neuron: args.neuron ?? null,
+    directed: args.directed ?? null,
     payload,
     meta: args.meta ?? {},
   });
@@ -123,14 +135,14 @@ export function clarificationAnswerSignal(args: {
   traceId: string;
   parentId: string;
   answer: unknown;
-  neuron?: string | null;
+  directed?: DirectedInput;
   meta?: Json;
 }): Signal {
   return createSignal({
     type: SignalType.CLARIFICATION_ANSWER,
     trace_id: args.traceId,
     parent_id: args.parentId,
-    neuron: args.neuron ?? null,
+    directed: args.directed ?? null,
     payload: { answer: args.answer },
     meta: args.meta ?? {},
   });
@@ -141,7 +153,7 @@ export function finalSignal(args: {
   traceId: string;
   parentId: string;
   result: Json;
-  neuron?: string | null;
+  directed?: DirectedInput;
   cost?: Json;
   meta?: Json;
 }): Signal {
@@ -151,7 +163,7 @@ export function finalSignal(args: {
     type: SignalType.FINAL,
     trace_id: args.traceId,
     parent_id: args.parentId,
-    neuron: args.neuron ?? null,
+    directed: args.directed ?? null,
     payload,
     meta: args.meta ?? {},
   });
@@ -163,7 +175,7 @@ export function errorSignal(args: {
   code: string;
   message: string;
   parentId?: string | null;
-  neuron?: string | null;
+  directed?: DirectedInput;
   recoverable?: boolean;
   meta?: Json;
 }): Signal {
@@ -171,7 +183,7 @@ export function errorSignal(args: {
     type: SignalType.ERROR,
     trace_id: args.traceId,
     parent_id: args.parentId ?? null,
-    neuron: args.neuron ?? null,
+    directed: args.directed ?? null,
     payload: {
       code: args.code,
       message: args.message,
@@ -181,27 +193,39 @@ export function errorSignal(args: {
   });
 }
 
-/** [A] Neuron connecting to the Synapse and declaring its capabilities. */
+/**
+ * [A] A participant connecting to the Synapse and declaring its capabilities.
+ *
+ * Both Neurons and Engrams register the same way: `directed.id` is the
+ * participant id, `directed.type` its type (neuron type or engram_kind), and
+ * `directed.capabilities` its capability list. Pass `engram: true` for an
+ * Engram so receivers record it as an Engram registration. `capabilities` is
+ * mirrored into the payload for registry stores; when omitted it falls back to
+ * `directed.capabilities`.
+ */
 export function registerSignal(args: {
-  neuron: string;
-  capabilities: string[];
+  directed: DirectedInput;
+  capabilities?: string[];
   version?: string;
+  engram?: boolean;
   meta?: Json;
 }): Signal {
-  const payload: Json = { capabilities: args.capabilities };
+  const caps = args.capabilities ?? args.directed?.capabilities ?? [];
+  const payload: Json = { capabilities: caps };
   if (args.version) payload["version"] = args.version;
+  if (args.engram) payload["engram"] = true;
   return createSignal({
     type: SignalType.REGISTER,
     trace_id: newTraceId(), // management signals get their own trace
-    neuron: args.neuron,
+    directed: args.directed ?? null,
     payload,
     meta: args.meta ?? {},
   });
 }
 
-/** [A] Neuron disconnecting from the Synapse. */
+/** [A] A participant disconnecting from the Synapse. */
 export function deregisterSignal(args: {
-  neuron: string;
+  directed: DirectedInput;
   reason?: string;
   meta?: Json;
 }): Signal {
@@ -210,22 +234,22 @@ export function deregisterSignal(args: {
   return createSignal({
     type: SignalType.DEREGISTER,
     trace_id: newTraceId(),
-    neuron: args.neuron,
+    directed: args.directed ?? null,
     payload,
     meta: args.meta ?? {},
   });
 }
 
-/** [A] Periodic liveness signal from a Neuron. */
+/** [A] Periodic liveness signal from a participant. */
 export function heartbeatSignal(args: {
-  neuron: string;
+  directed: DirectedInput;
   status?: string;
   meta?: Json;
 }): Signal {
   return createSignal({
     type: SignalType.HEARTBEAT,
     trace_id: newTraceId(),
-    neuron: args.neuron,
+    directed: args.directed ?? null,
     payload: { status: args.status ?? "ok" },
     meta: args.meta ?? {},
   });
@@ -237,14 +261,14 @@ export function memoryAppendSignal(args: {
   parentId: string;
   key: string;
   value: unknown;
-  neuron?: string | null;
+  directed?: DirectedInput;
   meta?: Json;
 }): Signal {
   return createSignal({
     type: SignalType.MEMORY_APPEND,
     trace_id: args.traceId,
     parent_id: args.parentId,
-    neuron: args.neuron ?? null,
+    directed: args.directed ?? null,
     payload: { key: args.key, value: args.value },
     meta: args.meta ?? {},
   });
@@ -275,7 +299,7 @@ export function taskOfferSignal(args: {
 export function bidSignal(args: {
   traceId: string;
   parentId: string;
-  neuron: string;
+  directed?: DirectedInput;
   cost: number;
   etaMs?: number;
   confidence?: number;
@@ -288,7 +312,7 @@ export function bidSignal(args: {
     type: SignalType.BID,
     trace_id: args.traceId,
     parent_id: args.parentId,
-    neuron: args.neuron,
+    directed: args.directed ?? null,
     payload,
     meta: args.meta ?? {},
   });
@@ -301,14 +325,14 @@ export function critiqueSignal(args: {
   targetEventId: string;
   issues: Json[];
   verdict: "pass" | "fail" | "revise";
-  neuron?: string | null;
+  directed?: DirectedInput;
   meta?: Json;
 }): Signal {
   return createSignal({
     type: SignalType.CRITIQUE,
     trace_id: args.traceId,
     parent_id: args.parentId,
-    neuron: args.neuron ?? null,
+    directed: args.directed ?? null,
     payload: {
       target_event_id: args.targetEventId,
       issues: args.issues,

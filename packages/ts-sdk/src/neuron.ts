@@ -100,3 +100,37 @@ export function isPermissionRequest(output: unknown): output is PermissionReques
     (output as Record<string, unknown>)["__permission__"] === true
   );
 }
+
+/**
+ * Marker that yields an ERROR signal without throwing. A recogniser (e.g. the
+ * MCP one on `is_error`) returns this so the Axon emits ERROR with a supplied
+ * code/message instead of a generic NEURON_EXCEPTION.
+ */
+export interface ErrorOutput {
+  __error__: true;
+  code?: string;
+  message?: string;
+  recoverable?: boolean;
+}
+
+/** Build an error result for a Neuron / recogniser to return. */
+export function errorResult(
+  message: string,
+  opts: { code?: string; recoverable?: boolean } = {},
+): ErrorOutput {
+  return {
+    __error__: true,
+    message,
+    code: opts.code ?? "NEURON_ERROR",
+    recoverable: opts.recoverable ?? false,
+  };
+}
+
+/** Type guard: did the Neuron / recogniser return an error marker? */
+export function isErrorOutput(output: unknown): output is ErrorOutput {
+  return (
+    typeof output === "object" &&
+    output !== null &&
+    (output as Record<string, unknown>)["__error__"] === true
+  );
+}

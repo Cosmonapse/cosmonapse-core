@@ -22,11 +22,15 @@ export {
   newTraceId,
   createSignal,
   validateSignal,
+  normalizeDirected,
+  directedTo,
   encode,
   decode,
   reply,
   type Signal,
   type NewSignalInput,
+  type Directed,
+  type DirectedInput,
   type Json,
 } from "./envelope.js";
 
@@ -98,14 +102,25 @@ export {
   isClarification,
   permissionRequest,
   isPermissionRequest,
+  errorResult,
+  isErrorOutput,
   type NeuronFn,
   type CloseableNeuronFn,
   type ContextFetcher,
   type ClarificationOutput,
   type PermissionRequestOutput,
+  type ErrorOutput,
 } from "./neuron.js";
 
-export { Axon, type AxonOptions } from "./axon.js";
+export {
+  Axon,
+  parseLlmIntents,
+  parseMcpIntents,
+  type AxonOptions,
+  type AxonExtra,
+  type OutputParser,
+  type Recogniser,
+} from "./axon.js";
 
 export {
   Dendrite,

@@ -119,6 +119,53 @@ export const SYNAPSE_TYPES: ReadonlySet<SignalType> = new Set<SignalType>([
 ]);
 
 // ---------------------------------------------------------------------------
+// Directed addressing
+// ---------------------------------------------------------------------------
+
+/**
+ * Unified addressing for a Signal. Mirrors Python `cosmonapse.envelope.Directed`
+ * 1:1 so the wire shape is identical across SDKs.
+ *
+ * A Signal may be addressed three ways, in precedence order:
+ * - `id`           Direct address. A `neuron_id` for TASK-family routing, or an
+ *                  `engram_id` for RECALL/IMPRINT.
+ * - `type`         Type-based routing. A neuron type, or an `engram_kind`.
+ * - `capabilities` Capability-based routing.
+ *
+ * `id` wins over `type`, which wins over `capabilities` on the receiving side.
+ */
+export interface Directed {
+  id: string | null;
+  type: string | null;
+  capabilities: string[];
+}
+
+/** A partial Directed accepted at call sites; missing fields default to null/[]. */
+export type DirectedInput = Partial<Directed> | null;
+
+/** Normalise a partial Directed (or null) into a full Directed (or null). */
+export function normalizeDirected(d: DirectedInput | undefined): Directed | null {
+  if (d === null || d === undefined) return null;
+  return {
+    id: d.id ?? null,
+    type: d.type ?? null,
+    capabilities: d.capabilities ? [...d.capabilities] : [],
+  };
+}
+
+/** Small helper for building a {@link Directed} at call sites. */
+export function directedTo(
+  id?: string | null,
+  opts: { type?: string | null; capabilities?: string[] } = {},
+): Directed {
+  return {
+    id: id ?? null,
+    type: opts.type ?? null,
+    capabilities: opts.capabilities ? [...opts.capabilities] : [],
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Base envelope
 // ---------------------------------------------------------------------------
 
@@ -132,7 +179,7 @@ export type Json = Record<string, unknown>;
  * - `trace_id`  Groups all Signals belonging to one logical workflow (`trc_<ULID>`).
  * - `parent_id` The id of the Signal that caused this one. Optional.
  * - `type`      One of the {@link SignalType} values.
- * - `neuron`    Identifier of the producing Neuron. Required for Axon types.
+ * - `directed`  Unified addressing (id / type / capabilities). Null when unset.
  * - `ts`        RFC 3339 UTC timestamp of emission.
  * - `payload`   Type-specific content.
  * - `meta`      Non-semantic annotations: model name, token counts, cost, etc.
@@ -143,7 +190,7 @@ export interface Signal {
   trace_id: string;
   parent_id: string | null;
   type: SignalType;
-  neuron: string | null;
+  directed: Directed | null;
   ts: string;
   payload: Json;
   meta: Json;
@@ -153,7 +200,7 @@ export interface NewSignalInput {
   type: SignalType;
   trace_id?: string;
   parent_id?: string | null;
-  neuron?: string | null;
+  directed?: DirectedInput;
   payload?: Json;
   meta?: Json;
   v?: string;
@@ -169,7 +216,7 @@ export function createSignal(input: NewSignalInput): Signal {
     trace_id: input.trace_id ?? newTraceId(),
     parent_id: input.parent_id ?? null,
     type: input.type,
-    neuron: input.neuron ?? null,
+    directed: normalizeDirected(input.directed),
     ts: input.ts ?? nowUtc(),
     payload: input.payload ?? {},
     meta: input.meta ?? {},
@@ -215,7 +262,7 @@ export function reply(
   opts: {
     type: SignalType;
     payload?: Json;
-    neuron?: string | null;
+    directed?: DirectedInput;
     meta?: Json;
   },
 ): Signal {
@@ -224,7 +271,7 @@ export function reply(
     trace_id: source.trace_id,
     parent_id: source.id,
     payload: opts.payload ?? {},
-    neuron: opts.neuron ?? source.neuron,
+    directed: opts.directed !== undefined ? opts.directed : source.directed,
     meta: opts.meta ?? {},
   });
 }
