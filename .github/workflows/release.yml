@@ -17,14 +17,13 @@ jobs:
     defaults:
       run:
         working-directory: packages/python-sdk
-    permissions:
-      id-token: write   # needed for trusted publishing (OIDC)
     steps:
       - uses: actions/checkout@v4
         with:
           # hatch-vcs derives the version from the git tag, so the full history
           # and tags must be present (the default shallow checkout has neither).
           fetch-depth: 0
+          fetch-tags: true
 
       - uses: actions/setup-node@v4
         with:
@@ -53,11 +52,7 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: packages/python-sdk/dist/
-          # Uses OIDC trusted publishing - no token secret needed.
-          # Set up once at: https://pypi.org/manage/project/cosmonapse/settings/publishing/
-          # If you prefer an API token instead, remove the id-token permission above
-          # and uncomment the next line:
-          # password: ${{ secrets.PYPI_TOKEN }}
+          password: ${{ secrets.PYPI_TOKEN }}
 
   # --- 2. TypeScript SDK -> npm ------------------------------------------------
   publish-npm:
