@@ -14,6 +14,7 @@
 import {
   createSignal,
   newTraceId,
+  normalizeDirected,
   SignalType,
   type DirectedInput,
   type Json,
@@ -338,6 +339,327 @@ export function critiqueSignal(args: {
       issues: args.issues,
       verdict: args.verdict,
     },
+    meta: args.meta ?? {},
+  });
+}
+
+/** [C] Structured plan emitted before execution. */
+export function planSignal(args: {
+  traceId: string;
+  parentId: string;
+  steps: Json[];
+  rationale?: string;
+  directed?: DirectedInput;
+  meta?: Json;
+}): Signal {
+  const payload: Json = { steps: args.steps };
+  if (args.rationale !== undefined) payload["rationale"] = args.rationale;
+  return createSignal({
+    type: SignalType.PLAN,
+    trace_id: args.traceId,
+    parent_id: args.parentId,
+    directed: args.directed ?? null,
+    payload,
+    meta: args.meta ?? {},
+  });
+}
+
+/** [C] Streaming reasoning chunk. */
+export function thoughtDeltaSignal(args: {
+  traceId: string;
+  parentId: string;
+  delta: string;
+  seq?: number;
+  directed?: DirectedInput;
+  meta?: Json;
+}): Signal {
+  const payload: Json = { delta: args.delta };
+  if (args.seq !== undefined) payload["seq"] = args.seq;
+  return createSignal({
+    type: SignalType.THOUGHT_DELTA,
+    trace_id: args.traceId,
+    parent_id: args.parentId,
+    directed: args.directed ?? null,
+    payload,
+    meta: args.meta ?? {},
+  });
+}
+
+/** [C] Neuron invoking an external tool. */
+export function toolCallSignal(args: {
+  traceId: string;
+  parentId: string;
+  tool: string;
+  args: Json;
+  callId?: string;
+  directed?: DirectedInput;
+  meta?: Json;
+}): Signal {
+  const payload: Json = { tool: args.tool, args: args.args };
+  if (args.callId !== undefined) payload["call_id"] = args.callId;
+  return createSignal({
+    type: SignalType.TOOL_CALL,
+    trace_id: args.traceId,
+    parent_id: args.parentId,
+    directed: args.directed ?? null,
+    payload,
+    meta: args.meta ?? {},
+  });
+}
+
+/** [C] Result returned from a tool. Set exactly one of `result` / `error`. */
+export function toolResultSignal(args: {
+  traceId: string;
+  parentId: string;
+  tool: string;
+  result?: unknown;
+  error?: string;
+  callId?: string;
+  directed?: DirectedInput;
+  meta?: Json;
+}): Signal {
+  const payload: Json = { tool: args.tool };
+  if (args.result !== undefined) payload["result"] = args.result as Json[string];
+  if (args.error !== undefined) payload["error"] = args.error;
+  if (args.callId !== undefined) payload["call_id"] = args.callId;
+  return createSignal({
+    type: SignalType.TOOL_RESULT,
+    trace_id: args.traceId,
+    parent_id: args.parentId,
+    directed: args.directed ?? null,
+    payload,
+    meta: args.meta ?? {},
+  });
+}
+
+/** [C] Escalate a task or sub-decision to a higher-authority Neuron. */
+export function escalationSignal(args: {
+  traceId: string;
+  parentId: string;
+  reason: string;
+  target?: string;
+  context?: Json;
+  directed?: DirectedInput;
+  meta?: Json;
+}): Signal {
+  const payload: Json = { reason: args.reason };
+  if (args.target !== undefined) payload["target"] = args.target;
+  if (args.context !== undefined) payload["context"] = args.context;
+  return createSignal({
+    type: SignalType.ESCALATION,
+    trace_id: args.traceId,
+    parent_id: args.parentId,
+    directed: args.directed ?? null,
+    payload,
+    meta: args.meta ?? {},
+  });
+}
+
+/** [C] Record a consensus outcome among multiple Neurons. */
+export function consensusSignal(args: {
+  traceId: string;
+  parentId: string;
+  members: string[];
+  verdict: string;
+  votes?: Json;
+  directed?: DirectedInput;
+  meta?: Json;
+}): Signal {
+  const payload: Json = { members: args.members, verdict: args.verdict };
+  if (args.votes !== undefined) payload["votes"] = args.votes;
+  return createSignal({
+    type: SignalType.CONSENSUS,
+    trace_id: args.traceId,
+    parent_id: args.parentId,
+    directed: args.directed ?? null,
+    payload,
+    meta: args.meta ?? {},
+  });
+}
+
+/** [C] Share/synchronise context across Neurons. */
+export function contextSyncSignal(args: {
+  traceId: string;
+  parentId: string;
+  snapshot: Json;
+  version?: string;
+  directed?: DirectedInput;
+  meta?: Json;
+}): Signal {
+  const payload: Json = { snapshot: args.snapshot };
+  if (args.version !== undefined) payload["version"] = args.version;
+  return createSignal({
+    type: SignalType.CONTEXT_SYNC,
+    trace_id: args.traceId,
+    parent_id: args.parentId,
+    directed: args.directed ?? null,
+    payload,
+    meta: args.meta ?? {},
+  });
+}
+
+/**
+ * [C] Solicit a REGISTER snapshot from peers on a namespace. `neuron` /
+ * `capabilities` are payload filter fields (which participants to discover),
+ * not envelope addressing.
+ */
+export function discoverSignal(args: {
+  neuron?: string;
+  capabilities?: string[];
+  traceId?: string;
+  parentId?: string | null;
+  meta?: Json;
+} = {}): Signal {
+  const payload: Json = {};
+  if (args.neuron !== undefined) payload["neuron"] = args.neuron;
+  if (args.capabilities !== undefined) payload["capabilities"] = args.capabilities;
+  return createSignal({
+    type: SignalType.DISCOVER,
+    trace_id: args.traceId ?? newTraceId(),
+    parent_id: args.parentId ?? null,
+    payload,
+    meta: args.meta ?? {},
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Engram signal builders (see ENGRAM_DESIGN.md §4)
+// ---------------------------------------------------------------------------
+
+const RECALL_MODES = new Set(["first", "merge", "all"]);
+const IMPRINT_OPS = new Set(["add", "append", "merge", "upsert", "delete"]);
+
+/**
+ * [D] Memory-recall request. Inherits `traceId` from the containing TASK and
+ * MUST be addressed: `directed` needs at least one of `id` (engram_id) or
+ * `type` (engram_kind). `recallMode` controls fan-out: `"first"` (one winner),
+ * `"merge"` (caller merges all by deadline), `"all"` (stream each).
+ */
+export function recallSignal(args: {
+  traceId: string;
+  parentId: string;
+  directed: DirectedInput;
+  query: Json;
+  filters?: Json;
+  contextRef?: string;
+  deadlineMs?: number;
+  minConfidence?: number;
+  recallMode?: "first" | "merge" | "all";
+  meta?: Json;
+}): Signal {
+  const directed = normalizeDirected(args.directed);
+  if (!directed || (!directed.id && !directed.type)) {
+    throw new Error(
+      "recallSignal requires directed.id (engram_id) or directed.type (engram_kind)",
+    );
+  }
+  const mode = args.recallMode ?? "first";
+  if (!RECALL_MODES.has(mode)) {
+    throw new Error(`recallMode must be 'first' | 'merge' | 'all', got '${mode}'`);
+  }
+  const payload: Json = { query: args.query, recall_mode: mode };
+  if (args.filters !== undefined) payload["filters"] = args.filters;
+  if (args.contextRef !== undefined) payload["context_ref"] = args.contextRef;
+  if (args.deadlineMs !== undefined) payload["deadline_ms"] = args.deadlineMs;
+  if (args.minConfidence !== undefined) payload["min_confidence"] = args.minConfidence;
+  return createSignal({
+    type: SignalType.RECALL,
+    trace_id: args.traceId,
+    parent_id: args.parentId,
+    directed: args.directed,
+    payload,
+    meta: args.meta ?? {},
+  });
+}
+
+/** [D] Response from one Engram to a RECALL. `parentId` MUST be the RECALL's id. */
+export function recalledSignal(args: {
+  traceId: string;
+  parentId: string;
+  engramId: string;
+  hits: Json[];
+  truncated?: boolean;
+  tookMs?: number;
+  directed?: DirectedInput;
+  meta?: Json;
+}): Signal {
+  const payload: Json = {
+    engram_id: args.engramId,
+    hits: args.hits,
+    truncated: args.truncated ?? false,
+  };
+  if (args.tookMs !== undefined) payload["took_ms"] = args.tookMs;
+  return createSignal({
+    type: SignalType.RECALLED,
+    trace_id: args.traceId,
+    parent_id: args.parentId,
+    directed: args.directed ?? null,
+    payload,
+    meta: args.meta ?? {},
+  });
+}
+
+/**
+ * [D] Memory-write request. `op` is one of add | append | merge | upsert |
+ * delete; `mergeKey` is required for merge/upsert. MUST be addressed.
+ */
+export function imprintSignal(args: {
+  traceId: string;
+  parentId: string;
+  directed: DirectedInput;
+  op: "add" | "append" | "merge" | "upsert" | "delete";
+  entry: Json;
+  mergeKey?: string;
+  meta?: Json;
+}): Signal {
+  if (!IMPRINT_OPS.has(args.op)) {
+    throw new Error(`imprint op must be one of ${[...IMPRINT_OPS].join(" | ")}, got '${args.op}'`);
+  }
+  const directed = normalizeDirected(args.directed);
+  if (!directed || (!directed.id && !directed.type)) {
+    throw new Error(
+      "imprintSignal requires directed.id (engram_id) or directed.type (engram_kind)",
+    );
+  }
+  if ((args.op === "merge" || args.op === "upsert") && !args.mergeKey) {
+    throw new Error(`imprint op='${args.op}' requires mergeKey`);
+  }
+  const payload: Json = { op: args.op, entry: args.entry };
+  if (args.mergeKey !== undefined) payload["merge_key"] = args.mergeKey;
+  return createSignal({
+    type: SignalType.IMPRINT,
+    trace_id: args.traceId,
+    parent_id: args.parentId,
+    directed: args.directed,
+    payload,
+    meta: args.meta ?? {},
+  });
+}
+
+/** [D] Receipt of a completed IMPRINT. `parentId` MUST be the IMPRINT's id. */
+export function imprintedSignal(args: {
+  traceId: string;
+  parentId: string;
+  engramId: string;
+  op: string;
+  id?: string;
+  version?: number;
+  tookMs?: number;
+  error?: string;
+  directed?: DirectedInput;
+  meta?: Json;
+}): Signal {
+  const payload: Json = { engram_id: args.engramId, op: args.op };
+  if (args.id !== undefined) payload["id"] = args.id;
+  if (args.version !== undefined) payload["version"] = args.version;
+  if (args.tookMs !== undefined) payload["took_ms"] = args.tookMs;
+  if (args.error !== undefined) payload["error"] = args.error;
+  return createSignal({
+    type: SignalType.IMPRINTED,
+    trace_id: args.traceId,
+    parent_id: args.parentId,
+    directed: args.directed ?? null,
+    payload,
     meta: args.meta ?? {},
   });
 }

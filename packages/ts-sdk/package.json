@@ -1,6 +1,6 @@
 {
   "name": "@cosmonapse/sdk",
-  "version": "0.1.0",
+  "version": "0.0.0",
   "description": "Event-driven Agent-to-Agent protocol SDK  -  TypeScript surface of the Cosmonapse envelope spec",
   "license": "MIT",
   "type": "module",
@@ -28,7 +28,7 @@
     "node": ">=18"
   },
   "scripts": {
-    "build": "tsup src/index.ts --format esm,cjs --dts --clean --external @modelcontextprotocol/sdk --external nats --external kafkajs --external better-sqlite3 --external pg",
+    "build": "tsup",
     "typecheck": "tsc --noEmit",
     "test": "node --import tsx --test \"test/**/*.test.ts\""
   },

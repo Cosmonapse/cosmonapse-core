@@ -170,7 +170,18 @@ from cosmonapse.synapse import (
 )
 from cosmonapse._url import synapse_from_url, connect_synapse
 
-__version__ = "0.1.0"
+# Single source of truth for the version is the installed distribution
+# metadata, which hatch-vcs derives from the `vX.Y.Z` git tag at build time
+# (see pyproject.toml). Nothing here is hand-edited per release.
+from importlib.metadata import PackageNotFoundError as _PkgNotFound
+from importlib.metadata import version as _dist_version
+
+try:
+    __version__ = _dist_version("cosmonapse")
+except _PkgNotFound:  # running from a source tree that isn't installed
+    __version__ = "0.0.0.dev0"
+
+del _PkgNotFound, _dist_version
 
 __all__ = [
     "Signal",

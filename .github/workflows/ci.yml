@@ -55,7 +55,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"   # >= 21 for node --test glob patterns
           cache: npm
           cache-dependency-path: packages/ts-sdk/package-lock.json
 

@@ -5,14 +5,20 @@
  * re-exports the envelope types/codec and the typed signal builders. It is the
  * 1:1 counterpart to the Python `cosmonapse` package's envelope module.
  *
- * Status: v0.3  -  envelope, builders, MemorySynapse, NatsSynapse, DevSynapse,
- * KafkaSynapse, the RegistryStore (in-memory + sqlite + postgres) + Dendrite
- * registry mirror, LifecycleHooks, connectSynapse, Neuron (MCP / Ollama /
- * HuggingFace), Axon and Dendrite are ported and functional. Any remaining
- * intentional differences are documented in PORTING_STATUS.md.
+ * Ported and functional: envelope, builders, MemorySynapse, NatsSynapse,
+ * DevSynapse, KafkaSynapse, the RegistryStore (in-memory + sqlite + postgres) +
+ * Dendrite registry mirror, LifecycleHooks, connectSynapse, Neuron (MCP /
+ * Ollama / HuggingFace), Axon and Dendrite. Any remaining intentional
+ * differences are documented in PORTING_STATUS.md.
  */
 
-export const VERSION = "0.1.0";
+// `__PKG_VERSION__` is replaced at build time by tsup (see tsup.config.ts)
+// with package.json's `version`, which the release workflow sets from the
+// `vX.Y.Z` git tag. `typeof` keeps this safe when the source is run
+// un-bundled (e.g. tests via tsx), where the define is absent.
+declare const __PKG_VERSION__: string | undefined;
+export const VERSION: string =
+  typeof __PKG_VERSION__ === "string" ? __PKG_VERSION__ : "0.0.0-dev";
 
 export {
   SignalType,
@@ -20,6 +26,7 @@ export {
   SYNAPSE_TYPES,
   newEventId,
   newTraceId,
+  newEngramId,
   createSignal,
   validateSignal,
   normalizeDirected,
@@ -50,6 +57,18 @@ export {
   taskOfferSignal,
   bidSignal,
   critiqueSignal,
+  planSignal,
+  thoughtDeltaSignal,
+  toolCallSignal,
+  toolResultSignal,
+  escalationSignal,
+  consensusSignal,
+  contextSyncSignal,
+  discoverSignal,
+  recallSignal,
+  recalledSignal,
+  imprintSignal,
+  imprintedSignal,
 } from "./signals.js";
 
 // --- runtime primitives ---
@@ -167,3 +186,36 @@ export {
   type NeuronSource,
   type OpenAICompatNeuronOptions,
 } from "./neuron-factory.js";
+
+// --- engram: shared memory ---
+
+export {
+  Engram,
+  InMemoryEngram,
+  EngramBinding,
+  EngramError,
+  EngramTimeout,
+  EngramCancelled,
+  EngramNotBound,
+  EngramOverloaded,
+  deepMerge,
+  type Hit,
+  type RecallResult,
+  type ImprintReceipt,
+  type RecallMode,
+  type ImprintOp,
+  type RecallOptions,
+  type ImprintOptions,
+  type EngramBindingInit,
+  type InMemoryEngramInit,
+} from "./engram.js";
+
+export {
+  EngramClient,
+  type EngramPublisher,
+  type RecallCallArgs,
+  type ImprintCallArgs,
+} from "./engram-client.js";
+
+export { SqliteEngram, type SqliteEngramInit } from "./engram-sqlite.js";
+export { PostgresEngram, type PostgresEngramInit } from "./engram-postgres.js";

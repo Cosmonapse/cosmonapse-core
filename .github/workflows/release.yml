@@ -36,6 +36,8 @@ jobs:
         working-directory: packages/prism-ui
         run: |
           npm ci || npm install
+          # Match the rest of the release: the bundled UI version is the tag.
+          npm version "${GITHUB_REF_NAME#v}" --no-git-tag-version --allow-same-version
           npm run build:into-wheel   # vite build + copy-dist.mjs -> cosmo/commands/prism_dist
 
       - uses: actions/setup-python@v5
@@ -71,7 +73,8 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          # npm OIDC trusted publishing needs npm CLI >= 11.5.1; Node 24 ships npm 11.x.
+          node-version: "24"
           registry-url: "https://registry.npmjs.org"
           cache: npm
           cache-dependency-path: packages/ts-sdk/package-lock.json
@@ -88,5 +91,4 @@ jobs:
         run: npm run build
 
       - name: Publish
-        run: npm publish --access public
-
+        run: npm publish --access public --provenance

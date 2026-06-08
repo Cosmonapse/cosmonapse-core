@@ -26,6 +26,11 @@ export function newTraceId(): string {
   return `trc_${ulid()}`;
 }
 
+/** Return a prefixed Engram entry ULID: `eng_<26-char ULID>`. */
+export function newEngramId(): string {
+  return `eng_${ulid()}`;
+}
+
 function nowUtc(): string {
   // RFC 3339 UTC timestamp with millisecond precision.
   return new Date().toISOString();
@@ -78,6 +83,15 @@ export const SignalType = {
   REGISTER: "REGISTER",
   DEREGISTER: "DEREGISTER",
   HEARTBEAT: "HEARTBEAT",
+
+  // Engram [C]  -  see ENGRAM_DESIGN.md
+  RECALL: "RECALL",
+  RECALLED: "RECALLED",
+  IMPRINT: "IMPRINT",
+  IMPRINTED: "IMPRINTED",
+
+  // Discovery [C]
+  DISCOVER: "DISCOVER",
 } as const;
 
 export type SignalType = (typeof SignalType)[keyof typeof SignalType];
@@ -116,6 +130,11 @@ export const SYNAPSE_TYPES: ReadonlySet<SignalType> = new Set<SignalType>([
   // requester's CognitionClient via parent_id.
   SignalType.PERMISSION_DECISION,
   SignalType.CLARIFICATION_ANSWER,
+  SignalType.DISCOVER,
+  SignalType.RECALL,
+  SignalType.RECALLED,
+  SignalType.IMPRINT,
+  SignalType.IMPRINTED,
 ]);
 
 // ---------------------------------------------------------------------------

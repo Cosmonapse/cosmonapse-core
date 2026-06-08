@@ -31,7 +31,29 @@ delete the corresponding caveat comment from the source.
   builders, the `onPermission` handler, and the responder helpers
   `respondToPermission` / `grantPermission` / `denyPermission` /
   `answerClarification`. At parity with the Python SDK. There is no blocking
-  "cognition client" in either SDK  -  the Engram + return-marker carry it.
+  "cognition client" in either SDK  -  the return-marker carries it. (Engram-
+  backed recall of prior answers exists in the Python SDK only for now; see
+  "Still to port".)
+- Cognition & coordination signal builders: `planSignal`, `thoughtDeltaSignal`,
+  `toolCallSignal`, `toolResultSignal`, `escalationSignal`, `consensusSignal`,
+  `contextSyncSignal`, `discoverSignal` (and the `DISCOVER` `SignalType`). At
+  parity with the Python `cosmonapse.envelope` builders.
+- Engram value layer (`engram.ts`, `engram-client.ts`): the `RECALL` /
+  `RECALLED` / `IMPRINT` / `IMPRINTED` signal types + builders + `newEngramId`;
+  the `Engram` contract, `EngramBinding`, `Hit` / `RecallResult` /
+  `ImprintReceipt`, the exception family, the default `InMemoryEngram` (full
+  recall/imprint incl. merge/upsert/delete + idempotency + deep-merge), and the
+  caller-side `EngramClient` (deadline + parent_id correlation, decoupled from
+  the Dendrite via an `EngramPublisher` interface). Mirrors the Python
+  `cosmonapse.engram` base/memory/client. Only the Dendrite/Axon wiring is
+  still outstanding (see below).
+- Engram persistent backends (`engram-sqlite.ts`, `engram-postgres.ts`):
+  `SqliteEngram` (optional `better-sqlite3`) and `PostgresEngram` (optional
+  `pg`), both implementing the same `Engram` contract as `InMemoryEngram`,
+  ported from `cosmonapse.engram.sqlite` / `.postgres`. Lazy-imported like the
+  registry stores. Typecheck-verified; exercise against a real DB in CI before
+  relying on them (the in-sandbox port could not run native `better-sqlite3` /
+  a live Postgres).
 - Neuron sources: `mcpNeuron`, `ollamaNeuron`, `huggingFaceNeuron`, and the
   unified `neuron()` factory. (The Express / HTTP-app Neuron was removed  -  an
   HTTP API is not a Neuron; front an orchestrator Dendrite with your web
@@ -57,13 +79,9 @@ delete the corresponding caveat comment from the source.
 
 ## Still to port (tracked, not yet implemented)
 
-Nothing outstanding  -  the LLM provider neurons added to the Python SDK in
-0.1.1 were ported to TypeScript in the same release. New gaps, if any are
-discovered, should be added here.
-
 | Area | Gap | Python reference | Notes |
 | --- | --- | --- | --- |
-|  -  |  -  |  -  | All previously-tracked gaps are ported. |
+| Engram Dendrite/Axon wiring | The hosting + caller integration is not wired into `Dendrite` / `Axon`. | Python `Dendrite.attach_engram` / `detach_engram`, RECALL/IMPRINT subscription + dispatch, RECALLED/IMPRINTED delivery to `EngramClient`, terminal-event `cancel_trace`; `Axon(engrams=[...])` binding whitelist + `recall`/`imprint` helper injection. | `EngramClient` already exists and only needs an `EngramPublisher` (the Dendrite). **Design decision required:** Python injects `recall`/`imprint` into the Neuron fn by introspecting parameter names (`inspect`), which TS cannot do — pass a context object to the Neuron instead. Integration-heavy; do it against a working local build. |
 
 ## Known intentional differences (not gaps)
 
