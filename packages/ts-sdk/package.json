@@ -65,6 +65,10 @@
     "tsx": "^4.19.0",
     "typescript": "^5.4.0"
   },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Cosmonapse/cosmonapse-core"
+  },
   "publishConfig": {
     "access": "public"
   }
