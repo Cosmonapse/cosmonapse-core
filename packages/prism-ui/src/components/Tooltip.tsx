@@ -40,6 +40,24 @@ export function Tooltip({ neuron, x, y }: Props) {
       >
         {neuron.id}
       </div>
+      <div
+        style={{
+          display: "inline-block",
+          fontFamily: MONO,
+          fontSize: 10,
+          fontWeight: 600,
+          letterSpacing: 0.4,
+          textTransform: "uppercase",
+          padding: "2px 7px",
+          borderRadius: 4,
+          marginBottom: 8,
+          color: neuron.kind === "engram" ? "#c4b5fd" : "#67e8f9",
+          background: neuron.kind === "engram" ? "rgba(167,139,250,0.12)" : "rgba(34,211,238,0.08)",
+          border: "1px solid " + (neuron.kind === "engram" ? "rgba(167,139,250,0.3)" : "rgba(34,211,238,0.2)"),
+        }}
+      >
+        {neuron.kind}
+      </div>
       {neuron.capabilities.length > 0 && (
         <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginBottom: 8 }}>
           {neuron.capabilities.map((c) => (

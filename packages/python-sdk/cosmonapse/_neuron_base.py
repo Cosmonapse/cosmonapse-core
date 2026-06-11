@@ -47,13 +47,61 @@ class _BaseNeuron:
     # ------------------------------------------------------------------
 
     def _prompt(self, input: dict[str, Any]) -> str | None:
-        """Return a plain-text prompt from common input keys."""
+        """Return a plain-text prompt from common input keys, or a rendered
+        continuation when the input is a clarification / permission
+        follow-up TASK (re-dispatched by ``respond_to_clarification`` /
+        ``respond_to_permission``)."""
         return (
             input.get("prompt")
             or input.get("text")
             or input.get("query")
             or input.get("content")
+            or self._followup_prompt(input)
         )
+
+    @staticmethod
+    def _followup_prompt(input: dict[str, Any]) -> str | None:
+        """Render the close-the-loop TASK shapes into a prompt continuation.
+
+        ``respond_to_clarification`` re-dispatches
+        ``{"clarification": {"question", "answer", ...}}`` and
+        ``respond_to_permission`` re-dispatches
+        ``{"permission": {"action", "granted", "reason"?, "ttl_ms"?, ...}}``.
+        Built-in LLM Neurons have no native understanding of those keys, so
+        without this rendering every default close-the-loop flow died with
+        "expects 'prompt' or 'messages'". Custom neuron_fns can read the
+        raw dicts directly and never hit this path.
+        """
+        c = input.get("clarification")
+        if isinstance(c, dict):
+            lines = ["You previously asked a clarifying question while working on a task."]
+            if c.get("question") is not None:
+                lines.append(f"Your question: {c['question']}")
+            if "answer" in c:
+                lines.append(f"The answer: {c['answer']}")
+            extra = {k: v for k, v in c.items() if k not in ("question", "answer")}
+            if extra:
+                lines.append(f"Additional context: {extra}")
+            lines.append("Continue the original task using this answer.")
+            return "\n".join(lines)
+        perm = input.get("permission")
+        if isinstance(perm, dict):
+            granted = perm.get("granted")
+            verdict = "GRANTED" if granted else "DENIED"
+            lines = ["You previously requested permission while working on a task."]
+            if perm.get("action") is not None:
+                lines.append(f"Requested action: {perm['action']}")
+            lines.append(f"The decision: {verdict}.")
+            if perm.get("reason") is not None:
+                lines.append(f"Reason: {perm['reason']}")
+            if perm.get("ttl_ms") is not None:
+                lines.append(f"The grant is valid for {perm['ttl_ms']} ms.")
+            if granted:
+                lines.append("Proceed with the action and continue the original task.")
+            else:
+                lines.append("Do not perform the action. Continue the task another way, or explain why you cannot.")
+            return "\n".join(lines)
+        return None
 
     def _messages(self, input: dict[str, Any]) -> list[dict[str, Any]] | None:
         """Return OpenAI-style messages if present."""

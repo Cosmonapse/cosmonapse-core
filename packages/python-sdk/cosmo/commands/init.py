@@ -108,7 +108,7 @@ Run the synapse and worker first, then this orchestrator:
 
 import asyncio
 
-from cosmonapse import Dendrite, connect_synapse, new_trace_id
+from cosmonapse import Dendrite, SignalType, connect_synapse
 
 SYNAPSE_URL = "cosmo://127.0.0.1:7070"
 NAMESPACE = "__NAMESPACE__"
@@ -117,9 +117,6 @@ NAMESPACE = "__NAMESPACE__"
 async def main() -> None:
     synapse = await connect_synapse(SYNAPSE_URL)
     try:
-        result_future: asyncio.Future = asyncio.get_event_loop().create_future()
-        trace_id = new_trace_id()
-
         orch = Dendrite(
             synapse=synapse,
             namespace=NAMESPACE,
@@ -127,25 +124,28 @@ async def main() -> None:
             heartbeat_s=0,
         )
 
-        @orch.on_agent_output
-        async def _on_output(sig):
-            if sig.trace_id == trace_id and not result_future.done():
-                result_future.set_result(sig.payload.get("output", {}))
-
-        @orch.on_error_signal
-        async def _on_error(sig):
-            if sig.trace_id == trace_id and not result_future.done():
-                result_future.set_exception(
-                    RuntimeError(sig.payload.get("message", "error"))
-                )
-
         async with orch:
             input_data = {"name": "Cosmonapse"}
-            print(f"dispatching TASK  trace={trace_id}  neuron=hello  input={input_data}")
-            await orch.dispatch_task(neuron="hello", input=input_data, trace_id=trace_id)
-            result = await asyncio.wait_for(result_future, timeout=5.0)
+            print(f"dispatching TASK  neuron=hello  input={input_data}")
 
-        print(f"result: {result}")
+            # dispatch_and_wait: emit the TASK, await the reply, done.
+            # scope="terminal" waits for workflow conclusion - the worker
+            # finalizes its output automatically (terminal-handler
+            # finalize), so this resolves with a FINAL carrying the result.
+            sig = await orch.dispatch_and_wait(
+                neuron="hello",
+                input=input_data,
+                scope="terminal",
+                timeout_s=5.0,
+            )
+
+            if sig.type is SignalType.ERROR:
+                raise RuntimeError(sig.payload.get("message", "error"))
+            print(f"result: {sig.payload.get('result', {})}")
+
+            # Want streaming instead? The same dispatch returns a Pathway:
+            #   pw = await orch.dispatch(neuron="hello", input=input_data)
+            #   async for s in pw: ...
     finally:
         await synapse.close()
 

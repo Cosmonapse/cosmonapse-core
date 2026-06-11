@@ -1,32 +1,35 @@
 """
 cosmonapse.engram.client
 ~~~~~~~~~~~~~~~~~~~~~~~~
-EngramClient is the caller-side bridge. The Axon and the Cortex both
-call into it; only the Dendrite is allowed to touch the Synapse.
+EngramClient is the caller-side bridge for Engram I/O. The Axon and the
+Cortex both call into it; only the Dendrite is allowed to touch the Synapse.
 
-Responsibilities
-----------------
-* Build RECALL / IMPRINT envelopes (delegates to envelope builders).
+It is a *thin wrapper over a per-operation Pathway*. All correlation,
+buffering, deadline, and cancellation machinery lives in the Pathway /
+Dendrite, not here:
+
+* Build a RECALL / IMPRINT envelope (delegates to the envelope builders).
+* Open an op-Pathway keyed on that envelope's ``id`` via
+  ``Dendrite._open_op_pathway`` - the Dendrite routes the matching
+  RECALLED / IMPRINTED back to it by ``parent_id``.
 * Publish via the hosting Dendrite's ``_publish``.
-* Register pending Futures keyed by the envelope's ``id``.
-* Resolve those Futures when a matching RECALLED / IMPRINTED arrives.
-* Enforce ``deadline_ms`` per call.
-* Cancel in-flight Futures with EngramCancelled when a TASK terminal
-  event arrives on the same trace, or the Dendrite stops.
+* ``await`` the response off the Pathway (``wait_for`` for a single
+  responder, an iterate-until-deadline loop for ``merge`` / ``all``).
+* Map a deadline timeout to :class:`EngramTimeout` and a Pathway closed by
+  the parent TASK's terminal event (or Dendrite shutdown) to
+  :class:`EngramCancelled`.
 
-The Dendrite owns the subscription to RECALLED / IMPRINTED and calls
-``EngramClient._deliver(signal)`` for every inbound. The client
-matches by ``parent_id``.
-
-This module imports the Dendrite lazily via TYPE_CHECKING to avoid an
-import cycle.
+Because correlation is per-operation (``parent_id``) and lives in the
+generic Pathway primitive, any future request/reply client can be built the
+same way. This module imports the Dendrite lazily via TYPE_CHECKING to avoid
+an import cycle.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
-from typing import cast, TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any
 
 from cosmonapse.engram.base import (
     EngramCancelled,
@@ -43,6 +46,7 @@ from cosmonapse.envelope import (
     imprint_signal,
     recall_signal,
 )
+from cosmonapse.pathway import Pathway, PathwayClosedError
 
 if TYPE_CHECKING:
     from cosmonapse.dendrite import Dendrite
@@ -51,39 +55,16 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class _PendingRecall:
-    __slots__ = ("future", "mode", "deadline_handle", "hits_so_far", "engrams")
-
-    def __init__(self, future: asyncio.Future[Any], mode: str) -> None:
-        self.future = future
-        self.mode = mode
-        self.deadline_handle: asyncio.TimerHandle | None = None
-        self.hits_so_far: list[Hit] = []
-        self.engrams: list[str] = []
-
-
-class _PendingImprint:
-    __slots__ = ("future", "deadline_handle")
-
-    def __init__(self, future: asyncio.Future[Any]) -> None:
-        self.future = future
-        self.deadline_handle: asyncio.TimerHandle | None = None
-
-
 class EngramClient:
-    """Caller-side correlation table for Engram I/O.
+    """Caller-side helper for Engram I/O - a thin wrapper over op-Pathways.
 
-    One instance per Dendrite. The Dendrite passes itself in so the
-    client can call ``_publish``; the Dendrite drives ``_deliver()``
-    from its inbound dispatch path.
+    One instance per Dendrite. The Dendrite passes itself in so the client
+    can open op-Pathways (``_open_op_pathway``) and publish (``_publish``).
+    Correlation, deadlines, and cancellation are the Pathway's job.
     """
 
     def __init__(self, dendrite: "Dendrite") -> None:
         self._dendrite = dendrite
-        self._pending_recalls: dict[str, _PendingRecall] = {}
-        self._pending_imprints: dict[str, _PendingImprint] = {}
-        # Group pendings by trace so terminal events can cancel them.
-        self._by_trace: dict[str, set[str]] = {}
 
     # ------------------------------------------------------------------
     # Public API (used by Axon helpers and Dendrite.recall/imprint)
@@ -135,35 +116,18 @@ class EngramClient:
             meta=meta,
         )
 
-        loop = asyncio.get_running_loop()
-        fut: asyncio.Future[Any] = loop.create_future()
-        pending = _PendingRecall(fut, mode=recall_mode)
-        self._pending_recalls[sig.id] = pending
-        self._by_trace.setdefault(trace_id, set()).add(sig.id)
-
-        if deadline_ms is not None and deadline_ms > 0:
-            pending.deadline_handle = loop.call_later(
-                deadline_ms / 1000.0,
-                self._on_recall_deadline,
-                sig.id,
-            )
-
+        # Open the op-Pathway BEFORE publishing so an inline (in-memory)
+        # RECALLED is buffered, never lost. The Dendrite routes RECALLED by
+        # parent_id == sig.id back to this Pathway.
+        pw = self._dendrite._open_op_pathway(op_id=sig.id, trace_id=trace_id)
+        deadline_s = (deadline_ms / 1000.0) if deadline_ms else None
         try:
             await self._dendrite._publish(sig)
-        except Exception:
-            self._pending_recalls.pop(sig.id, None)
-            self._discard_trace_entry(trace_id, sig.id)
-            if pending.deadline_handle:
-                pending.deadline_handle.cancel()
-            raise
-
-        try:
-            return cast(RecallResult, await fut)
+            if recall_mode == "first":
+                return await self._await_first_recalled(pw, deadline_s)
+            return await self._collect_recalled(pw, deadline_s)
         finally:
-            self._pending_recalls.pop(sig.id, None)
-            self._discard_trace_entry(trace_id, sig.id)
-            if pending.deadline_handle:
-                pending.deadline_handle.cancel()
+            await pw.close()
 
     async def imprint(
         self,
@@ -207,148 +171,100 @@ class EngramClient:
             await self._dendrite._publish(sig)
             return None
 
-        loop = asyncio.get_running_loop()
-        fut: asyncio.Future[Any] = loop.create_future()
-        pending = _PendingImprint(fut)
-        self._pending_imprints[sig.id] = pending
-        self._by_trace.setdefault(trace_id, set()).add(sig.id)
-
-        if deadline_ms is not None and deadline_ms > 0:
-            pending.deadline_handle = loop.call_later(
-                deadline_ms / 1000.0,
-                self._on_imprint_deadline,
-                sig.id,
-            )
-
+        pw = self._dendrite._open_op_pathway(op_id=sig.id, trace_id=trace_id)
+        deadline_s = (deadline_ms / 1000.0) if deadline_ms else None
         try:
             await self._dendrite._publish(sig)
-        except Exception:
-            self._pending_imprints.pop(sig.id, None)
-            self._discard_trace_entry(trace_id, sig.id)
-            if pending.deadline_handle:
-                pending.deadline_handle.cancel()
-            raise
-
-        try:
-            return cast("ImprintReceipt | None", await fut)
-        finally:
-            self._pending_imprints.pop(sig.id, None)
-            self._discard_trace_entry(trace_id, sig.id)
-            if pending.deadline_handle:
-                pending.deadline_handle.cancel()
-
-    # ------------------------------------------------------------------
-    # Delivery (driven by the Dendrite's inbound dispatch)
-    # ------------------------------------------------------------------
-
-    async def _deliver(self, sig: Signal) -> None:
-        """Match RECALLED/IMPRINTED by parent_id and resolve pendings."""
-        pid = sig.parent_id
-        if pid is None:
-            return
-        if sig.type is SignalType.RECALLED:
-            pending = self._pending_recalls.get(pid)
-            if pending is None:
-                return
-            hits = _hits_from_payload(sig.payload.get("hits") or [])
-            engram_id = sig.payload.get("engram_id") or ""
-            took_ms = sig.payload.get("took_ms")
-            truncated = bool(sig.payload.get("truncated"))
-            if pending.mode == "first":
-                if not pending.future.done():
-                    pending.future.set_result(
-                        RecallResult(
-                            hits=hits,
-                            engram_ids=(engram_id,) if engram_id else (),
-                            truncated=truncated,
-                            took_ms=took_ms,
-                        )
-                    )
-            else:
-                # merge / all  -> accumulate; the deadline handler resolves.
-                pending.hits_so_far.extend(hits)
-                if engram_id:
-                    pending.engrams.append(engram_id)
-        elif sig.type is SignalType.IMPRINTED:
-            pending_imp = self._pending_imprints.get(pid)
-            if pending_imp is None:
-                return
-            if not pending_imp.future.done():
-                pending_imp.future.set_result(
-                    ImprintReceipt(
-                        engram_id=sig.payload.get("engram_id") or "",
-                        op=sig.payload.get("op") or "",
-                        id=sig.payload.get("id"),
-                        version=sig.payload.get("version"),
-                        took_ms=sig.payload.get("took_ms"),
-                        error=sig.payload.get("error"),
-                    )
+            try:
+                recv = await pw.wait_for(
+                    SignalType.IMPRINTED, timeout_s=deadline_s,
                 )
-
-    def cancel_trace(self, trace_id: str) -> None:
-        """Cancel every in-flight recall/imprint on this trace.
-
-        Called by the Dendrite when a FINAL or ERROR on the trace
-        arrives, or on shutdown."""
-        ids = self._by_trace.pop(trace_id, set())
-        for ev_id in ids:
-            pr = self._pending_recalls.pop(ev_id, None)
-            if pr is not None and not pr.future.done():
-                pr.future.set_exception(EngramCancelled(
-                    f"trace {trace_id} terminated while recall {ev_id} in flight"
-                ))
-                if pr.deadline_handle:
-                    pr.deadline_handle.cancel()
-            pi = self._pending_imprints.pop(ev_id, None)
-            if pi is not None and not pi.future.done():
-                pi.future.set_exception(EngramCancelled(
-                    f"trace {trace_id} terminated while imprint {ev_id} in flight"
-                ))
-                if pi.deadline_handle:
-                    pi.deadline_handle.cancel()
-
-    def cancel_all(self) -> None:
-        for trace_id in list(self._by_trace.keys()):
-            self.cancel_trace(trace_id)
-
-    # ------------------------------------------------------------------
-    # Internal
-    # ------------------------------------------------------------------
-
-    def _on_recall_deadline(self, event_id: str) -> None:
-        pending = self._pending_recalls.get(event_id)
-        if pending is None or pending.future.done():
-            return
-        if pending.mode == "first":
-            pending.future.set_exception(EngramTimeout(
-                f"RECALL {event_id} elapsed deadline without any responder"
-            ))
-        else:
-            # merge / all  -> resolve with whatever we have so far
-            pending.future.set_result(
-                RecallResult(
-                    hits=sorted(pending.hits_so_far, key=lambda h: h.score, reverse=True),
-                    engram_ids=tuple(pending.engrams),
-                    truncated=False,
-                    took_ms=None,
-                )
+            except asyncio.TimeoutError:
+                raise EngramTimeout(
+                    "IMPRINT elapsed its deadline without IMPRINTED"
+                ) from None
+            except PathwayClosedError:
+                raise EngramCancelled(
+                    "trace terminated while IMPRINT was in flight"
+                ) from None
+            return ImprintReceipt(
+                engram_id=recv.payload.get("engram_id") or "",
+                op=recv.payload.get("op") or "",
+                id=recv.payload.get("id"),
+                version=recv.payload.get("version"),
+                took_ms=recv.payload.get("took_ms"),
+                error=recv.payload.get("error"),
             )
+        finally:
+            await pw.close()
 
-    def _on_imprint_deadline(self, event_id: str) -> None:
-        pending = self._pending_imprints.get(event_id)
-        if pending is None or pending.future.done():
-            return
-        pending.future.set_exception(EngramTimeout(
-            f"IMPRINT {event_id} elapsed deadline without IMPRINTED"
-        ))
+    # ------------------------------------------------------------------
+    # Response shaping off the op-Pathway
+    # ------------------------------------------------------------------
 
-    def _discard_trace_entry(self, trace_id: str, event_id: str) -> None:
-        bucket = self._by_trace.get(trace_id)
-        if bucket is None:
-            return
-        bucket.discard(event_id)
-        if not bucket:
-            self._by_trace.pop(trace_id, None)
+    async def _await_first_recalled(
+        self, pw: Pathway, deadline_s: float | None,
+    ) -> RecallResult:
+        """recall_mode='first': resolve on the first RECALLED."""
+        try:
+            sig = await pw.wait_for(SignalType.RECALLED, timeout_s=deadline_s)
+        except asyncio.TimeoutError:
+            raise EngramTimeout(
+                "RECALL elapsed its deadline without any responder"
+            ) from None
+        except PathwayClosedError:
+            raise EngramCancelled(
+                "trace terminated while RECALL was in flight"
+            ) from None
+        return _recall_result_from(sig)
+
+    async def _collect_recalled(
+        self, pw: Pathway, deadline_s: float | None,
+    ) -> RecallResult:
+        """recall_mode='merge'/'all': accumulate hits across every responder
+        until the deadline elapses, then return them merged and score-sorted.
+        Without a deadline the loop runs until the trace is cancelled (which
+        surfaces as EngramCancelled) - matching the legacy behaviour where
+        merge/all relied on a deadline to resolve."""
+        hits: list[Hit] = []
+        engrams: list[str] = []
+        loop = asyncio.get_running_loop()
+        end = (loop.time() + deadline_s) if deadline_s is not None else None
+        while True:
+            remaining = None if end is None else end - loop.time()
+            if remaining is not None and remaining <= 0:
+                break
+            try:
+                sig = await pw.wait_for(
+                    SignalType.RECALLED, timeout_s=remaining,
+                )
+            except asyncio.TimeoutError:
+                break
+            except PathwayClosedError:
+                raise EngramCancelled(
+                    "trace terminated while RECALL was in flight"
+                ) from None
+            hits.extend(_hits_from_payload(sig.payload.get("hits") or []))
+            eid = sig.payload.get("engram_id")
+            if eid:
+                engrams.append(eid)
+        return RecallResult(
+            hits=sorted(hits, key=lambda h: h.score, reverse=True),
+            engram_ids=tuple(engrams),
+            truncated=False,
+            took_ms=None,
+        )
+
+
+def _recall_result_from(sig: Signal) -> RecallResult:
+    """Shape a single RECALLED Signal into a RecallResult."""
+    engram_id = sig.payload.get("engram_id") or ""
+    return RecallResult(
+        hits=_hits_from_payload(sig.payload.get("hits") or []),
+        engram_ids=(engram_id,) if engram_id else (),
+        truncated=bool(sig.payload.get("truncated")),
+        took_ms=sig.payload.get("took_ms"),
+    )
 
 
 def _hits_from_payload(raw_hits: list[dict[str, Any]]) -> list[Hit]:
@@ -358,7 +274,7 @@ def _hits_from_payload(raw_hits: list[dict[str, Any]]) -> list[Hit]:
             continue
         out.append(Hit(
             id=str(h.get("id", "")),
-            entry=cast(dict[str, Any], h.get("entry") if isinstance(h.get("entry"), dict) else {"value": h.get("entry")}),
+            entry=h.get("entry") if isinstance(h.get("entry"), dict) else {"value": h.get("entry")},
             score=float(h.get("score", 1.0)),
         ))
     return out

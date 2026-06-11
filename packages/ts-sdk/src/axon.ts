@@ -30,7 +30,10 @@ import {
   isPermissionRequest,
   type ContextFetcher,
   type NeuronFn,
+  type NeuronHelpers,
 } from "./neuron.js";
+import { EngramNotBound, type EngramBinding } from "./engram.js";
+import { runWithTraceContext } from "./trace-context.js";
 import { neuron, type NeuronSource } from "./neuron-factory.js";
 import type { OllamaNeuronOptions, HuggingFaceNeuronOptions } from "./neuron-http.js";
 import type { OpenAINeuronOptions, AnthropicNeuronOptions } from "./neuron-openai.js";
@@ -77,18 +80,40 @@ export interface AxonOptions {
   neuronFn: NeuronFn;
   capabilities?: string[];
   version?: string;
+  /** Participant kind carried on REGISTER as `directed.type` - the Neuron-side
+   *  analogue of an Engram's `engram_kind`. Defaults to `"neuron"`. */
+  neuronKind?: string;
   contextFetcher?: ContextFetcher;
   /** Recognition the Axon applies to the Neuron's raw output before wrapping. */
   outputParser?: OutputParser;
+  /**
+   * Engram bindings the Neuron may address. Keyed by `binding.name`  -  the
+   * Neuron passes that name to `helpers.recall(...)` / `helpers.imprint(...)`
+   * (the helpers object is the Neuron's optional third argument). The Axon
+   * enforces the whitelist, so a Neuron cannot hit an Engram it was not
+   * declared to depend on.
+   */
+  engrams?: EngramBinding[];
 }
 
 /** Axon metadata accepted by the source-paired factories. */
 export interface AxonExtra {
   capabilities?: string[];
   version?: string;
+  /** Participant kind carried on REGISTER as `directed.type` (default "neuron"). */
+  neuronKind?: string;
   contextFetcher?: ContextFetcher;
   /** Attach the source's recogniser (default true). */
   recognize?: boolean;
+  /**
+   * Append {@link COSMO_INTENT_SYSTEM_PROMPT} to the source's `system` prompt
+   * so the model knows the `{"cosmo": ...}` convention the recogniser parses.
+   * Default: true exactly when `recognize` is on and the source accepts a
+   * `system` option (every LLM source except `huggingface`; `mcp` is never
+   * taught). Pass false to opt out; passing true for an unsupported source
+   * throws.
+   */
+  teachIntents?: boolean;
 }
 
 const noopContextFetcher: ContextFetcher = () => [];
@@ -97,9 +122,11 @@ export class Axon {
   readonly neuronId: string;
   readonly capabilities: string[];
   readonly version: string | undefined;
+  readonly neuronKind: string;
   private readonly fn: NeuronFn;
   private readonly contextFetcher: ContextFetcher;
   private readonly outputParser: OutputParser | undefined;
+  private readonly engramBindings = new Map<string, EngramBinding>();
   private dendrite: Dendrite | null = null;
 
   /**
@@ -115,6 +142,10 @@ export class Axon {
     output: Recogniser[];
   } = { error: [], clarification: [], permission: [], output: [] };
 
+  /** Pre-task hooks (beforeTask): transform/validate/reject the TASK input
+   *  before the Neuron runs. */
+  private readonly beforeTaskHooks: Array<(input: Json) => unknown | Promise<unknown>> = [];
+
   /** @internal  -  lifecycle hooks, driven by the hosting Dendrite. */
   readonly hooks: LifecycleHooks<Axon> = new LifecycleHooks<Axon>(this);
 
@@ -122,15 +153,112 @@ export class Axon {
     this.neuronId = opts.neuronId;
     this.capabilities = opts.capabilities ?? [];
     this.version = opts.version;
+    this.neuronKind = opts.neuronKind ?? "neuron";
     this.fn = opts.neuronFn;
     this.contextFetcher = opts.contextFetcher ?? noopContextFetcher;
     this.outputParser = opts.outputParser;
+    for (const b of opts.engrams ?? []) {
+      if (this.engramBindings.has(b.name)) {
+        throw new Error(`Axon '${opts.neuronId}': duplicate EngramBinding name '${b.name}'`);
+      }
+      this.engramBindings.set(b.name, b);
+    }
+  }
+
+  /** Declared Engram bindings, keyed by name. */
+  get engrams(): ReadonlyMap<string, EngramBinding> {
+    return new Map(this.engramBindings);
+  }
+
+  private resolveBinding(name: string): EngramBinding {
+    const binding = this.engramBindings.get(name);
+    if (!binding) {
+      throw new EngramNotBound(
+        `Axon '${this.neuronId}': no Engram binding named '${name}'; ` +
+          `available: ${[...this.engramBindings.keys()].sort().join(", ")}`,
+      );
+    }
+    return binding;
+  }
+
+  /** Build the per-task helpers object handed to the Neuron as its third
+   *  argument. Helpers throw EngramNotBound for undeclared names and
+   *  require a hosting Dendrite (the only thing the Axon pulls from it). */
+  private buildHelpers(traceId: string, parentId: string): NeuronHelpers {
+    const requireClient = (): import("./engram-client.js").EngramClient => {
+      if (this.dendrite === null) {
+        throw new Error(
+          `Axon '${this.neuronId}': not attached to a Dendrite; engram ` +
+            "helpers require a hosting Dendrite",
+        );
+      }
+      return this.dendrite.engramClient;
+    };
+    return {
+      recall: async (name, args) => {
+        const binding = this.resolveBinding(name);
+        return requireClient().recall({
+          binding,
+          query: args.query,
+          traceId,
+          parentId,
+          ...(args.filters !== undefined ? { filters: args.filters } : {}),
+          ...(args.contextRef !== undefined ? { contextRef: args.contextRef } : {}),
+          ...(args.deadlineMs !== undefined ? { deadlineMs: args.deadlineMs } : {}),
+          ...(args.recallMode !== undefined ? { recallMode: args.recallMode } : {}),
+          ...(args.minConfidence !== undefined ? { minConfidence: args.minConfidence } : {}),
+          ...(args.meta !== undefined ? { meta: args.meta } : {}),
+        });
+      },
+      imprint: async (name, args) => {
+        const binding = this.resolveBinding(name);
+        return requireClient().imprint({
+          binding,
+          op: args.op,
+          entry: args.entry,
+          traceId,
+          parentId,
+          ...(args.mergeKey !== undefined ? { mergeKey: args.mergeKey } : {}),
+          ...(args.awaitAck !== undefined ? { awaitAck: args.awaitAck } : {}),
+          ...(args.deadlineMs !== undefined ? { deadlineMs: args.deadlineMs } : {}),
+          ...(args.meta !== undefined ? { meta: args.meta } : {}),
+        });
+      },
+    };
   }
 
   // -- source-paired factories --------------------------------------
   // Build an Axon already paired with one of the `neuron(source, ...)`
   // providers AND wired with the matching recogniser. No new class: the
   // result is a plain Axon.
+
+  /** Resolve the teach-intents decision and return (possibly augmented) source opts. */
+  private static applyTeachIntents(
+    source: string,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    opts: any,
+    extra: AxonExtra,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  ): any {
+    const recognize = extra.recognize ?? true;
+    const teach =
+      extra.teachIntents ?? (recognize && SYSTEM_CAPABLE_SOURCES.has(source.toLowerCase()));
+    if (!teach) return opts;
+    if (!SYSTEM_CAPABLE_SOURCES.has(source.toLowerCase())) {
+      throw new Error(
+        `teachIntents: true is not supported for source '${source}': its ` +
+          "Neuron wrapper accepts no system option. Embed the convention in " +
+          "the prompt yourself (COSMO_INTENT_SYSTEM_PROMPT).",
+      );
+    }
+    const existing = (opts as { system?: string } | undefined)?.system;
+    return {
+      ...(opts ?? {}),
+      system: existing
+        ? `${existing}\n\n${COSMO_INTENT_SYSTEM_PROMPT}`
+        : COSMO_INTENT_SYSTEM_PROMPT,
+    };
+  }
 
   private static build(
     neuronId: string,
@@ -142,6 +270,7 @@ export class Axon {
     const o: AxonOptions = { neuronId, neuronFn };
     if (extra.capabilities) o.capabilities = extra.capabilities;
     if (extra.version !== undefined) o.version = extra.version;
+    if (extra.neuronKind !== undefined) o.neuronKind = extra.neuronKind;
     if (extra.contextFetcher) o.contextFetcher = extra.contextFetcher;
     if (recognize) o.outputParser = source === "mcp" ? parseMcpIntents : parseLlmIntents;
     return new Axon(o);
@@ -155,28 +284,33 @@ export class Axon {
     opts: any,
     extra: AxonExtra = {},
   ): Axon {
+    const o = Axon.applyTeachIntents(source, opts, extra);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return Axon.build(neuronId, neuron(source as any, opts), source, extra);
+    return Axon.build(neuronId, neuron(source as any, o), source, extra);
   }
 
   /** Axon paired with the OpenAI Chat Completions API. */
   static openai(neuronId: string, opts: OpenAINeuronOptions, extra: AxonExtra = {}): Axon {
-    return Axon.build(neuronId, neuron("openai", opts), "openai", extra);
+    const o = Axon.applyTeachIntents("openai", opts, extra) as OpenAINeuronOptions;
+    return Axon.build(neuronId, neuron("openai", o), "openai", extra);
   }
 
   /** Axon paired with the Anthropic Messages API. */
   static anthropic(neuronId: string, opts: AnthropicNeuronOptions, extra: AxonExtra = {}): Axon {
-    return Axon.build(neuronId, neuron("anthropic", opts), "anthropic", extra);
+    const o = Axon.applyTeachIntents("anthropic", opts, extra) as AnthropicNeuronOptions;
+    return Axon.build(neuronId, neuron("anthropic", o), "anthropic", extra);
   }
 
   /** Axon paired with a local Ollama daemon. */
   static ollama(neuronId: string, opts: OllamaNeuronOptions, extra: AxonExtra = {}): Axon {
-    return Axon.build(neuronId, neuron("ollama", opts), "ollama", extra);
+    const o = Axon.applyTeachIntents("ollama", opts, extra) as OllamaNeuronOptions;
+    return Axon.build(neuronId, neuron("ollama", o), "ollama", extra);
   }
 
   /** Axon paired with a HuggingFace TGI / OpenAI-compatible endpoint. */
   static huggingface(neuronId: string, opts: HuggingFaceNeuronOptions, extra: AxonExtra = {}): Axon {
-    return Axon.build(neuronId, neuron("huggingface", opts), "huggingface", extra);
+    const o = Axon.applyTeachIntents("huggingface", opts, extra) as HuggingFaceNeuronOptions;
+    return Axon.build(neuronId, neuron("huggingface", o), "huggingface", extra);
   }
 
   /** Axon paired with a stdio MCP server. */
@@ -190,6 +324,28 @@ export class Axon {
   // Signals). Return the intent's fields to match, or null/undefined to fall
   // through. Sync or async; multiple per capability tried in order. These run
   // after `outputParser` and before the literal `__marker__` checks.
+
+  /**
+   * Register a pre-task hook over the TASK's `input`. Runs before the Neuron.
+   * Sync or async; multiple hooks run in registration order, each receiving
+   * the previous one's result. Return a (new) object to replace the input,
+   * return null/undefined to pass through unchanged, or throw to reject the
+   * TASK (surfaces as an ERROR Signal, code NEURON_EXCEPTION). The natural
+   * place for input normalisation or per-Axon policy checks.
+   */
+  beforeTask(fn: (input: Json) => unknown | Promise<unknown>): (input: Json) => unknown | Promise<unknown> {
+    this.beforeTaskHooks.push(fn);
+    return fn;
+  }
+
+  private async applyBeforeTask(input: Json): Promise<Json> {
+    let current = input;
+    for (const fn of this.beforeTaskHooks) {
+      const r = await fn(current);
+      if (r !== null && r !== undefined) current = r as Json;
+    }
+    return current;
+  }
 
   /** Detector returning the AGENT_OUTPUT payload, or null to wrap verbatim. */
   detectsOutput(fn: Recogniser): Recogniser {
@@ -266,8 +422,20 @@ export class Axon {
     this.dendrite = null;
   }
 
-  /** Run the Neuron and return AGENT_OUTPUT / CLARIFICATION / ERROR. */
+  /** Run the Neuron and return AGENT_OUTPUT / CLARIFICATION / ERROR.
+   *
+   * Binds the TASK's (traceId, parentId=task.id) as the ambient trace
+   * context for the whole handling pass  -  neuronFn, detectors, and hooks
+   * included  -  so engram calls made without explicit trace plumbing (e.g.
+   * `dendrite.imprint` from a `detectsOutput` hook) are attributed to this
+   * task's trace. */
   async handleTask(task: Signal): Promise<Signal> {
+    return runWithTraceContext(task.trace_id, task.id, () =>
+      this.handleTaskInner(task),
+    );
+  }
+
+  private async handleTaskInner(task: Signal): Promise<Signal> {
     const traceId = task.trace_id;
     const parentId = task.id;
     const input = (task.payload["input"] as Json | undefined) ?? {};
@@ -285,7 +453,16 @@ export class Axon {
 
     let rawOutput: unknown;
     try {
-      rawOutput = await this.fn(input, context);
+      const effectiveInput = this.beforeTaskHooks.length
+        ? await this.applyBeforeTask(input)
+        : input;
+      // Helpers ride as an optional third argument the Neuron may ignore  -
+      // only built when bindings are declared, so a misaddressed name fails
+      // loudly with EngramNotBound rather than silently no-opping.
+      const helpers = this.engramBindings.size
+        ? this.buildHelpers(traceId, parentId)
+        : undefined;
+      rawOutput = await this.fn(effectiveInput, context, helpers);
       // Per-source recognition, then decorator-registered recognisers. Inside
       // the try so a recogniser failure surfaces as ERROR, not a crash.
       if (this.outputParser) rawOutput = this.outputParser(rawOutput);
@@ -357,6 +534,39 @@ export class Axon {
 //   {"cosmo": "error", "code": "REFUSED", "message": "..."}
 //   {"cosmo": "output", "output": {"answer": "..."}}
 // Anything else (prose, or JSON without `cosmo`) is a normal output.
+
+/**
+ * System-prompt fragment teaching an LLM the `cosmo` intent convention.
+ * Without it a hosted model never knows it *can* clarify / request permission
+ * / signal a structured error, so the recognisers have nothing to recognise.
+ * `Axon.fromSource(..., { recognize: true })` (the default) appends this to
+ * the source's `system` prompt for system-capable LLM sources; opt out with
+ * `teachIntents: false`.
+ */
+export const COSMO_INTENT_SYSTEM_PROMPT =
+  'You can control the surrounding agent protocol by replying with a single ' +
+  'JSON object carrying a "cosmo" key (either as your whole reply or inside ' +
+  "a ```json fenced block):\n" +
+  '{"cosmo": "clarification", "question": "<what you need to know>"} ' +
+  "- ask the orchestrator a question when the task is ambiguous.\n" +
+  '{"cosmo": "permission", "action": "<action>", "scope": {...}, "reason": "<why>"} ' +
+  "- request approval before a sensitive action.\n" +
+  '{"cosmo": "error", "code": "<CODE>", "message": "<details>"} ' +
+  "- report a structured failure.\n" +
+  '{"cosmo": "output", "output": {...}} - return a structured result.\n' +
+  "For a normal answer, just reply with plain text - do not wrap ordinary " +
+  "answers in a cosmo object.";
+
+/** Sources whose Neuron wrapper accepts a `system` option. */
+const SYSTEM_CAPABLE_SOURCES: ReadonlySet<string> = new Set([
+  "ollama",
+  "openai",
+  "anthropic",
+  "groq",
+  "openrouter",
+  "together",
+  "mistral",
+]);
 
 const INTENT_KEY = "cosmo";
 const FENCED_JSON = /```(?:json)?\s*(\{[\s\S]*?\})\s*```/g;

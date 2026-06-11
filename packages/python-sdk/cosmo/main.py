@@ -5,6 +5,10 @@ Commands
 --------
 cosmo init        Scaffold a minimal Axon + Dendrite project
 cosmo synapse     Manage Synapse servers (start / view / stop)
+cosmo dispatch    Dispatch a TASK from the terminal and await the reply
+cosmo registry    Inspect the live Neuron population (DISCOVER-based)
+cosmo answer      Interactively answer CLARIFICATION / PERMISSION requests
+cosmo schema      Export the Signal envelope JSON Schema
 cosmo doppler     Attach a Doppler to the Synapse, stream Signals to stdout
 cosmo validate    Validate that Signals on the Synapse conform to the envelope spec
 cosmo completion  Print a shell-completion script (bash / zsh / fish)
@@ -12,9 +16,13 @@ cosmo completion  Print a shell-completion script (bash / zsh / fish)
 
 import click
 
+from cosmo.commands.answer import answer
 from cosmo.commands.completion import completion
+from cosmo.commands.dispatch import dispatch
 from cosmo.commands.doppler import doppler
 from cosmo.commands.init import init
+from cosmo.commands.registry import registry
+from cosmo.commands.schema import schema
 from cosmo.commands.synapse import synapse
 from cosmo.commands.validate import validate
 
@@ -27,6 +35,10 @@ def cli() -> None:
 
 cli.add_command(init)
 cli.add_command(synapse)
+cli.add_command(dispatch)
+cli.add_command(registry)
+cli.add_command(answer)
+cli.add_command(schema)
 cli.add_command(doppler)
 cli.add_command(validate)
 cli.add_command(completion)

@@ -246,6 +246,16 @@ export function createSignal(input: NewSignalInput): Signal {
 
 /** Throw if the envelope's identifier fields violate the spec. */
 export function validateSignal(signal: Signal): void {
+  // Compatibility policy (ENVELOPE_SPEC §8/§9): same-major envelopes are
+  // accepted ("1" or "1.x"; unknown payload/meta fields must be ignored by
+  // consumers); a different major version is rejected at decode time.
+  const major = signal.v.split(".", 1)[0];
+  if (major !== "1") {
+    throw new Error(
+      `unsupported protocol version '${signal.v}': this SDK speaks major ` +
+        `version 1 (accepts '1' or '1.x')`,
+    );
+  }
   if (!signal.id.startsWith("evt_")) {
     throw new Error(`Signal id must start with 'evt_', got: ${signal.id}`);
   }

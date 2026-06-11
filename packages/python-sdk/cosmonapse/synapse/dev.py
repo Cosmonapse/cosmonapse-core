@@ -422,6 +422,11 @@ class DevSynapse(Synapse):
         self._reader_task: asyncio.Task[Any] | None = None
         self._send_lock = asyncio.Lock()
         self._handlers: dict[str, MessageHandler] = {}
+        # In-flight async handler invocations. Dispatched as tasks (not awaited
+        # inline) so a long-running handler - e.g. a Dendrite's _on_task that
+        # does a RECALL round-trip - never blocks the read loop from delivering
+        # the reply it is waiting on. Mirrors MemorySynapse / NATS behaviour.
+        self._handler_tasks: set[asyncio.Task[Any]] = set()
         self._connected = False
 
     @property
@@ -455,6 +460,12 @@ class DevSynapse(Synapse):
             except asyncio.CancelledError:
                 pass
             self._reader_task = None
+        # Cancel any still-running handler invocations.
+        if self._handler_tasks:
+            for task in list(self._handler_tasks):
+                task.cancel()
+            await asyncio.gather(*self._handler_tasks, return_exceptions=True)
+            self._handler_tasks.clear()
         if self._writer is not None:
             try:
                 self._writer.close()
@@ -502,15 +513,30 @@ class DevSynapse(Synapse):
                         continue
                     try:
                         result = handler(signal)
-                        if asyncio.iscoroutine(result):
-                            await result
                     except Exception as exc:
                         logger.exception("DevSynapse: handler raised: %s", exc)
+                        continue
+                    if asyncio.iscoroutine(result):
+                        # Spawn, don't await: keep the read loop free to deliver
+                        # subsequent frames (e.g. the RECALLED/IMPRINTED reply a
+                        # mid-flight handler is awaiting). Tracked for clean
+                        # shutdown in close().
+                        task = asyncio.create_task(self._run_handler(result))
+                        self._handler_tasks.add(task)
+                        task.add_done_callback(self._handler_tasks.discard)
                 elif op == "err":
                     logger.warning("DevSynapse: server error: %s",
                                    msg.get("message"))
         except asyncio.CancelledError:
             return
+
+    async def _run_handler(self, coro: Any) -> None:
+        try:
+            await coro
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.exception("DevSynapse: handler raised: %s", exc)
 
     # -- Synapse surface --------------------------------------------
 

@@ -11,44 +11,6 @@ import { C, MONO, colorFor } from "../theme";
 import { AXON_TYPES, SYNAPSE_NODE, TARGET_TYPES } from "../types";
 import type { NeuronView, Signal } from "../types";
 
-// ── dendrite branch geometry ──────────────────────────────────────────────
-function branchPoints(
-  from: { x: number; y: number },
-  to: { x: number; y: number },
-  seed: number,
-): { d: string; opacity: number }[] {
-  const branches: { d: string; opacity: number }[] = [];
-  const steps = 3;
-  let r = seed;
-  const rand = () => {
-    r = Math.imul(r, 1664525) + 1013904223;
-    return (r >>> 0) / 4294967295;
-  };
-  for (let i = 1; i <= steps; i++) {
-    const t = i / (steps + 1);
-    const mx = (from.x + to.x) / 2;
-    const my = (from.y + to.y) / 2;
-    const bx = (1 - t) * (1 - t) * from.x + 2 * (1 - t) * t * mx + t * t * to.x;
-    const by = (1 - t) * (1 - t) * from.y + 2 * (1 - t) * t * my + t * t * to.y;
-    const dx = to.x - from.x;
-    const dy = to.y - from.y;
-    const len = Math.sqrt(dx * dx + dy * dy) || 1;
-    const nx = -dy / len;
-    const ny = dx / len;
-    const sign = rand() > 0.5 ? 1 : -1;
-    const blen = (22 + rand() * 38) * sign;
-    const ex = bx + nx * blen + (rand() - 0.5) * 10;
-    const ey = by + ny * blen + (rand() - 0.5) * 10;
-    const s1x = ex + (rand() - 0.5) * 24;
-    const s1y = ey + (rand() - 0.5) * 24;
-    const s2x = ex + (rand() - 0.5) * 18;
-    const s2y = ey + (rand() - 0.5) * 18;
-    branches.push({ d: `M${bx.toFixed(1)} ${by.toFixed(1)} Q${((bx+ex)/2).toFixed(1)} ${((by+ey)/2).toFixed(1)},${ex.toFixed(1)} ${ey.toFixed(1)}`, opacity: 0.45 + rand() * 0.3 });
-    branches.push({ d: `M${ex.toFixed(1)} ${ey.toFixed(1)} L${s1x.toFixed(1)} ${s1y.toFixed(1)}`, opacity: 0.25 + rand() * 0.2 });
-    branches.push({ d: `M${ex.toFixed(1)} ${ey.toFixed(1)} L${s2x.toFixed(1)} ${s2y.toFixed(1)}`, opacity: 0.2 + rand() * 0.18 });
-  }
-  return branches;
-}
 
 export interface PrismCanvasHandle {
   emit: (sig: Signal) => void;
@@ -62,10 +24,12 @@ interface Props {
 }
 
 type Point = { x: number; y: number };
-type Particle = { id: string; from: string; to: string; color: string };
+type Particle = { id: string; from: string; via?: string; to: string; color: string };
 
 const PULSE_MS = 800;
 const PARTICLE_MS = 1100;
+const TWO_LEG_MS = 1800;
+const AXON_BUFFER_TTL = 5000; // ms to keep buffered axon signals waiting for a matching target
 
 export const PrismCanvas = forwardRef<PrismCanvasHandle, Props>(function PrismCanvas(
   { neurons, namespace, sidebarOffset, onHover },
@@ -77,6 +41,8 @@ export const PrismCanvas = forwardRef<PrismCanvasHandle, Props>(function PrismCa
   const [particles, setParticles] = useState<Particle[]>([]);
   const pulseTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
   const tendrilTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
+  // trace_id → { neuronId, sigId, expireAt } — buffers axon signals waiting for a target reply
+  const axonBuffer = useRef(new Map<string, { neuronId: string; expireAt: number }>());
 
   useEffect(() => {
     const resize = () => setVp({ w: window.innerWidth, h: window.innerHeight - 64 });
@@ -109,16 +75,44 @@ export const PrismCanvas = forwardRef<PrismCanvasHandle, Props>(function PrismCa
   useImperativeHandle(ref, () => ({
     emit(sig: Signal) {
       const nid = sig.directed?.id ?? null;
-      let src = SYNAPSE_NODE;
-      let dst = SYNAPSE_NODE;
-      if (nid && AXON_TYPES.has(sig.type)) { src = nid; dst = SYNAPSE_NODE; }
-      else if (nid) { src = SYNAPSE_NODE; dst = nid; void TARGET_TYPES; }
-      pulse(SYNAPSE_NODE);
-      if (src !== SYNAPSE_NODE) pulse(src);
-      if (dst !== SYNAPSE_NODE) pulse(dst);
-      if (src !== dst) {
-        flash(`${src}::${dst}`);
-        setParticles((p) => [...p, { id: `${sig.id || Math.random()}_${Date.now()}`, from: src, to: dst, color: colorFor(sig.type) }]);
+      const color = colorFor(sig.type);
+      const pid = `${sig.id || Math.random()}_${Date.now()}`;
+
+      // Prune expired buffer entries
+      const now = Date.now();
+      for (const [k, v] of axonBuffer.current) {
+        if (now > v.expireAt) axonBuffer.current.delete(k);
+      }
+
+      if (nid && AXON_TYPES.has(sig.type)) {
+        // neuron → synapse leg: buffer for potential pairing
+        axonBuffer.current.set(sig.trace_id, { neuronId: nid, expireAt: now + AXON_BUFFER_TTL });
+        pulse(nid);
+        pulse(SYNAPSE_NODE);
+        flash(`${nid}::${SYNAPSE_NODE}`);
+        setParticles((p) => [...p, { id: pid, from: nid, to: SYNAPSE_NODE, color }]);
+
+      } else if (nid && TARGET_TYPES.has(sig.type)) {
+        // synapse → neuron leg: check if we have a buffered source for a two-leg journey
+        const buffered = axonBuffer.current.get(sig.trace_id);
+        if (buffered && buffered.neuronId !== nid) {
+          // Full chain: source neuron → synapse → destination neuron
+          axonBuffer.current.delete(sig.trace_id);
+          pulse(SYNAPSE_NODE);
+          pulse(nid);
+          flash(`${SYNAPSE_NODE}::${nid}`);
+          setParticles((p) => [...p, { id: pid, from: buffered.neuronId, via: SYNAPSE_NODE, to: nid, color }]);
+        } else {
+          // No known source — just animate synapse → neuron
+          pulse(SYNAPSE_NODE);
+          pulse(nid);
+          flash(`${SYNAPSE_NODE}::${nid}`);
+          setParticles((p) => [...p, { id: pid, from: SYNAPSE_NODE, to: nid, color }]);
+        }
+
+      } else {
+        // Undirected signal — pulse synapse only
+        pulse(SYNAPSE_NODE);
       }
     },
   }), [pulse, flash]);
@@ -126,13 +120,11 @@ export const PrismCanvas = forwardRef<PrismCanvasHandle, Props>(function PrismCa
   const layout = useLayout(neurons, vp);
 
   const tendrils = useMemo(() => {
-    const out: { id: string; from: Point; to: Point; k1: string; k2: string; seed: number }[] = [];
+    const out: { id: string; from: Point; to: Point; k1: string; k2: string }[] = [];
     for (const ne of neurons.values()) {
       const from = layout[ne.id];
       if (!from) continue;
-      let seed = 0;
-      for (let i = 0; i < ne.id.length; i++) seed = ((seed << 5) - seed + ne.id.charCodeAt(i)) | 0;
-      out.push({ id: ne.id, from, to: layout[SYNAPSE_NODE], k1: `${ne.id}::${SYNAPSE_NODE}`, k2: `${SYNAPSE_NODE}::${ne.id}`, seed });
+      out.push({ id: ne.id, from, to: layout[SYNAPSE_NODE], k1: `${ne.id}::${SYNAPSE_NODE}`, k2: `${SYNAPSE_NODE}::${ne.id}` });
     }
     return out;
   }, [neurons, layout]);
@@ -165,14 +157,9 @@ export const PrismCanvas = forwardRef<PrismCanvasHandle, Props>(function PrismCa
       {/* Ambient center bloom */}
       <ellipse cx={cx} cy={cy} rx={320} ry={240} fill="url(#centerGlow)" style={{ pointerEvents: "none" }} filter="url(#blur-md)" />
 
-      {/* Dendritic tendrils */}
+      {/* Axon lines */}
       {tendrils.map((t) => (
-        <Tendril key={t.id} from={t.from} to={t.to} active={tendrilsOn.has(t.k1) || tendrilsOn.has(t.k2)} seed={t.seed} />
-      ))}
-
-      {/* Signal particles */}
-      {particles.map((p) => (
-        <ParticleDot key={p.id} id={p.id} from={layout[p.from]} to={layout[p.to]} color={p.color} onDone={dropParticle} />
+        <Tendril key={t.id} from={t.from} to={t.to} active={tendrilsOn.has(t.k1) || tendrilsOn.has(t.k2)} />
       ))}
 
       {/* Central synapse soma */}
@@ -192,6 +179,12 @@ export const PrismCanvas = forwardRef<PrismCanvasHandle, Props>(function PrismCa
           />
         );
       })}
+
+      {/* Signal particles — drawn above nodes so the ball of light is
+          visible leaving the source and arriving at the destination */}
+      {particles.map((p) => (
+        <ParticleDot key={p.id} id={p.id} from={layout[p.from]} via={p.via ? layout[p.via] : undefined} to={layout[p.to]} color={p.color} onDone={dropParticle} />
+      ))}
 
       {neurons.size === 0 && (
         <text x={cx} y={cy + 160} textAnchor="middle" fill={C.textFaint} fontSize="13" fontFamily={MONO}>
@@ -336,44 +329,102 @@ function NeuronNode({ x, y, color, pulse, kind = "neuron", label, sublabel, onHo
   );
 }
 
-// ── dendritic tendril ─────────────────────────────────────────────────────
-function Tendril({ from, to, active, seed }: { from?: Point; to?: Point; active: boolean; seed: number }) {
+// ── axon line ─────────────────────────────────────────────────────────────
+function Tendril({ from, to, active }: { from?: Point; to?: Point; active: boolean }) {
   if (!from || !to) return null;
   const mx = (from.x + to.x) / 2;
   const my = (from.y + to.y) / 2;
   const mainD = `M${from.x} ${from.y} Q${mx} ${my},${to.x} ${to.y}`;
-  const branches = branchPoints(from, to, seed);
-  const axonColor = active ? C.accent2 : C.accent;
   return (
     <g>
-      {active && <path d={mainD} fill="none" stroke={C.accent2} strokeOpacity="0.22" strokeWidth="4" filter="url(#blur-sm)" />}
-      <path d={mainD} fill="none" stroke={axonColor} strokeOpacity={active ? 0.75 : 0.18} strokeWidth={active ? 1.8 : 1} style={{ transition: "stroke-opacity 0.4s,stroke-width 0.4s,stroke 0.4s" }} />
-      {branches.map((b, i) => (
-        <path key={i} d={b.d} fill="none" stroke={axonColor} strokeOpacity={active ? b.opacity * 0.9 : b.opacity * 0.35} strokeWidth={active ? 0.9 : 0.5} style={{ transition: "stroke-opacity 0.4s,stroke 0.4s" }} />
-      ))}
+      {active && <path d={mainD} fill="none" stroke={C.accent2} strokeOpacity="0.2" strokeWidth="3" filter="url(#blur-sm)" />}
+      <path d={mainD} fill="none" stroke={active ? C.accent2 : C.accent} strokeOpacity={active ? 0.6 : 0.12} strokeWidth={active ? 1.2 : 0.6} style={{ transition: "stroke-opacity 0.4s,stroke-width 0.4s,stroke 0.4s" }} />
     </g>
   );
 }
 
 // ── signal particle ───────────────────────────────────────────────────────
-function ParticleDot({ id, from, to, color, onDone }: { id: string; from?: Point; to?: Point; color: string; onDone: (id: string) => void }) {
+// A directed ball of light that travels source → destination: a bright
+// glowing head with a staggered comet tail trailing behind it along the
+// same path, eased so it launches and arrives smoothly.
+const TAIL = [
+  { delay: 0.07, r: 2.2, opacity: 0.55 },
+  { delay: 0.14, r: 1.7, opacity: 0.35 },
+  { delay: 0.22, r: 1.2, opacity: 0.18 },
+];
+
+function ParticleDot({ id, from, via, to, color, onDone }: {
+  id: string; from?: Point; via?: Point; to?: Point; color: string; onDone: (id: string) => void;
+}) {
+  const twoLeg = !!via;
+  const dur = twoLeg ? TWO_LEG_MS : PARTICLE_MS;
+
   useEffect(() => {
-    const t = setTimeout(() => onDone(id), PARTICLE_MS);
+    // +300ms lets the comet tail finish before the particle unmounts.
+    const t = setTimeout(() => onDone(id), dur + 300);
     return () => clearTimeout(t);
-  }, [id, onDone]);
+  }, [id, onDone, dur]);
+
   if (!from || !to) return null;
-  const mx = (from.x + to.x) / 2;
-  const my = (from.y + to.y) / 2;
-  const path = `M${from.x} ${from.y} Q${mx} ${my},${to.x} ${to.y}`;
+
+  let path: string;
+  if (via) {
+    // Two-leg path: from → via (synapse) → to
+    const mx1 = (from.x + via.x) / 2;
+    const my1 = (from.y + via.y) / 2;
+    const mx2 = (via.x + to.x) / 2;
+    const my2 = (via.y + to.y) / 2;
+    path = `M${from.x} ${from.y} Q${mx1} ${my1},${via.x} ${via.y} Q${mx2} ${my2},${to.x} ${to.y}`;
+  } else {
+    const mx = (from.x + to.x) / 2;
+    const my = (from.y + to.y) / 2;
+    path = `M${from.x} ${from.y} Q${mx} ${my},${to.x} ${to.y}`;
+  }
+
+  const durS = `${(dur / 1000).toFixed(2)}s`;
+  // Ease-in-out so the ball visibly launches from the source and settles
+  // into the destination. Single-leg journeys ease both ends; two-leg ones
+  // stay closer to linear so the synapse fly-through doesn't stall.
+  const spline = twoLeg ? "0.35 0 0.65 1" : "0.3 0 0.25 1";
+  const motion = (begin?: number) => (
+    <animateMotion
+      dur={durS}
+      begin={begin ? `${begin.toFixed(2)}s` : "0s"}
+      repeatCount="1"
+      path={path}
+      fill="freeze"
+      calcMode="spline"
+      keyPoints="0;1"
+      keyTimes="0;1"
+      keySplines={spline}
+    />
+  );
+
   return (
-    <g>
-      <circle r="7" fill={color} fillOpacity="0.3" filter="url(#blur-sm)">
-        <animateMotion dur="1.1s" repeatCount="1" path={path} fill="freeze" />
+    <g style={{ pointerEvents: "none" }}>
+      {/* Comet tail — staggered followers tracing the same path */}
+      {TAIL.map((t, i) => (
+        <circle key={i} r={t.r} fill={color} opacity="0">
+          {motion(t.delay)}
+          <set attributeName="opacity" to={String(t.opacity)} begin={`${t.delay.toFixed(2)}s`} />
+          <animate attributeName="opacity" from={String(t.opacity)} to="0"
+            begin={`${(dur / 1000 + t.delay - 0.15).toFixed(2)}s`} dur="0.25s" fill="freeze" />
+        </circle>
+      ))}
+      {/* Halo around the head */}
+      <circle r="9" fill={color} fillOpacity="0.18" filter="url(#blur-sm)">
+        {motion()}
+        <animate attributeName="fill-opacity" values="0;0.22;0.18;0" dur={durS} repeatCount="1" fill="freeze" />
       </circle>
-      <circle r="4" fill={color} style={{ filter: `drop-shadow(0 0 8px ${color})` }}>
-        <animateMotion dur="1.1s" repeatCount="1" path={path} fill="freeze" />
-        <animate attributeName="r" values="3;5.5;3" dur="1.1s" repeatCount="1" />
-        <animate attributeName="fill-opacity" values="0.9;1;0.6" dur="1.1s" repeatCount="1" />
+      <circle r="5" fill={color} fillOpacity="0.45" filter="url(#blur-sm)">
+        {motion()}
+      </circle>
+      {/* Bright core */}
+      <circle r="2.8" fill="#fff" style={{ filter: `drop-shadow(0 0 6px ${color}) drop-shadow(0 0 12px ${color})` }}>
+        {motion()}
+        <animate attributeName="fill" values={`#ffffff;${color};#ffffff`} dur={durS} repeatCount="1" />
+        <animate attributeName="fill-opacity" from="1" to="0"
+          begin={`${(dur / 1000 - 0.12).toFixed(2)}s`} dur="0.2s" fill="freeze" />
       </circle>
     </g>
   );

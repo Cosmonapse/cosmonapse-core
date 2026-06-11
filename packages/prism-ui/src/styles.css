@@ -1,3 +1,7 @@
+/* NASA "worm" logotype-style display face, used for the Cosmonapse wordmark.
+   Michroma is the closest Google-hosted match to the NASA "worm" logotype. */
+@import url("https://fonts.googleapis.com/css2?family=Michroma&display=swap");
+
 :root {
   --bg: #07080c;
   --bg-card: #0f111a;
@@ -11,6 +15,12 @@
   --accent-2: #22d3ee;
   --accent-3: #f472b6;
   --glow: rgba(139, 92, 246, 0.35);
+  --font-brand: "Michroma", "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+
+.brand-word {
+  font-family: var(--font-brand);
+  letter-spacing: 0.04em;
 }
 
 * {

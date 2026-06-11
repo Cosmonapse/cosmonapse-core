@@ -33,8 +33,61 @@ function readMessages(input: Dict): Array<Dict> | null {
   return Array.isArray(m) ? (m as Dict[]) : null;
 }
 
+/**
+ * Render the close-the-loop TASK shapes into a prompt continuation.
+ *
+ * `respondToClarification` re-dispatches `{ clarification: { question,
+ * answer, ... } }` and `respondToPermission` re-dispatches `{ permission:
+ * { action, granted, reason?, ttl_ms?, ... } }`. Built-in LLM Neurons have no
+ * native understanding of those keys, so without this rendering every default
+ * close-the-loop flow died with "expects 'prompt' or 'messages'". Custom
+ * NeuronFns can read the raw objects directly and never hit this path.
+ */
+export function followupPrompt(input: Dict): string | null {
+  const c = input["clarification"];
+  if (c !== null && typeof c === "object" && !Array.isArray(c)) {
+    const cd = c as Dict;
+    const lines = ["You previously asked a clarifying question while working on a task."];
+    if (cd["question"] !== undefined && cd["question"] !== null) {
+      lines.push(`Your question: ${String(cd["question"])}`);
+    }
+    if ("answer" in cd) lines.push(`The answer: ${JSON.stringify(cd["answer"])}`);
+    const extra = Object.fromEntries(
+      Object.entries(cd).filter(([k]) => k !== "question" && k !== "answer"),
+    );
+    if (Object.keys(extra).length) lines.push(`Additional context: ${JSON.stringify(extra)}`);
+    lines.push("Continue the original task using this answer.");
+    return lines.join("\n");
+  }
+  const p = input["permission"];
+  if (p !== null && typeof p === "object" && !Array.isArray(p)) {
+    const pd = p as Dict;
+    const granted = Boolean(pd["granted"]);
+    const lines = ["You previously requested permission while working on a task."];
+    if (pd["action"] !== undefined && pd["action"] !== null) {
+      lines.push(`Requested action: ${String(pd["action"])}`);
+    }
+    lines.push(`The decision: ${granted ? "GRANTED" : "DENIED"}.`);
+    if (pd["reason"] !== undefined && pd["reason"] !== null) {
+      lines.push(`Reason: ${String(pd["reason"])}`);
+    }
+    if (pd["ttl_ms"] !== undefined && pd["ttl_ms"] !== null) {
+      lines.push(`The grant is valid for ${String(pd["ttl_ms"])} ms.`);
+    }
+    lines.push(
+      granted
+        ? "Proceed with the action and continue the original task."
+        : "Do not perform the action. Continue the task another way, or explain why you cannot.",
+    );
+    return lines.join("\n");
+  }
+  return null;
+}
+
 export function requireInput(input: Dict, provider: string): { prompt: string | null; messages: Dict[] | null } {
-  const prompt = readPrompt(input);
+  // Common keys first; then the clarification/permission follow-up rendering
+  // (the close-the-loop defaults fix  -  mirrors the Python _BaseNeuron).
+  const prompt = readPrompt(input) ?? followupPrompt(input);
   const messages = readMessages(input);
   if (!prompt && !messages) {
     throw new Error(

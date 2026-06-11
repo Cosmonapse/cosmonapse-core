@@ -1,17 +1,28 @@
 import { C, MONO } from "../theme";
 import { Logo } from "./Logo";
-import type { SynapseTarget } from "../useSignalStream";
+
+export interface TabInfo {
+  id: string;
+  /** namespace */
+  label: string;
+  /** url without scheme */
+  sublabel: string;
+  active: boolean;
+  connected: boolean;
+}
 
 interface Props {
-  target: SynapseTarget;
   connected: boolean;
   total: number;
   paused: boolean;
   sidebarOpen: boolean;
+  tabs: TabInfo[];
+  onSelectTab: (id: string) => void;
+  onCloseTab: (id: string) => void;
+  onNewTab: () => void;
   onTogglePause: () => void;
   onToggleSidebar: () => void;
   onClear: () => void;
-  onBack: () => void;
 }
 
 function btn(active?: string | null): React.CSSProperties {
@@ -29,15 +40,17 @@ function btn(active?: string | null): React.CSSProperties {
 }
 
 export function Header({
-  target,
   connected,
   total,
   paused,
   sidebarOpen,
+  tabs,
+  onSelectTab,
+  onCloseTab,
+  onNewTab,
   onTogglePause,
   onToggleSidebar,
   onClear,
-  onBack,
 }: Props) {
   return (
     <div
@@ -57,20 +70,102 @@ export function Header({
         borderBottom: "1px solid " + C.border,
       }}
     >
-      <div
-        onClick={onBack}
-        style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }}
-      >
-        <Logo size={22} />
-        <span style={{ fontWeight: 700, fontSize: 15 }}>Cosmonapse</span>
-        <span style={{ color: C.textDim, fontWeight: 500, fontSize: 15 }}>Prism</span>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
+        <Logo size={30} />
+        <span className="brand-word" style={{ fontWeight: 700, fontSize: 17 }}>Cosmonapse</span>
+        <span style={{ color: C.textDim, fontWeight: 500, fontSize: 17 }}>Prism</span>
       </div>
-      <span style={{ color: C.textFaint }}>│</span>
-      <span style={{ color: C.accent2, fontFamily: MONO, fontSize: 12.5 }}>{target.url}</span>
-      <span style={{ color: C.textFaint, fontFamily: MONO, fontSize: 12.5 }}>
-        /{target.namespace}
-      </span>
-      <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 10 }}>
+      <span style={{ color: C.textFaint, flexShrink: 0 }}>│</span>
+
+      {/* Synapse tabs — one pill per monitored synapse */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+          minWidth: 0,
+          overflowX: "auto",
+          scrollbarWidth: "none",
+        }}
+      >
+        {tabs.map((t) => (
+          <div
+            key={t.id}
+            onClick={() => onSelectTab(t.id)}
+            title={`${t.sublabel} /${t.label}`}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 7,
+              flexShrink: 0,
+              padding: "4px 10px",
+              borderRadius: 8,
+              cursor: "pointer",
+              fontFamily: MONO,
+              fontSize: 12,
+              background: t.active ? "rgba(139,92,246,0.13)" : "transparent",
+              border: "1px solid " + (t.active ? "rgba(139,92,246,0.45)" : C.border),
+              transition: "all 0.15s",
+            }}
+          >
+            <span
+              style={{
+                width: 6,
+                height: 6,
+                borderRadius: "50%",
+                flexShrink: 0,
+                background: t.connected ? "#34d399" : "#f87171",
+                boxShadow: `0 0 5px ${t.connected ? "#34d399" : "#f87171"}`,
+              }}
+            />
+            <span style={{ color: t.active ? C.accent2 : C.textDim, whiteSpace: "nowrap" }}>
+              {t.sublabel}
+            </span>
+            <span style={{ color: t.active ? C.textDim : C.textFaint, whiteSpace: "nowrap" }}>
+              /{t.label}
+            </span>
+            <span
+              onClick={(e) => {
+                e.stopPropagation();
+                onCloseTab(t.id);
+              }}
+              title="Close tab"
+              style={{
+                color: C.textFaint,
+                paddingLeft: 2,
+                fontSize: 13,
+                lineHeight: 1,
+                cursor: "pointer",
+              }}
+            >
+              ×
+            </span>
+          </div>
+        ))}
+        <button
+          onClick={onNewTab}
+          title="Monitor another synapse"
+          style={{
+            ...btn(null),
+            padding: "3px 9px",
+            fontSize: 14,
+            lineHeight: 1.2,
+            flexShrink: 0,
+          }}
+        >
+          +
+        </button>
+      </div>
+
+      <div
+        style={{
+          marginLeft: "auto",
+          display: "flex",
+          alignItems: "center",
+          gap: 10,
+          flexShrink: 0,
+        }}
+      >
         <span
           style={{
             color: connected ? "#34d399" : "#f87171",

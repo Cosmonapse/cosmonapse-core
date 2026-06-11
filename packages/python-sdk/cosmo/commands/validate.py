@@ -124,8 +124,31 @@ def _validate_signal(index: int, raw: dict[str, Any]) -> ValidationResult:
     if type_val == "TASK" and "input" not in payload:
         result.warn("TASK signal payload has no 'input' field")
 
-    if type_val in ("REGISTER", "HEARTBEAT", "DEREGISTER") and not raw.get("neuron"):
-        result.warn(f"{type_val} signal should include 'neuron' field")
+    if type_val in ("REGISTER", "HEARTBEAT", "DEREGISTER"):
+        # Identity lives in `directed` (directed.id / directed.type) in the
+        # current SDK; `neuron` is the legacy top-level form. Accept either.
+        directed = raw.get("directed") or {}
+        has_identity = bool(raw.get("neuron")) or (
+            isinstance(directed, dict)
+            and (directed.get("id") or directed.get("type"))
+        )
+        if not has_identity:
+            result.warn(
+                f"{type_val} signal should identify the participant via "
+                f"'directed.id'/'directed.type' (or legacy 'neuron')"
+            )
+
+    if type_val == "REGISTER":
+        role = payload.get("role") if isinstance(payload, dict) else None
+        if role is None:
+            result.warn(
+                "REGISTER signal should include 'payload.role' "
+                "('neuron' or 'engram')  -  the universal participant discriminator"
+            )
+        elif role not in ("neuron", "engram"):
+            result.warn(
+                f"REGISTER 'payload.role' should be 'neuron' or 'engram', got: {role!r}"
+            )
 
     return result
 

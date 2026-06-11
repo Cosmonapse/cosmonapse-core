@@ -6,9 +6,11 @@ import type { SynapseTarget } from "../useSignalStream";
 interface Props {
   initial?: Partial<SynapseTarget>;
   onConnect: (target: SynapseTarget) => void;
+  /** Shown when adding an extra tab — lets the user return to open sessions. */
+  onCancel?: () => void;
 }
 
-export function ConnectForm({ initial, onConnect }: Props) {
+export function ConnectForm({ initial, onConnect, onCancel }: Props) {
   const [url, setUrl] = useState(initial?.url ?? "cosmo://127.0.0.1:7070");
   const [namespace, setNamespace] = useState(initial?.namespace ?? "dev");
 
@@ -47,7 +49,8 @@ export function ConnectForm({ initial, onConnect }: Props) {
           <Logo size={32} />
           <div>
             <div style={{ fontWeight: 700, fontSize: 18 }}>
-              Cosmonapse <span style={{ color: C.textDim, fontWeight: 500 }}>Prism</span>
+              <span className="brand-word">Cosmonapse</span>{" "}
+              <span style={{ color: C.textDim, fontWeight: 500 }}>Prism</span>
             </div>
           </div>
         </div>
@@ -78,6 +81,26 @@ export function ConnectForm({ initial, onConnect }: Props) {
         <button type="submit" style={connectBtn}>
           Attach Prism →
         </button>
+
+        {onCancel && (
+          <button
+            type="button"
+            onClick={onCancel}
+            style={{
+              width: "100%",
+              marginTop: 10,
+              background: "transparent",
+              border: "1px solid " + C.borderStrong,
+              borderRadius: 10,
+              padding: "10px 16px",
+              color: C.textDim,
+              fontSize: 13,
+              cursor: "pointer",
+            }}
+          >
+            ← back to open synapses
+          </button>
+        )}
 
         <div style={{ color: C.textFaint, fontFamily: MONO, fontSize: 11, marginTop: 16 }}>
           Schemes: cosmo:// · nats:// · kafka://

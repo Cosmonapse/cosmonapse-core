@@ -33,7 +33,7 @@ Dispatch shapes (orchestrator-role only)
 * ``dispatch(neuron|capabilities=..., input=..., scope=...)`` - returns
   a :class:`Pathway` scoped to the new trace.
 * ``dispatch_and_wait(...)`` - sugar: dispatch, block until first
-  terminal Signal (AGENT_OUTPUT / CLARIFICATION / ERROR / FINAL),
+  terminal Signal (AGENT_OUTPUT / CLARIFICATION / PERMISSION / ERROR / FINAL),
   close, return the Signal.
 * ``dispatch_and_subscribe(...)`` - sugar: dispatch, return the live
   Pathway so the caller can attach ``@pw.on(SignalType.X)`` handlers
@@ -78,11 +78,11 @@ in observer role for a trace another peer started.
 
 ``Pathway(scope=...)`` filters which Signal types are delivered:
 ``"all"`` (default) sees every PATHWAY_TYPES Signal on the trace;
-``"terminal"`` delivers only FINAL / ERROR / CLARIFICATION - the
-decentralised pattern where intermediate orchestration is handled
-peer-to-peer and the Cortex only wakes for things that demand
-attention. FINAL / ERROR always reach auto-close regardless of
-scope.
+``"terminal"`` delivers only FINAL / ERROR / CLARIFICATION /
+PERMISSION - the decentralised pattern where intermediate orchestration
+is handled peer-to-peer and the Cortex only wakes for things that demand
+attention (a conclusion, or a decision the workflow is blocked on). FINAL
+/ ERROR always reach auto-close regardless of scope.
 
 Pathways auto-close on FINAL or ERROR, are closed by
 ``Dendrite.stop()``, and never alter what crosses the wire. The
@@ -90,7 +90,12 @@ entire surface is opt-in additive sugar over the existing
 ``dispatch_task`` / ``on_agent_output`` API.
 """
 
-from cosmonapse.axon import Axon, NeuronFn, ContextFetcher
+from cosmonapse.axon import (
+    Axon,
+    NeuronFn,
+    ContextFetcher,
+    COSMO_INTENT_SYSTEM_PROMPT,
+)
 from cosmonapse.neuron import Neuron, STANDARD_MCP_SERVERS
 from cosmonapse.dendrite import (
     Dendrite,
@@ -218,6 +223,7 @@ __all__ = [
     "Neuron",
     "STANDARD_MCP_SERVERS",
     "Axon",
+    "COSMO_INTENT_SYSTEM_PROMPT",
     "NeuronFn",
     "ContextFetcher",
     "Dendrite",

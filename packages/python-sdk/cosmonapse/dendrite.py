@@ -103,7 +103,16 @@ class Dendrite(LifecycleHooks):
         heartbeat_s: float = 30.0,
         reregister_on_heartbeat: bool = True,
         role: str = "orchestrator",
+        auto_bid: bool = True,
+        stale_after_s: float | None = None,
     ) -> None:
+        """``auto_bid``: when True (default), a Dendrite hosting Axons
+        answers TASK_OFFERs out of the box  -  if no user ``on_task_offer``
+        handler is registered and a hosted Axon's capabilities cover the
+        offer's requested set, it bids (cost=0.0, confidence=1.0) on that
+        Axon's behalf. Registering your own ``on_task_offer`` handler
+        suppresses the default bidder entirely, so custom bidding logic
+        never competes with it. Set False to opt out."""
         if synapse is None:
             raise TypeError("Dendrite requires a synapse (Synapse)")
         if role not in ("orchestrator", "worker"):
@@ -119,6 +128,14 @@ class Dendrite(LifecycleHooks):
         self._heartbeat_s = heartbeat_s
         self._reregister_on_heartbeat = reregister_on_heartbeat
         self._role = role
+        self._auto_bid = auto_bid
+        # Liveness: a registered Neuron whose last_heartbeat is older than
+        # this is marked deregistered by the heartbeat loop's sweep, so
+        # find_neurons() stops returning ghosts. Default: 3 heartbeat
+        # intervals. 0/None with heartbeat_s=0 disables the sweep.
+        if stale_after_s is None:
+            stale_after_s = heartbeat_s * 3 if heartbeat_s > 0 else 0.0
+        self._stale_after_s = stale_after_s
 
         self._axons: dict[str, Axon] = {}
         # Handlers are keyed by every SignalType (not just AXON_TYPES) so
@@ -132,6 +149,18 @@ class Dendrite(LifecycleHooks):
 
         self._task_sub: Subscription | None = None
         self._routed_task_sub: Subscription | None = None
+        self._pending_sub_tasks: set[asyncio.Task[None]] = set()
+        # In-flight subscription attempts, deduplicated per type so two
+        # concurrent _ensure_inbound_sub calls can't double-subscribe (which
+        # would make every handler fire twice). Event-based (not Task-based)
+        # so the first caller subscribes INLINE - no extra event-loop hop,
+        # which timing-sensitive late registrations rely on.
+        self._inflight_subs: dict[SignalType, asyncio.Event] = {}
+        # Recently seen CLARIFICATION_ANSWER / PERMISSION_DECISION keyed by
+        # parent_id, so await_decision can serve an answer that arrived
+        # before it was called (an in-process synapse can deliver the whole
+        # request->answer chain within the original publish). Bounded FIFO.
+        self._recent_decisions: dict[str, Signal] = {}
         self._inbound_subs: dict[SignalType, Subscription] = {}
         self._heartbeat_task: asyncio.Task[None] | None = None
         self._running = False
@@ -139,6 +168,14 @@ class Dendrite(LifecycleHooks):
         # Open Pathways keyed by trace_id. Populated by dispatch() and
         # observe_pathway(); evicted on Pathway.close() via _on_pathway_close.
         self._pathways: dict[str, Pathway] = {}
+
+        # Per-operation Pathways keyed by the issuing request's envelope id
+        # (== the response's parent_id). Opened by _open_op_pathway() for
+        # request/reply correlation - this is what makes EngramClient a thin
+        # wrapper over a Pathway rather than its own Future table. Evicted on
+        # close via _on_op_pathway_close; closed for a trace on its terminal
+        # event (FINAL/ERROR) and on stop().
+        self._op_pathways: dict[str, Pathway] = {}
 
         # Attached Engrams keyed by engram_id. Routing also indexes by
         # engram_kind so RECALL/IMPRINT with engram_kind= addresses all
@@ -213,14 +250,25 @@ class Dendrite(LifecycleHooks):
             return None
         return "caps:" + ",".join(caps)
 
+    # Signal types whose *initiation* requires orchestrator role. Only TASK
+    # is gated: a non-orchestrator must not start new task work. Every other
+    # synapse-side signal - cognition (PLAN / CRITIQUE / ...), replies
+    # (FINAL / ERROR / CLARIFICATION_ANSWER / PERMISSION_DECISION) and memory
+    # (RECALL / IMPRINT) - is role-agnostic, so interactions like recall /
+    # imprint can run over the generic dispatch + Pathway path from any role.
+    # dispatch_offer still guards itself at entry, so competitive-bidding
+    # initiation stays orchestrator-only independent of this set.
+    _ROLE_GATED_TYPES: frozenset[SignalType] = frozenset({SignalType.TASK})
+
     def _require_orchestrator(self, op: str) -> None:
-        """Guard for dispatch-side methods. Workers cannot emit TASK."""
+        """Guard for TASK initiation. Only orchestrator-role Dendrites may
+        dispatch TASK signals; all other signal emission is role-agnostic."""
         if self._role != "orchestrator":
             raise DendriteProtocolError(
                 f"Dendrite role={self._role!r} cannot perform {op!r}: "
                 f"only role='orchestrator' Dendrites may dispatch TASK "
-                f"signals. Workers host Axons and emit AGENT_OUTPUT / "
-                f"CLARIFICATION / ERROR only."
+                f"signals. Workers host Axons and emit replies / cognition / "
+                f"memory signals (AGENT_OUTPUT / FINAL / RECALL / ...) freely."
             )
 
     # ------------------------------------------------------------------
@@ -228,12 +276,78 @@ class Dendrite(LifecycleHooks):
     # ------------------------------------------------------------------
 
     def attach_axon(self, axon: Axon) -> None:
+        """Attach an Axon to a *stopped* Dendrite.
+
+        Raises ``RuntimeError`` if the Dendrite is running  -  a running
+        Dendrite needs the async activation path (TASK subscriptions,
+        queue-group refresh, REGISTER emission): use
+        ``await dendrite.add_axon(axon)`` instead, which works in both
+        states.
+        """
+        if self._running:
+            raise RuntimeError(
+                "attach_axon on a running Dendrite would never receive "
+                "TASKs (no subscription / REGISTER is set up after "
+                "start). Use `await dendrite.add_axon(axon)` instead."
+            )
+        self._attach_axon_record(axon)
+
+    def _attach_axon_record(self, axon: Axon) -> None:
         if axon.neuron_id in self._axons:
             raise ValueError(
                 f"Dendrite already has an Axon for neuron_id={axon.neuron_id!r}"
             )
         self._axons[axon.neuron_id] = axon
         axon.attach_to(self)
+
+    async def add_axon(self, axon: Axon) -> None:
+        """Attach an Axon; if the Dendrite is running, activate it live.
+
+        Live activation mirrors what ``start()`` does for axons attached
+        up front: ensure the addressed + routed TASK subscriptions exist
+        (re-keying the routed queue group for the new aggregate cap
+        profile), subscribe TASK_AWARDED / DISCOVER, mirror to the
+        registry store, emit REGISTER, and fire the Axon's on_connect
+        hooks.
+        """
+        self._attach_axon_record(axon)
+        if not self._running:
+            return
+        if self._task_sub is None:
+            self._task_sub = await self._synapse.subscribe(
+                self._subject(SignalType.TASK),
+                self._on_task,
+            )
+        await self._refresh_routed_sub()
+        await self._ensure_inbound_sub(SignalType.TASK_AWARDED)
+        await self._ensure_inbound_sub(SignalType.DISCOVER)
+        if self._auto_bid:
+            await self._ensure_inbound_sub(SignalType.TASK_OFFER)
+        await self._mirror_to_store(axon, status="registered")
+        await self._emit_register(axon)
+        await axon._on_register_emitted()
+
+    async def _refresh_routed_sub(self) -> None:
+        """(Re)subscribe the capability-routed TASK subscription so its
+        queue group matches the *current* aggregate cap profile. Called
+        on live attach/detach  -  a stale group would load-balance this
+        Dendrite into the wrong population (or none)."""
+        qgroup = self._cap_queue_group()
+        if self._routed_task_sub is not None:
+            try:
+                await self._routed_task_sub.unsubscribe()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "Dendrite failed to unsubscribe routed TASK during "
+                    "refresh: %s", exc,
+                )
+            self._routed_task_sub = None
+        if qgroup is not None:
+            self._routed_task_sub = await self._synapse.subscribe(
+                self._routed_subject(),
+                self._on_task,
+                queue_group=qgroup,
+            )
 
     def attach_engram(self, engram: Engram) -> None:
         """Mount an Engram on this Dendrite.
@@ -328,6 +442,10 @@ class Dendrite(LifecycleHooks):
                         "Dendrite failed to unsubscribe routed TASK: %s", exc,
                     )
                 self._routed_task_sub = None
+        elif self._running:
+            # Axons remain: the aggregate cap profile changed, so the
+            # routed queue group must be re-keyed.
+            await self._refresh_routed_sub()
 
     # ------------------------------------------------------------------
     # Handler registration with filter support
@@ -393,9 +511,39 @@ class Dendrite(LifecycleHooks):
             )
             self._handlers[signal_type].append(handler)
             if self._running and signal_type not in self._inbound_subs:
-                asyncio.create_task(self._ensure_inbound_sub(signal_type))
+                # Late registration (decorating after start()). The
+                # subscription is established asynchronously; track the
+                # task so failures are logged rather than swallowed, and
+                # so ensure_subscribed() can await completion when the
+                # caller needs the subscription to be live before the
+                # next emit.
+                task = asyncio.create_task(
+                    self._ensure_inbound_sub(signal_type)
+                )
+                self._pending_sub_tasks.add(task)
+
+                def _done(t: asyncio.Task[None]) -> None:
+                    self._pending_sub_tasks.discard(t)
+                    if not t.cancelled() and t.exception() is not None:
+                        logger.error(
+                            "Dendrite: late subscription for %s failed: %s",
+                            signal_type.value, t.exception(),
+                        )
+                task.add_done_callback(_done)
             return fn
         return decorator
+
+    async def ensure_subscribed(self, *types: SignalType) -> None:
+        """Await until inbound subscriptions exist for ``types``.
+
+        Decorating a running Dendrite establishes the subscription
+        asynchronously; a Signal emitted immediately afterwards can race
+        it. ``await d.ensure_subscribed(SignalType.X)`` removes the race
+        deterministically. Idempotent  -  already-subscribed types are
+        no-ops.
+        """
+        for t in types:
+            await self._ensure_inbound_sub(t)
 
     @staticmethod
     def _decorator_or_call(
@@ -516,6 +664,124 @@ class Dendrite(LifecycleHooks):
             neuron=neuron, capability=capability, trace_id=trace_id,
         ))
 
+    # -- Generic handler registration --------------------------------------
+
+    def on_signal(
+        self,
+        signal_type: SignalType,
+        fn: SignalHandler | None = None,
+        *,
+        neuron: str | None = None,
+        capability: str | None = None,
+        trace_id: str | None = None,
+    ) -> Any:
+        """Register a handler for *any* SignalType.
+
+        The generic escape hatch behind every named ``on_*`` decorator  -
+        new protocol types are observable the day they exist, without
+        waiting for named sugar::
+
+            @d.on_signal(SignalType.FINAL)
+            async def done(sig): ...
+
+        Supports the same ``neuron=`` / ``capability=`` / ``trace_id=``
+        filters as the named decorators.
+        """
+        return self._decorator_or_call(fn, self._on(
+            signal_type,
+            neuron=neuron, capability=capability, trace_id=trace_id,
+        ))
+
+    def on_final(self, fn: SignalHandler | None = None, *, neuron: str | None = None, capability: str | None = None, trace_id: str | None = None) -> Any:
+        """Register a handler fired on FINAL  -  workflow conclusion."""
+        return self._decorator_or_call(fn, self._on(
+            SignalType.FINAL,
+            neuron=neuron, capability=capability, trace_id=trace_id,
+        ))
+
+    def on_task_signal(self, fn: SignalHandler | None = None, *, neuron: str | None = None, capability: str | None = None, trace_id: str | None = None) -> Any:
+        """Observe inbound TASKs (audit/logging). Observation only  -
+        Axon routing happens on its own subscription and is unaffected
+        by handlers registered here."""
+        return self._decorator_or_call(fn, self._on(
+            SignalType.TASK,
+            neuron=neuron, capability=capability, trace_id=trace_id,
+        ))
+
+    def on_bid(self, fn: SignalHandler | None = None, *, neuron: str | None = None, capability: str | None = None, trace_id: str | None = None) -> Any:
+        """Observe BIDs (market observability / auditing). dispatch_offer
+        collects its own BIDs independently of handlers here."""
+        return self._decorator_or_call(fn, self._on(
+            SignalType.BID,
+            neuron=neuron, capability=capability, trace_id=trace_id,
+        ))
+
+    def on_task_awarded(self, fn: SignalHandler | None = None, *, neuron: str | None = None, capability: str | None = None, trace_id: str | None = None) -> Any:
+        """Observe TASK_AWARDED. The hosting Dendrite's own award-to-TASK
+        synthesis is unaffected by handlers here."""
+        return self._decorator_or_call(fn, self._on(
+            SignalType.TASK_AWARDED,
+            neuron=neuron, capability=capability, trace_id=trace_id,
+        ))
+
+    def on_task_declined(self, fn: SignalHandler | None = None, *, neuron: str | None = None, capability: str | None = None, trace_id: str | None = None) -> Any:
+        """Register a handler fired on TASK_DECLINED  -  e.g. release a
+        reservation made while bidding."""
+        return self._decorator_or_call(fn, self._on(
+            SignalType.TASK_DECLINED,
+            neuron=neuron, capability=capability, trace_id=trace_id,
+        ))
+
+    def on_clarification_answer(self, fn: SignalHandler | None = None, *, neuron: str | None = None, capability: str | None = None, trace_id: str | None = None) -> Any:
+        """Register a handler fired on CLARIFICATION_ANSWER  -  the
+        discrete answer some Dendrite emitted via answer_clarification.
+        Correlate by ``sig.parent_id == the CLARIFICATION's id`` (or use
+        :meth:`await_decision` for the awaitable shape)."""
+        return self._decorator_or_call(fn, self._on(
+            SignalType.CLARIFICATION_ANSWER,
+            neuron=neuron, capability=capability, trace_id=trace_id,
+        ))
+
+    def on_permission_decision(self, fn: SignalHandler | None = None, *, neuron: str | None = None, capability: str | None = None, trace_id: str | None = None) -> Any:
+        """Register a handler fired on PERMISSION_DECISION  -  the discrete
+        verdict some Dendrite emitted via grant_permission/deny_permission.
+        Correlate by ``sig.parent_id == the PERMISSION's id`` (or use
+        :meth:`await_decision` for the awaitable shape)."""
+        return self._decorator_or_call(fn, self._on(
+            SignalType.PERMISSION_DECISION,
+            neuron=neuron, capability=capability, trace_id=trace_id,
+        ))
+
+    def on_recalled(self, fn: SignalHandler | None = None, *, neuron: str | None = None, capability: str | None = None, trace_id: str | None = None) -> Any:
+        """Observe RECALLED responses (memory-traffic observability).
+        EngramClient correlation is unaffected by handlers here."""
+        return self._decorator_or_call(fn, self._on(
+            SignalType.RECALLED,
+            neuron=neuron, capability=capability, trace_id=trace_id,
+        ))
+
+    def on_imprinted(self, fn: SignalHandler | None = None, *, neuron: str | None = None, capability: str | None = None, trace_id: str | None = None) -> Any:
+        """Observe IMPRINTED receipts (memory-traffic observability)."""
+        return self._decorator_or_call(fn, self._on(
+            SignalType.IMPRINTED,
+            neuron=neuron, capability=capability, trace_id=trace_id,
+        ))
+
+    def on_recall_signal(self, fn: SignalHandler | None = None, *, neuron: str | None = None, capability: str | None = None, trace_id: str | None = None) -> Any:
+        """Observe inbound RECALL requests. Observation only  -  hosted
+        Engram routing happens before handlers fire and is unaffected."""
+        return self._decorator_or_call(fn, self._on(
+            SignalType.RECALL,
+            neuron=neuron, capability=capability, trace_id=trace_id,
+        ))
+
+    def on_imprint_signal(self, fn: SignalHandler | None = None, *, neuron: str | None = None, capability: str | None = None, trace_id: str | None = None) -> Any:
+        """Observe inbound IMPRINT requests. Observation only."""
+        return self._decorator_or_call(fn, self._on(
+            SignalType.IMPRINT,
+            neuron=neuron, capability=capability, trace_id=trace_id,
+        ))
+
     # -- Trace-scoped handler --------------------------------------------
 
     _TRACE_DEFAULT_TYPES: tuple[SignalType, ...] = (
@@ -633,6 +899,10 @@ class Dendrite(LifecycleHooks):
             # handler; the handler treats matching awards as TASKs.
             await self._ensure_inbound_sub(SignalType.TASK_AWARDED)
             await self._ensure_inbound_sub(SignalType.DISCOVER)
+            if self._auto_bid:
+                # Default bidder: listen for TASK_OFFERs so stock workers
+                # participate in offer/bid routing out of the box.
+                await self._ensure_inbound_sub(SignalType.TASK_OFFER)
             for axon in self._axons.values():
                 await self._mirror_to_store(axon, status="registered")
                 await self._emit_register(axon)
@@ -713,6 +983,15 @@ class Dendrite(LifecycleHooks):
                 logger.warning("Pathway close raised: %s", exc)
         self._pathways.clear()
 
+        # Close any in-flight op-Pathways (recall/imprint) so their awaiters
+        # wake with EngramCancelled instead of hanging on a deadline.
+        for op_pathway in list(self._op_pathways.values()):
+            try:
+                await op_pathway.close()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Op-Pathway close raised: %s", exc)
+        self._op_pathways.clear()
+
         if not self._running:
             return
         self._running = False
@@ -724,6 +1003,10 @@ class Dendrite(LifecycleHooks):
             except asyncio.CancelledError:
                 pass
             self._heartbeat_task = None
+
+        for task in list(self._pending_sub_tasks):
+            task.cancel()
+        self._pending_sub_tasks.clear()
 
         if self._task_sub is not None:
             await self._task_sub.unsubscribe()
@@ -740,13 +1023,8 @@ class Dendrite(LifecycleHooks):
                 logger.warning("Dendrite failed to unsubscribe inbound: %s", exc)
         self._inbound_subs.clear()
 
-        # Cancel any in-flight engram I/O  -  Futures resolve with
-        # EngramCancelled so awaiters get a clean exception instead of
-        # hanging on the deadline.
-        try:
-            self._engram_client.cancel_all()
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("Dendrite: EngramClient cancel_all raised: %s", exc)
+        # In-flight engram I/O was already cancelled above by closing the
+        # op-Pathways (recall/imprint awaiters wake with EngramCancelled).
 
         for engram in self._engrams.values():
             try:
@@ -796,17 +1074,49 @@ class Dendrite(LifecycleHooks):
     async def registry_snapshot(
         self, *, capability: str | None = None,
         include_deregistered: bool = False,
+        max_age_s: float | None = None,
     ) -> list[NeuronRecord]:
-        return await self._require_store().list(
+        records = await self._require_store().list(
             capability=capability,
             include_deregistered=include_deregistered,
         )
+        if max_age_s is not None:
+            records = self._filter_fresh(records, max_age_s)
+        return records
 
-    async def find_neurons(self, *, capability: str | None = None) -> list[NeuronRecord]:
-        return await self._require_store().list(
+    async def find_neurons(
+        self, *, capability: str | None = None,
+        max_age_s: float | None = None,
+    ) -> list[NeuronRecord]:
+        """Live Neurons, optionally narrowed by ``capability``.
+
+        ``max_age_s`` additionally drops records whose last heartbeat is
+        older than the given age  -  a read-side freshness guard for
+        callers that cannot rely on the background staleness sweep.
+        """
+        records = await self._require_store().list(
             capability=capability,
             include_deregistered=False,
         )
+        if max_age_s is not None:
+            records = self._filter_fresh(records, max_age_s)
+        return records
+
+    @staticmethod
+    def _filter_fresh(
+        records: list[NeuronRecord], max_age_s: float,
+    ) -> list[NeuronRecord]:
+        now = datetime.now(timezone.utc)
+        fresh: list[NeuronRecord] = []
+        for rec in records:
+            seen = rec.last_heartbeat or rec.registered_at
+            if seen is None:
+                continue
+            if seen.tzinfo is None:
+                seen = seen.replace(tzinfo=timezone.utc)
+            if (now - seen).total_seconds() <= max_age_s:
+                fresh.append(rec)
+        return fresh
 
     # ------------------------------------------------------------------
     # Outbound primitives
@@ -817,6 +1127,7 @@ class Dendrite(LifecycleHooks):
         trace_id: str | None = None, parent_id: str | None = None,
         context_ref: str | None = None,
         capabilities: list[str] | None = None,
+        finalize: bool = False,
         meta: dict[str, Any] | None = None,
     ) -> Signal:
         """Emit a TASK signal. Addressed (``neuron=...``) or capability-routed
@@ -826,6 +1137,10 @@ class Dendrite(LifecycleHooks):
         host filters by neuron_id and acts. Capability-routed TASKs go
         on the queue-grouped routed subject so the broker delivers them
         to exactly one Dendrite per matching cap profile.
+
+        ``finalize=True`` tags the TASK so the handling worker Dendrite
+        promotes a successful AGENT_OUTPUT to FINAL (terminal-handler
+        finalize  -  see :meth:`dispatch`).
 
         Only orchestrator-role Dendrites may dispatch.
         """
@@ -839,7 +1154,7 @@ class Dendrite(LifecycleHooks):
             trace_id=trace_id, parent_id=parent_id,
             directed=Directed(id=neuron) if neuron else None,
             input=input, context_ref=context_ref,
-            capabilities=capabilities, meta=meta,
+            capabilities=capabilities, finalize=finalize, meta=meta,
         )
         await self._publish_task(sig)
         return sig
@@ -880,6 +1195,7 @@ class Dendrite(LifecycleHooks):
         capabilities: list[str] | None = None,
         meta: dict[str, Any] | None = None,
         scope: str = "all",
+        finalize: bool | None = None,
     ) -> Pathway:
         """Dispatch a TASK and return a :class:`Pathway` scoped to its trace.
 
@@ -908,13 +1224,28 @@ class Dendrite(LifecycleHooks):
 
         Pass ``capabilities=[...]`` instead of ``neuron=`` for event-driven
         dispatch: any Dendrite whose attached Axons cover the requested
-        capability set may pick it up.
+        capability set may pick it up. Delivery is exactly-once within a
+        queue group (identical cap profiles) but **at-least-once across
+        heterogeneous groups**: when different Dendrites declare different
+        but overlapping cap profiles, more than one may consume the same
+        routed TASK. Use :meth:`dispatch_offer` (TASK_OFFER / BID /
+        TASK_AWARDED) when overlapping profiles exist and the work must
+        be claimed atomically.
 
         ``scope="all"`` (default) delivers every PATHWAY_TYPES Signal on
         the trace to the Pathway; ``scope="terminal"`` filters to FINAL /
-        ERROR / CLARIFICATION only  -  the decentralised pattern where
-        intermediate orchestration is handled by other Dendrites and the
-        Cortex only wakes for terminal events.
+        ERROR / CLARIFICATION / PERMISSION only  -  the decentralised pattern
+        where intermediate orchestration is handled by other Dendrites and the
+        Cortex only wakes for terminal events or a needed decision.
+
+        ``finalize`` controls terminal-handler finalization: a tagged TASK
+        makes the worker Dendrite that ran the Axon promote a successful
+        AGENT_OUTPUT by also emitting FINAL on the trace. Default
+        (``None``) resolves to True exactly when ``scope="terminal"``  -
+        a default Axon never emits FINAL itself, so a terminal-scoped
+        Pathway would otherwise never resolve against stock workers. Pass
+        ``finalize=False`` to opt out (e.g. another peer owns FINAL), or
+        ``finalize=True`` to get a FINAL even on an all-scope dispatch.
 
         The Pathway auto-closes on the first FINAL or ERROR Signal;
         :meth:`stop` closes any still-open Pathways.
@@ -925,6 +1256,8 @@ class Dendrite(LifecycleHooks):
                 "dispatch requires either neuron= (addressed) or "
                 "capabilities=[...] (capability-routed)"
             )
+        if finalize is None:
+            finalize = scope == "terminal"
         tid = trace_id or new_trace_id()
 
         # Ensure we'll observe Signals on this trace before emitting
@@ -946,7 +1279,7 @@ class Dendrite(LifecycleHooks):
             trace_id=tid, parent_id=parent_id,
             directed=Directed(id=neuron) if neuron else None,
             input=input, context_ref=context_ref,
-            capabilities=capabilities, meta=meta,
+            capabilities=capabilities, finalize=finalize, meta=meta,
         )
         try:
             await self._publish_task(sig)
@@ -971,6 +1304,7 @@ class Dendrite(LifecycleHooks):
         capabilities: list[str] | None = None,
         meta: dict[str, Any] | None = None,
         scope: str = "all",
+        finalize: bool | None = None,
     ) -> Signal:
         """Sync-shape sugar: dispatch, block until first terminal Signal,
         close the Pathway, return the Signal.
@@ -983,7 +1317,7 @@ class Dendrite(LifecycleHooks):
         Works for both addressed (``neuron=``) and capability-routed
         (``capabilities=[...]``) dispatch, and in centralized or
         decentralized topologies. Use ``scope="terminal"`` to wait only
-        for FINAL / ERROR / CLARIFICATION.
+        for FINAL / ERROR / CLARIFICATION / PERMISSION.
 
         Raises :class:`asyncio.TimeoutError` if ``timeout_s`` elapses
         before a terminal Signal arrives, and
@@ -995,7 +1329,7 @@ class Dendrite(LifecycleHooks):
             neuron=neuron, input=input,
             trace_id=trace_id, parent_id=parent_id,
             context_ref=context_ref, capabilities=capabilities,
-            meta=meta, scope=scope,
+            meta=meta, scope=scope, finalize=finalize,
         )
         async with pathway as pw:
             return await pw.wait(timeout_s=timeout_s)
@@ -1011,6 +1345,7 @@ class Dendrite(LifecycleHooks):
         capabilities: list[str] | None = None,
         meta: dict[str, Any] | None = None,
         scope: str = "all",
+        finalize: bool | None = None,
     ) -> Pathway:
         """Async-shape sugar: dispatch, return the Pathway immediately.
 
@@ -1032,7 +1367,7 @@ class Dendrite(LifecycleHooks):
             neuron=neuron, input=input,
             trace_id=trace_id, parent_id=parent_id,
             context_ref=context_ref, capabilities=capabilities,
-            meta=meta, scope=scope,
+            meta=meta, scope=scope, finalize=finalize,
         )
 
     # -- Competitive bidding: TASK_OFFER / BID / TASK_AWARDED -------------
@@ -1049,6 +1384,7 @@ class Dendrite(LifecycleHooks):
         context_ref: str | None = None,
         meta: dict[str, Any] | None = None,
         scope: str = "all",
+        finalize: bool | None = None,
     ) -> Pathway:
         """Broadcast a TASK_OFFER, collect BIDs, award the winner, and
         return a Pathway scoped to the resulting workflow.
@@ -1068,6 +1404,11 @@ class Dendrite(LifecycleHooks):
         * ``"highest_confidence"``  -  bidder with the largest
           ``confidence`` wins.
 
+        ``finalize`` follows the same terminal-handler-finalize rule as
+        :meth:`dispatch` (default: True when ``scope="terminal"``); the
+        tag rides the TASK_AWARDED into the TASK the winner's Dendrite
+        synthesises.
+
         Raises ``TimeoutError`` if no BID arrives within ``deadline_ms``.
         Only orchestrator-role Dendrites may call this.
         """
@@ -1078,6 +1419,8 @@ class Dendrite(LifecycleHooks):
                 f"'highest_confidence', got {select!r}"
             )
 
+        if finalize is None:
+            finalize = scope == "terminal"
         tid = trace_id or new_trace_id()
         await self._ensure_pathway_subs()
         # Also ensure we'll see BIDs on this trace.
@@ -1176,6 +1519,7 @@ class Dendrite(LifecycleHooks):
                 if k in winner.payload
             },
             context_ref=context_ref,
+            finalize=finalize,
         )
         try:
             await self.emit(awarded)
@@ -1239,6 +1583,27 @@ class Dendrite(LifecycleHooks):
         await self._publish(sig)
         return sig
 
+    async def _maybe_auto_bid(self, offer: Signal) -> None:
+        """Bid on a TASK_OFFER with the first hosted Axon whose capability
+        set covers the offer's request. No-op when nothing matches. An
+        offer with no capability filter is open to any Axon."""
+        requested = set(offer.payload.get("capabilities") or [])
+        for axon in self._axons.values():
+            if requested and not requested.issubset(set(axon.capabilities)):
+                continue
+            try:
+                await self.bid(
+                    offer, neuron=axon.neuron_id,
+                    cost=0.0, confidence=1.0,
+                    meta={"auto_bid": True},
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "Dendrite: auto-bid failed for %s: %s",
+                    axon.neuron_id, exc,
+                )
+            return
+
     async def observe_pathway(self, trace_id: str) -> Pathway:
         """Open a Pathway in *observer* role for a trace this Dendrite did
         not originate.
@@ -1273,6 +1638,44 @@ class Dendrite(LifecycleHooks):
     async def _on_pathway_close(self, pathway: Pathway) -> None:
         """Called by a Pathway when it closes - evict from the registry."""
         self._pathways.pop(pathway.trace_id, None)
+
+    # -- per-operation (request/reply) Pathways --------------------------
+    # The generic correlation primitive: a Pathway keyed on the issuing
+    # request's id, matched against inbound ``parent_id``. EngramClient is
+    # the first wrapper over it (recall/imprint); any future request/reply
+    # client (permission, clarification, ...) can reuse it unchanged.
+
+    def _open_op_pathway(
+        self, *, op_id: str, trace_id: str, scope: str = "all",
+    ) -> Pathway:
+        """Open a per-operation Pathway correlated by ``op_id``.
+
+        Inbound Signals whose ``parent_id == op_id`` are delivered to it by
+        :meth:`_dispatch_inbound`. ``trace_id`` is carried only for lifecycle
+        grouping so the operation is cancelled when its parent TASK ends.
+        The Dendrite already subscribes to RECALLED/IMPRINTED in ``start()``,
+        so no extra subscription is needed here.
+        """
+        pathway = Pathway(
+            trace_id=trace_id, parent_id=op_id, role="originator",
+            on_close=self._on_op_pathway_close, scope=scope,
+        )
+        self._op_pathways[op_id] = pathway
+        return pathway
+
+    async def _on_op_pathway_close(self, pathway: Pathway) -> None:
+        if pathway.parent_id is not None:
+            self._op_pathways.pop(pathway.parent_id, None)
+
+    async def _cancel_op_pathways(self, trace_id: str) -> None:
+        """Close every in-flight op-Pathway on ``trace_id``. Awaiting clients
+        (recall/imprint) wake with PathwayClosedError, which they surface as
+        EngramCancelled. Snapshot first - close() mutates ``_op_pathways``."""
+        for pw in [p for p in self._op_pathways.values() if p.trace_id == trace_id]:
+            try:
+                await pw.close()
+            except Exception as exc:  # noqa: BLE001  -  teardown must not raise
+                logger.warning("Dendrite: op-Pathway close raised: %s", exc)
 
     async def emit_final(self, *, trace_id: str, parent_id: str, result: Any, meta: dict[str, Any] | None = None) -> Signal:
         sig = final_signal(trace_id=trace_id, parent_id=parent_id,
@@ -1612,6 +2015,54 @@ class Dendrite(LifecycleHooks):
         await self._publish(sig)
         return sig
 
+    async def await_decision(
+        self,
+        request: Signal,
+        *,
+        timeout_s: float | None = 30.0,
+    ) -> Signal:
+        """Await the discrete answer to a CLARIFICATION or PERMISSION.
+
+        Opens a per-operation Pathway keyed on ``request.id`` and resolves
+        on the first CLARIFICATION_ANSWER (for a CLARIFICATION request) or
+        PERMISSION_DECISION (for a PERMISSION request) whose ``parent_id``
+        matches. The awaitable counterpart to the
+        :meth:`on_clarification_answer` / :meth:`on_permission_decision`
+        decorators  -  same machinery EngramClient uses for RECALL/IMPRINT.
+
+        Typical use: an observer Dendrite saw a PERMISSION request on the
+        bus and wants the eventual verdict (e.g. to imprint it)::
+
+            verdict = await d.await_decision(permission_sig, timeout_s=60)
+
+        Raises ``DendriteProtocolError`` for other request types,
+        ``asyncio.TimeoutError`` on deadline, and ``PathwayClosedError``
+        if the Dendrite stops first.
+        """
+        if request.type is SignalType.CLARIFICATION:
+            expected = SignalType.CLARIFICATION_ANSWER
+        elif request.type is SignalType.PERMISSION:
+            expected = SignalType.PERMISSION_DECISION
+        else:
+            raise DendriteProtocolError(
+                f"await_decision expects a CLARIFICATION or PERMISSION "
+                f"signal, got {request.type.value!r}"
+            )
+        await self._ensure_inbound_sub(expected)
+        # The answer may already have flown by (in-process synapses deliver
+        # the whole request->answer chain inside the original publish).
+        # Serve and consume the cached copy if so.
+        cached = self._recent_decisions.pop(request.id, None)
+        if cached is not None and cached.type is expected:
+            return cached
+        pathway = self._open_op_pathway(
+            op_id=request.id, trace_id=request.trace_id,
+        )
+        try:
+            return await pathway.wait_for(expected, timeout_s=timeout_s)
+        finally:
+            await pathway.close()
+
     async def answer_clarification(
         self,
         request: Signal,
@@ -1619,10 +2070,12 @@ class Dendrite(LifecycleHooks):
         answer: Any,
         meta: dict[str, Any] | None = None,
     ) -> Signal:
-        """Answer a *blocking* CLARIFICATION (the Neuron called ``ask(...)``
-        and is awaiting). This is distinct from
-        :meth:`respond_to_clarification`, which closes the legacy
-        return-marker flow by re-dispatching a TASK."""
+        """Answer a CLARIFICATION with a discrete CLARIFICATION_ANSWER
+        signal (``parent_id`` = the request's id). Consumers pick it up
+        via :meth:`on_clarification_answer` or :meth:`await_decision`.
+        Distinct from :meth:`respond_to_clarification`, which closes the
+        loop by re-dispatching a TASK carrying the answer so the asking
+        Neuron runs again."""
         if request.type is not SignalType.CLARIFICATION:
             raise DendriteProtocolError(
                 f"answer_clarification expects a CLARIFICATION signal, got "
@@ -1644,16 +2097,19 @@ class Dendrite(LifecycleHooks):
         Funnel for every public emit_* helper (emit_final / emit_error /
         emit_plan / emit_critique / ...). Subject to two guards:
 
-        * Role guard - only orchestrator-role Dendrites may emit
-          orchestration Signals. Worker Axons still publish AGENT_OUTPUT
-          / CLARIFICATION / ERROR via the private ``_publish`` path so
-          ``handle_task`` replies are unaffected. ``bid()`` also uses
-          ``_publish`` so workers can compete in capability routing.
+        * Role guard - only TASK initiation is gated (``_ROLE_GATED_TYPES``):
+          a non-orchestrator may not emit TASK. Every other synapse-side
+          signal - cognition, replies, and RECALL / IMPRINT - is emitted
+          regardless of role, so memory and other interactions run over the
+          generic dispatch + Pathway path from any Dendrite. Worker Axons
+          still publish AGENT_OUTPUT / CLARIFICATION / ERROR via the private
+          ``_publish`` path, and ``bid()`` likewise bypasses this method.
         * Type guard - only SYNAPSE_TYPES are accepted; AXON_TYPES
           (REGISTER / HEARTBEAT / DEREGISTER / AGENT_OUTPUT / ...) must
           go through the internal management paths, not this method.
         """
-        self._require_orchestrator(f"emit({signal.type.value})")
+        if signal.type in self._ROLE_GATED_TYPES:
+            self._require_orchestrator(f"emit({signal.type.value})")
         if signal.type not in SYNAPSE_TYPES:
             raise DendriteProtocolError(
                 f"Dendrite refuses to emit {signal.type.value!r}: "
@@ -1696,10 +2152,24 @@ class Dendrite(LifecycleHooks):
         return f"cosmonapse.{self._namespace}.{SignalType.TASK.value}.routed"
 
     async def _ensure_inbound_sub(self, signal_type: SignalType) -> None:
-        if signal_type in self._inbound_subs:
-            return
-        sub = await self.subscribe(signal_type, self._dispatch_inbound)
-        self._inbound_subs[signal_type] = sub
+        # Dedupe concurrent calls on the in-flight attempt, not the completed
+        # subscription - otherwise two racing callers each subscribe and
+        # every handler fires twice per signal. The first caller subscribes
+        # inline (no extra event-loop hop); racers wait on the Event and
+        # re-check, retrying only if the first attempt failed.
+        while signal_type not in self._inbound_subs:
+            evt = self._inflight_subs.get(signal_type)
+            if evt is not None:
+                await evt.wait()
+                continue
+            evt = asyncio.Event()
+            self._inflight_subs[signal_type] = evt
+            try:
+                sub = await self.subscribe(signal_type, self._dispatch_inbound)
+                self._inbound_subs[signal_type] = sub
+            finally:
+                self._inflight_subs.pop(signal_type, None)
+                evt.set()
 
     async def _on_task(self, task: Signal) -> None:
         """Route an inbound TASK to a local Axon, if any.
@@ -1744,6 +2214,32 @@ class Dendrite(LifecycleHooks):
             )
         await self._publish(reply)
 
+        # Terminal-handler finalize: when the dispatching side tagged the
+        # TASK (payload.finalize  -  set automatically by
+        # dispatch(scope="terminal")), promote a successful AGENT_OUTPUT by
+        # also emitting FINAL so terminal-scoped Pathways resolve against
+        # default workers. Only AGENT_OUTPUT is promoted: CLARIFICATION /
+        # PERMISSION pause the workflow awaiting a decision, and ERROR is
+        # already terminal. The FINAL is parented to the AGENT_OUTPUT and
+        # attributed to the producing Neuron so observers keep the lineage
+        # TASK -> AGENT_OUTPUT -> FINAL.
+        if (
+            reply.type is SignalType.AGENT_OUTPUT
+            and task.payload.get("finalize")
+        ):
+            try:
+                await self._publish(final_signal(
+                    trace_id=reply.trace_id,
+                    parent_id=reply.id,
+                    directed=Directed(id=target),
+                    result=reply.payload.get("output", {}),
+                ))
+            except Exception as exc:  # noqa: BLE001
+                logger.exception(
+                    "Dendrite: terminal-handler FINAL publish failed "
+                    "for %s: %s", target, exc,
+                )
+
     async def _handle_discover(self, signal: Signal) -> None:
         if self._discover_handlers:
             results = await asyncio.gather(
@@ -1782,10 +2278,16 @@ class Dendrite(LifecycleHooks):
                 )
 
     async def _emit_register(self, axon: Axon) -> None:
+        neuron_kind = getattr(axon, "neuron_kind", "neuron") or "neuron"
         await self._publish(register_signal(
-            directed=Directed(id=axon.neuron_id, capabilities=list(axon.capabilities)),
+            directed=Directed(
+                id=axon.neuron_id,
+                type=neuron_kind,
+                capabilities=list(axon.capabilities),
+            ),
             capabilities=axon.capabilities,
             version=axon.version,
+            role="neuron",
         ))
 
     async def _emit_engram_register(self, engram: Engram) -> None:
@@ -1806,6 +2308,7 @@ class Dendrite(LifecycleHooks):
             capabilities=caps,
             version=getattr(engram, "version", None),
             engram=True,
+            role="engram",
         ))
 
     async def _emit_deregister(self, axon: Axon, *, reason: str | None) -> None:
@@ -1867,41 +2370,102 @@ class Dendrite(LifecycleHooks):
                     await axon._on_heartbeat_tick()
                 except Exception as exc:
                     logger.warning("Axon heartbeat-tick hook failed: %s", exc)
+            if self._registry_store is not None and self._stale_after_s > 0:
+                try:
+                    await self._sweep_stale_neurons(now)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "Dendrite: stale-neuron sweep failed: %s", exc,
+                    )
             await self._fire_refresh(RefreshEvent(reason="heartbeat"))
+
+    async def _sweep_stale_neurons(self, now: datetime) -> None:
+        """Mark Neurons deregistered when their last_heartbeat is older
+        than ``stale_after_s``. Own hosted Axons were touched immediately
+        before the sweep, so they never qualify. Records with no
+        last_heartbeat fall back to registered_at."""
+        store = self._registry_store
+        if store is None:
+            return
+        records = await store.list(include_deregistered=False)
+        for rec in records:
+            seen = rec.last_heartbeat or rec.registered_at
+            if seen is None:
+                continue
+            if seen.tzinfo is None:
+                seen = seen.replace(tzinfo=timezone.utc)
+            if (now - seen).total_seconds() > self._stale_after_s:
+                try:
+                    await store.mark_deregistered(rec.neuron_id)
+                    logger.info(
+                        "Dendrite: marked stale neuron %s deregistered "
+                        "(last seen %s)", rec.neuron_id, seen.isoformat(),
+                    )
+                    await self._fire_refresh(RefreshEvent(
+                        reason="stale", neuron_id=rec.neuron_id,
+                    ))
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "Dendrite: mark_deregistered(%s) failed in sweep: "
+                        "%s", rec.neuron_id, exc,
+                    )
 
     async def _dispatch_inbound(self, signal: Signal) -> None:
         if signal.type == SignalType.DISCOVER:
             await self._handle_discover(signal)
             return
 
-        # Engram I/O: route RECALL/IMPRINT to a hosted Engram if any
-        # matches; deliver RECALLED/IMPRINTED to the local EngramClient
-        # so awaiting Futures resolve.
+        # Engram I/O requests: route RECALL/IMPRINT to a hosted Engram if
+        # any matches (server side), then fire observer handlers
+        # (@on_recall_signal / @on_imprint_signal) and return.
         if signal.type is SignalType.RECALL:
             await self._on_recall(signal)
+            await self._fire_handlers(signal)
             return
         if signal.type is SignalType.IMPRINT:
             await self._on_imprint(signal)
+            await self._fire_handlers(signal)
             return
-        if signal.type in (SignalType.RECALLED, SignalType.IMPRINTED):
-            try:
-                await self._engram_client._deliver(signal)
-            except Exception as exc:  # noqa: BLE001
-                logger.exception(
-                    "Dendrite: EngramClient delivery failed for %s: %s",
-                    signal.type.value, exc,
-                )
-            # Continue to user-registered handlers below (e.g. observers).
 
-        # Trace terminal events cancel any in-flight engram I/O on the
-        # same trace so awaiters in Neurons / orchestrators wake up
+        # Per-operation (request/reply) correlation: deliver any Signal whose
+        # parent_id matches an open op-Pathway. This resolves the awaiting
+        # recall()/imprint() (RECALLED/IMPRINTED) without a bespoke Future
+        # table - EngramClient is just the wrapper that opened the Pathway.
+        # Op ids are unique envelope ids, so this never misroutes. Delivery
+        # continues below so trace observers still see the Signal too.
+        if signal.parent_id:
+            op_pw = self._op_pathways.get(signal.parent_id)
+            if op_pw is not None:
+                try:
+                    await op_pw._deliver(signal)
+                except Exception as exc:  # noqa: BLE001
+                    logger.exception(
+                        "Dendrite: op-Pathway delivery failed for %s: %s",
+                        signal.type.value, exc,
+                    )
+
+        # Cache discrete decisions by parent_id so a later await_decision can
+        # still resolve when the answer beat it onto the bus (an in-process
+        # synapse delivers the whole request->answer chain inside the
+        # original publish).
+        if (
+            signal.type in (SignalType.CLARIFICATION_ANSWER,
+                            SignalType.PERMISSION_DECISION)
+            and signal.parent_id
+        ):
+            self._recent_decisions[signal.parent_id] = signal
+            while len(self._recent_decisions) > 256:
+                self._recent_decisions.pop(next(iter(self._recent_decisions)))
+
+        # Trace terminal events cancel any in-flight op I/O on the same trace
+        # so awaiters in Neurons / orchestrators wake up (EngramCancelled)
         # instead of hanging on a deadline.
         if signal.type in (SignalType.FINAL, SignalType.ERROR) and signal.trace_id:
             try:
-                self._engram_client.cancel_trace(signal.trace_id)
+                await self._cancel_op_pathways(signal.trace_id)
             except Exception as exc:  # noqa: BLE001
                 logger.warning(
-                    "Dendrite: cancel_trace failed for %s: %s",
+                    "Dendrite: op-Pathway cancel failed for %s: %s",
                     signal.trace_id, exc,
                 )
 
@@ -1915,6 +2479,7 @@ class Dendrite(LifecycleHooks):
                     directed=Directed(id=target),
                     input=signal.payload.get("input", {}),
                     context_ref=signal.payload.get("context_ref"),
+                    finalize=bool(signal.payload.get("finalize")),
                     meta=signal.meta,
                 )
                 await self._on_task(synthetic)
@@ -1939,6 +2504,18 @@ class Dendrite(LifecycleHooks):
             self._record_engram_registration(signal)
             return
 
+        # Default bidder: a hosted Axon whose caps cover the offer answers
+        # automatically  -  unless the developer registered their own
+        # on_task_offer handler (custom bidding logic wins outright) or
+        # auto_bid=False.
+        if (
+            signal.type is SignalType.TASK_OFFER
+            and self._auto_bid
+            and self._axons
+            and not self._handlers.get(SignalType.TASK_OFFER)
+        ):
+            await self._maybe_auto_bid(signal)
+
         if signal.type in AXON_TYPES and self._registry_store is not None:
             try:
                 await self._update_registry(signal)
@@ -1947,6 +2524,12 @@ class Dendrite(LifecycleHooks):
                     "Dendrite: registry update failed for %s: %s",
                     signal.type.value, exc,
                 )
+        await self._fire_handlers(signal)
+
+    async def _fire_handlers(self, signal: Signal) -> None:
+        """Fire every registered handler for ``signal.type``. Exceptions
+        are logged, never propagated  -  one buggy handler must not break
+        delivery to the others."""
         handlers = self._handlers.get(signal.type, [])
         if handlers:
             results = await asyncio.gather(
@@ -1965,10 +2548,11 @@ class Dendrite(LifecycleHooks):
     # ------------------------------------------------------------------
 
     def _is_engram_register(self, signal: Signal) -> bool:
-        """A REGISTER announces an Engram when it carries the ``engram``
-        payload flag, or when its ``directed.type`` matches an engram kind
-        this Dendrite already knows (hosted or previously registered)."""
-        if signal.payload.get("engram"):
+        """A REGISTER announces an Engram when its universal ``payload.role``
+        is ``"engram"`` (or the legacy ``engram`` flag is set), or when its
+        ``directed.type`` matches an engram kind this Dendrite already knows
+        (hosted or previously registered)."""
+        if signal.payload.get("role") == "engram" or signal.payload.get("engram"):
             return True
         d = signal.directed
         if d is not None and d.type:
@@ -2104,7 +2688,10 @@ class Dendrite(LifecycleHooks):
                     {"id": h.id, "entry": h.entry, "score": h.score}
                     for h in hits
                 ],
-                directed=Directed(id=self.dendrite_id),
+                # Attribute the reply to the Engram that answered, not the host
+                # Dendrite, so observers (Prism) classify it by the Engram's own
+                # REGISTER instead of inventing a node for the host id.
+                directed=Directed(id=engram.engram_id, type=engram.engram_kind),
             )
             try:
                 await self._publish(reply)
@@ -2139,7 +2726,7 @@ class Dendrite(LifecycleHooks):
                     engram_id=engram.engram_id,
                     op=op,
                     error=err_msg,
-                    directed=Directed(id=self.dendrite_id),
+                    directed=Directed(id=engram.engram_id, type=engram.engram_kind),
                 )
             else:
                 assert receipt is not None
@@ -2152,7 +2739,7 @@ class Dendrite(LifecycleHooks):
                     version=receipt.version,
                     took_ms=receipt.took_ms,
                     error=receipt.error,
-                    directed=Directed(id=self.dendrite_id),
+                    directed=Directed(id=engram.engram_id, type=engram.engram_kind),
                 )
             try:
                 await self._publish(reply)
@@ -2173,6 +2760,36 @@ class Dendrite(LifecycleHooks):
         directly without going through dendrite.recall/imprint."""
         return self._engram_client
 
+    @staticmethod
+    def _resolve_trace(
+        trace_id: str | None, parent_id: str | None
+    ) -> "tuple[str, str]":
+        """Resolve (trace_id, parent_id) for a caller-side engram op.
+
+        Explicit ids always win. With no explicit trace_id, the ambient
+        task context (bound by ``Axon.handle_task``) is inherited, so ops
+        fired from detector / lifecycle hooks land on the containing
+        TASK's trace per ENGRAM_DESIGN.md §5.4. Only outside any task
+        (e.g. pre-task hydration) is a fresh trace minted. An explicitly
+        supplied trace_id never mixes with the ambient parent_id.
+        """
+        from cosmonapse.envelope import ambient_trace, new_event_id
+
+        tid = trace_id
+        pid = parent_id
+        if tid is None:
+            amb = ambient_trace()
+            if amb is not None:
+                tid = amb[0]
+                if pid is None:
+                    pid = amb[1]
+        if tid is None:
+            tid = new_trace_id()
+        if pid is None:
+            # Synthesise a root parent_id so the envelope validates.
+            pid = new_event_id()
+        return tid, pid
+
     async def recall(
         self,
         *,
@@ -2190,19 +2807,11 @@ class Dendrite(LifecycleHooks):
     ) -> Any:
         """Emit RECALL and await RECALLED.
 
-        When ``trace_id`` is omitted a new trace is minted  -  use this for
-        pre-task hydration. Inside a TASK context (e.g. the Cortex
-        servicing an AGENT_OUTPUT), pass ``trace_id`` and ``parent_id``
-        so the recall is attributed to the containing workflow per
-        ENGRAM_DESIGN.md §5.4.
+        Trace attribution follows ``_resolve_trace``: explicit ids win,
+        then the ambient task context, then a freshly minted trace (use
+        that shape for pre-task hydration).
         """
-        tid = trace_id or new_trace_id()
-        pid = parent_id
-        if pid is None:
-            # Synthesise a root parent_id so the envelope validates.
-            # Callers inside a TASK should supply parent_id explicitly.
-            from cosmonapse.envelope import new_event_id
-            pid = new_event_id()
+        tid, pid = self._resolve_trace(trace_id, parent_id)
         return await self._engram_client.recall(
             engram_id=engram_id,
             engram_kind=engram_kind,
@@ -2232,12 +2841,14 @@ class Dendrite(LifecycleHooks):
         parent_id: str | None = None,
         meta: dict[str, Any] | None = None,
     ) -> Any:
-        """Emit IMPRINT. Returns None unless ``await_ack=True``."""
-        tid = trace_id or new_trace_id()
-        pid = parent_id
-        if pid is None:
-            from cosmonapse.envelope import new_event_id
-            pid = new_event_id()
+        """Emit IMPRINT. Returns None unless ``await_ack=True``.
+
+        Trace attribution follows ``_resolve_trace``: explicit ids win,
+        then the ambient task context, then a freshly minted trace - so an
+        imprint fired from a ``@detects_output`` hook is attributed to the
+        TASK it concluded.
+        """
+        tid, pid = self._resolve_trace(trace_id, parent_id)
         return await self._engram_client.imprint(
             engram_id=engram_id,
             engram_kind=engram_kind,
@@ -2255,4 +2866,3 @@ class Dendrite(LifecycleHooks):
 
 # Back-compat alias - Cortex is just a Dendrite.
 Cortex = Dendrite
- 

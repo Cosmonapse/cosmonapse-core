@@ -66,21 +66,29 @@ _TERMINAL_TYPES: frozenset[SignalType] = frozenset({
 
 # Default set that satisfies a bare ``wait()``  -  the first Signal of any
 # of these types resolves the wait. ERROR / FINAL are included so a
-# ``wait()`` doesn't hang on a failed or finalised workflow.
+# ``wait()`` doesn't hang on a failed or finalised workflow; CLARIFICATION
+# and PERMISSION are included because both *pause* the workflow awaiting a
+# human/peer decision, so a waiting orchestrator must surface them rather
+# than hang. A caller that may receive these must inspect ``.type`` instead
+# of assuming the resolved Signal is a final answer.
 _WAIT_TYPES: frozenset[SignalType] = frozenset({
     SignalType.AGENT_OUTPUT,
     SignalType.CLARIFICATION,
+    SignalType.PERMISSION,
     SignalType.ERROR,
     SignalType.FINAL,
 })
 
 # Signals delivered when scope="terminal"  -  the decentralised pattern:
-# intermediate orchestration is handled peer-to-peer; the Cortex's
-# Pathway only wakes for things that demand its attention.
+# intermediate orchestration is handled peer-to-peer; the Cortex's Pathway
+# only wakes for things that demand its attention: terminal events (FINAL /
+# ERROR) and the two that need a human/peer decision before the workflow can
+# proceed (CLARIFICATION / PERMISSION).
 _SCOPE_TERMINAL_TYPES: frozenset[SignalType] = frozenset({
     SignalType.FINAL,
     SignalType.ERROR,
     SignalType.CLARIFICATION,
+    SignalType.PERMISSION,
 })
 
 # Signal types that flow through a Pathway. Excludes:
@@ -119,6 +127,7 @@ class Pathway:
         self,
         trace_id: str,
         *,
+        parent_id: str | None = None,
         role: str = "originator",
         on_close: PathwayCloseHook | None = None,
         scope: str = "all",
@@ -131,7 +140,17 @@ class Pathway:
         Parameters
         ----------
         trace_id
-            The ``trace_id`` whose Signals this Pathway observes.
+            The ``trace_id`` whose Signals this Pathway observes. Used for
+            lifecycle grouping (a trace's terminal event closes pathways on
+            that trace) even when correlation is per-operation.
+        parent_id
+            Optional per-operation correlation key. When set, the owning
+            Dendrite routes inbound Signals to this Pathway by
+            ``signal.parent_id == parent_id`` (request/reply) instead of by
+            ``trace_id``. This is what lets a request/reply client such as
+            ``EngramClient`` be a thin wrapper over a Pathway: it opens one
+            keyed on its RECALL/IMPRINT id and awaits the matching response.
+            ``None`` (default) is an ordinary trace-correlated Pathway.
         role
             ``"originator"`` if this Pathway was opened by dispatching a
             TASK, ``"observer"`` if opened to watch a trace started by a
@@ -142,8 +161,8 @@ class Pathway:
         scope
             ``"all"`` (default, centralised pattern): every PATHWAY_TYPES
             Signal on the trace is delivered. ``"terminal"`` (decentralised
-            pattern): only FINAL / ERROR / CLARIFICATION are delivered;
-            intermediate AGENT_OUTPUT / PLAN / TOOL_CALL etc. are dropped
+            pattern): only FINAL / ERROR / CLARIFICATION / PERMISSION are
+            delivered; intermediate AGENT_OUTPUT / PLAN / TOOL_CALL etc. are dropped
             on the Pathway side  -  other Dendrites on the bus still see and
             act on them. Use ``"terminal"`` when the orchestrator only
             wants to wake for workflow conclusion.
@@ -153,6 +172,7 @@ class Pathway:
                 f"scope must be 'all' or 'terminal', got {scope!r}"
             )
         self._trace_id = trace_id
+        self._parent_id = parent_id
         self._role = role
         self._on_close = on_close
         self._scope = scope
@@ -177,6 +197,12 @@ class Pathway:
         return self._trace_id
 
     @property
+    def parent_id(self) -> str | None:
+        """Per-operation correlation key, or ``None`` for a trace-correlated
+        Pathway. See ``__init__``."""
+        return self._parent_id
+
+    @property
     def role(self) -> str:
         """``"originator"`` or ``"observer"``. Local label; protocol-invisible."""
         return self._role
@@ -197,7 +223,7 @@ class Pathway:
     # ------------------------------------------------------------------
 
     async def wait(self, timeout_s: float | None = None) -> Signal:
-        """Resolve on the next AGENT_OUTPUT, CLARIFICATION, ERROR, or FINAL.
+        """Resolve on the next AGENT_OUTPUT, CLARIFICATION, PERMISSION, ERROR, or FINAL.
 
         Raises ``asyncio.TimeoutError`` if ``timeout_s`` elapses first, and
         ``PathwayClosedError`` if the Pathway closes before any matching
@@ -220,15 +246,19 @@ class Pathway:
         types: frozenset[SignalType],
         timeout_s: float | None,
     ) -> Signal:
-        if self._closed:
-            raise PathwayClosedError(
-                f"Pathway for trace {self._trace_id!r} is closed"
-            )
-        # Return a buffered signal if one already arrived before wait() was called.
+        # Serve from the buffer FIRST - even when the Pathway has since
+        # closed. The terminal Signal can arrive (and auto-close the
+        # Pathway) before the dispatcher's next wait() runs; already-
+        # delivered Signals must remain consumable, e.g.
+        # wait_for(AGENT_OUTPUT) then wait_for(FINAL) on a finalized trace.
         for i, sig in enumerate(self._buffered_signals):
             if sig.type in types:
                 self._buffered_signals.pop(i)
                 return sig
+        if self._closed:
+            raise PathwayClosedError(
+                f"Pathway for trace {self._trace_id!r} is closed"
+            )
         loop = asyncio.get_event_loop()
         fut: asyncio.Future[Signal] = loop.create_future()
         entry = (types, fut)
@@ -354,6 +384,22 @@ class Pathway:
             self._scope_filter is not None
             and signal.type not in self._scope_filter
         ):
+            # An explicitly registered callback is an explicit expression
+            # of interest - fire it even though the scope filter drops the
+            # Signal from wait()/iteration. This is what lets
+            # dispatch_offer(scope="terminal") collect BIDs via its
+            # @pathway.on(SignalType.BID) handler while the Pathway stays
+            # quiet for everything else.
+            for handler in self._handlers.get(signal.type, ()):
+                try:
+                    result = handler(signal)
+                    if asyncio.iscoroutine(result):
+                        await result
+                except Exception as exc:  # noqa: BLE001
+                    logger.exception(
+                        "Pathway %s: scoped-out handler for %s raised: %s",
+                        self._trace_id, signal.type.value, exc,
+                    )
             if signal.type in _TERMINAL_TYPES:
                 await self.close()
             return

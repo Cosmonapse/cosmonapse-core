@@ -4,8 +4,8 @@ Tests for the event-driven dispatch surface on Dendrite.
 Covers:
   * Dendrite.capabilities aggregates from attached Axons
   * role="worker" blocks dispatch / dispatch_task / dispatch_and_wait /
-    dispatch_and_subscribe / emit_final / emit_error with
-    DendriteProtocolError
+    dispatch_and_subscribe (TASK initiation) with DendriteProtocolError,
+    but allows non-TASK emits (emit_final / emit_error / emit_plan / ...)
   * Capability-routed dispatch (no neuron, capabilities=[...]) reaches
     a Dendrite with a matching Axon
   * Subset matching: TASK requesting [X] reaches an Axon declaring [X,Y]
@@ -257,6 +257,11 @@ def test_pathway_scope_terminal_drops_agent_output():
     Note: AGENT_OUTPUT is NOT a terminal type for the Pathway, so it
     won't auto-close  -  the orchestrator stays subscribed for the real
     terminal events.
+
+    finalize=False here: scope="terminal" now defaults to terminal-handler
+    finalize (the worker promotes AGENT_OUTPUT to FINAL), which is covered
+    by tests/test_finalize.py. This test pins the *filter* semantics, so
+    promotion is explicitly disabled to keep the trace FINAL-free.
     """
     async def run():
         s = await _make_synapse()
@@ -271,7 +276,7 @@ def test_pathway_scope_terminal_drops_agent_output():
             async with worker, orch:
                 pw = await orch.dispatch(
                     capabilities=["go"], input={},
-                    scope="terminal",
+                    scope="terminal", finalize=False,
                 )
                 assert pw.scope == "terminal"
                 # Wait briefly  -  the AGENT_OUTPUT will fly past but be
@@ -380,10 +385,10 @@ def test_dispatch_and_subscribe_returns_live_pathway():
 # ---------------------------------------------------------------------------
 
 
-def test_worker_role_blocks_all_emit_helpers():
-    """The role guard sits on emit(), so every cognition emitter
-    (emit_final / emit_plan / emit_critique / ...) raises on a
-    worker - not just the dispatch* methods."""
+def test_worker_role_allows_nontask_emit_helpers():
+    """The role guard gates TASK initiation only. A worker may emit
+    cognition / reply / memory signals (emit_final / emit_error /
+    emit_plan / emit_critique) freely; only dispatch* (TASK) is blocked."""
     async def run():
         s = await _make_synapse()
         worker = Dendrite(synapse=s, namespace="t", role="worker",
@@ -392,24 +397,27 @@ def test_worker_role_blocks_all_emit_helpers():
             async with worker:
                 tid = "trc_" + "0" * 26
                 pid = "evt_" + "0" * 26
+                # Non-TASK emits now succeed regardless of role.
+                f = await worker.emit_final(
+                    trace_id=tid, parent_id=pid, result={},
+                )
+                assert f.type is SignalType.FINAL
+                e = await worker.emit_error(
+                    trace_id=tid, parent_id=pid, code="X", message="x",
+                )
+                assert e.type is SignalType.ERROR
+                p = await worker.emit_plan(
+                    trace_id=tid, parent_id=pid, steps=[],
+                )
+                assert p.type is SignalType.PLAN
+                c = await worker.emit_critique(
+                    trace_id=tid, parent_id=pid,
+                    target_event_id=pid, issues=[], verdict="pass",
+                )
+                assert c.type is SignalType.CRITIQUE
+                # TASK initiation is still orchestrator-only.
                 with pytest.raises(DendriteProtocolError):
-                    await worker.emit_final(
-                        trace_id=tid, parent_id=pid, result={},
-                    )
-                with pytest.raises(DendriteProtocolError):
-                    await worker.emit_error(
-                        trace_id=tid, parent_id=pid,
-                        code="X", message="x",
-                    )
-                with pytest.raises(DendriteProtocolError):
-                    await worker.emit_plan(
-                        trace_id=tid, parent_id=pid, steps=[],
-                    )
-                with pytest.raises(DendriteProtocolError):
-                    await worker.emit_critique(
-                        trace_id=tid, parent_id=pid,
-                        target_event_id=pid, issues=[], verdict="pass",
-                    )
+                    await worker.dispatch_task(neuron="x", input={})
         finally:
             await s.close()
     _run(run())

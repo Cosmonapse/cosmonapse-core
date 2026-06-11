@@ -56,6 +56,8 @@ export {
   memoryAppendSignal,
   taskOfferSignal,
   bidSignal,
+  taskAwardedSignal,
+  taskDeclinedSignal,
   critiqueSignal,
   planSignal,
   thoughtDeltaSignal,
@@ -116,6 +118,8 @@ export {
   type ScheduleHook,
 } from "./hooks.js";
 
+export { ambientTrace, runWithTraceContext } from "./trace-context.js";
+
 export {
   clarify,
   isClarification,
@@ -124,6 +128,7 @@ export {
   errorResult,
   isErrorOutput,
   type NeuronFn,
+  type NeuronHelpers,
   type CloseableNeuronFn,
   type ContextFetcher,
   type ClarificationOutput,
@@ -135,6 +140,7 @@ export {
   Axon,
   parseLlmIntents,
   parseMcpIntents,
+  COSMO_INTENT_SYSTEM_PROMPT,
   type AxonOptions,
   type AxonExtra,
   type OutputParser,
@@ -147,8 +153,22 @@ export {
   DendriteProtocolError,
   CortexProtocolError,
   type DendriteOptions,
+  type DendriteRole,
   type SignalHandler,
+  type HandlerFilter,
 } from "./dendrite.js";
+
+export {
+  Pathway,
+  PathwayClosedError,
+  PATHWAY_TYPES,
+  TERMINAL_TYPES,
+  type PathwayOptions,
+  type PathwayRole,
+  type PathwayScope,
+  type PathwaySignalHandler,
+  type PathwayCloseHook,
+} from "./pathway.js";
 
 // --- neuron sources: wrap anything that interacts with the real world ---
 //
@@ -169,6 +189,7 @@ export {
 export {
   ollamaNeuron,
   huggingFaceNeuron,
+  followupPrompt,
   type OllamaNeuronOptions,
   type HuggingFaceNeuronOptions,
 } from "./neuron-http.js";

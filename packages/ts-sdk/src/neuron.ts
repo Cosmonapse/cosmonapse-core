@@ -21,9 +21,43 @@ import type { Json } from "./envelope.js";
  *   returns  -  a JSON-serialisable object, a {@link ClarificationOutput}, or a
  *               {@link PermissionRequestOutput}.
  */
+/**
+ * Engram helpers handed to a Neuron as its (optional) third argument when the
+ * hosting Axon declares `engrams: [...]` bindings. The TS counterpart to the
+ * Python SDK's parameter-introspected `recall=` / `imprint=` injection  -  TS
+ * cannot introspect parameter names, so the helpers ride a context object the
+ * Neuron is free to ignore.
+ */
+export interface NeuronHelpers {
+  recall(
+    name: string,
+    args: {
+      query: Record<string, unknown>;
+      filters?: Record<string, unknown>;
+      contextRef?: string;
+      deadlineMs?: number;
+      recallMode?: "first" | "merge" | "all";
+      minConfidence?: number;
+      meta?: Record<string, unknown>;
+    },
+  ): Promise<unknown>;
+  imprint(
+    name: string,
+    args: {
+      op: "add" | "append" | "merge" | "upsert" | "delete";
+      entry: Record<string, unknown>;
+      mergeKey?: string;
+      awaitAck?: boolean;
+      deadlineMs?: number;
+      meta?: Record<string, unknown>;
+    },
+  ): Promise<unknown>;
+}
+
 export type NeuronFn = (
   input: Json,
   context: unknown[],
+  helpers?: NeuronHelpers,
 ) => Promise<Json> | Json;
 
 /**

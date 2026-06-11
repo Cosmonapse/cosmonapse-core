@@ -29,11 +29,16 @@ export function taskSignal(args: {
   directed?: DirectedInput;
   contextRef?: string;
   capabilities?: string[];
+  /** Terminal-handler finalize: the worker Dendrite that runs the addressed
+   *  (or routed) Axon promotes a successful AGENT_OUTPUT by also emitting
+   *  FINAL on the trace. Set automatically by `dispatch({ scope: "terminal" })`. */
+  finalize?: boolean;
   meta?: Json;
 }): Signal {
   const payload: Json = { input: args.input };
   if (args.contextRef) payload["context_ref"] = args.contextRef;
   if (args.capabilities) payload["capabilities"] = args.capabilities;
+  if (args.finalize) payload["finalize"] = true;
   return createSignal({
     type: SignalType.TASK,
     trace_id: args.traceId ?? newTraceId(),
@@ -198,23 +203,30 @@ export function errorSignal(args: {
  * [A] A participant connecting to the Synapse and declaring its capabilities.
  *
  * Both Neurons and Engrams register the same way: `directed.id` is the
- * participant id, `directed.type` its type (neuron type or engram_kind), and
- * `directed.capabilities` its capability list. Pass `engram: true` for an
- * Engram so receivers record it as an Engram registration. `capabilities` is
- * mirrored into the payload for registry stores; when omitted it falls back to
- * `directed.capabilities`.
+ * participant id, `directed.type` its kind (`neuron_kind` for Neurons,
+ * `engram_kind` for Engrams), and `directed.capabilities` its capability list.
+ *
+ * Every REGISTER carries one universal discriminator, `payload.role`
+ * (`"neuron"` or `"engram"`): the single field every consumer (Dendrite
+ * registry, Prism, doppler) checks to classify the participant. `role`
+ * defaults from the `engram` flag when omitted. The legacy
+ * `payload.engram = true` marker is still emitted for Engrams as an alias.
+ * `capabilities` is mirrored into the payload for registry stores; when
+ * omitted it falls back to `directed.capabilities`.
  */
 export function registerSignal(args: {
   directed: DirectedInput;
   capabilities?: string[];
   version?: string;
   engram?: boolean;
+  role?: "neuron" | "engram";
   meta?: Json;
 }): Signal {
   const caps = args.capabilities ?? args.directed?.capabilities ?? [];
-  const payload: Json = { capabilities: caps };
+  const role = args.role ?? (args.engram ? "engram" : "neuron");
+  const payload: Json = { role, capabilities: caps };
   if (args.version) payload["version"] = args.version;
-  if (args.engram) payload["engram"] = true;
+  if (args.engram || role === "engram") payload["engram"] = true;
   return createSignal({
     type: SignalType.REGISTER,
     trace_id: newTraceId(), // management signals get their own trace
@@ -311,6 +323,56 @@ export function bidSignal(args: {
   if (args.confidence !== undefined) payload["confidence"] = args.confidence;
   return createSignal({
     type: SignalType.BID,
+    trace_id: args.traceId,
+    parent_id: args.parentId,
+    directed: args.directed ?? null,
+    payload,
+    meta: args.meta ?? {},
+  });
+}
+
+/** [C] Award a TASK_OFFER to one bidder. The winning Axon's Dendrite treats
+ *  this exactly like a TASK: `input` is the work payload, `directed`
+ *  addresses the winner. `winningBid` carries the accepted bid for
+ *  observability; `finalize` propagates the terminal-handler-finalize tag
+ *  into the TASK the winner's Dendrite synthesises. */
+export function taskAwardedSignal(args: {
+  traceId: string;
+  parentId: string;
+  input: Json;
+  directed?: DirectedInput;
+  winningBid?: Json;
+  contextRef?: string;
+  finalize?: boolean;
+  meta?: Json;
+}): Signal {
+  const payload: Json = { input: args.input };
+  if (args.winningBid !== undefined) payload["winning_bid"] = args.winningBid;
+  if (args.contextRef !== undefined) payload["context_ref"] = args.contextRef;
+  if (args.finalize) payload["finalize"] = true;
+  return createSignal({
+    type: SignalType.TASK_AWARDED,
+    trace_id: args.traceId,
+    parent_id: args.parentId,
+    directed: args.directed ?? null,
+    payload,
+    meta: args.meta ?? {},
+  });
+}
+
+/** [C/A] Decline a TASK_OFFER. Producers emit this for losing bidders after
+ *  picking a winner (informational); workers may emit it proactively. */
+export function taskDeclinedSignal(args: {
+  traceId: string;
+  parentId: string;
+  directed?: DirectedInput;
+  reason?: string;
+  meta?: Json;
+}): Signal {
+  const payload: Json = {};
+  if (args.reason !== undefined) payload["reason"] = args.reason;
+  return createSignal({
+    type: SignalType.TASK_DECLINED,
     trace_id: args.traceId,
     parent_id: args.parentId,
     directed: args.directed ?? null,

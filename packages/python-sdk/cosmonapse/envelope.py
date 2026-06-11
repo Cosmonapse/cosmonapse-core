@@ -22,6 +22,8 @@ See: ENVELOPE_SPEC.md sec 7
 
 from __future__ import annotations
 
+from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
@@ -47,6 +49,39 @@ def new_event_id() -> str:
 def new_trace_id() -> str:
     """Return a prefixed trace ULID: trc_<26-char ULID>"""
     return f"trc_{_new_ulid()}"
+
+
+
+# ---------------------------------------------------------------------------
+# Ambient trace context
+# ---------------------------------------------------------------------------
+# The (trace_id, parent_id) of the TASK currently being handled, carried in a
+# ContextVar so code that runs *inside* a task but without explicit trace
+# plumbing - e.g. a ``@axon.detects_output`` hook calling
+# ``dendrite.imprint`` - inherits the task's trace instead of minting a fresh
+# one. Async-safe: each asyncio task sees its own binding.
+
+_AMBIENT_TRACE: ContextVar["tuple[str, str] | None"] = ContextVar(
+    "cosmonapse_ambient_trace", default=None
+)
+
+
+def ambient_trace() -> "tuple[str, str] | None":
+    """Return the ambient (trace_id, parent_id) of the task being handled,
+    or None when called outside any task context."""
+    return _AMBIENT_TRACE.get()
+
+
+@contextmanager
+def trace_context(trace_id: str, parent_id: str):
+    """Bind the ambient (trace_id, parent_id) for the duration of the block.
+    Set by ``Axon.handle_task`` around the whole handling pass (neuron_fn,
+    detectors, lifecycle hooks)."""
+    token = _AMBIENT_TRACE.set((trace_id, parent_id))
+    try:
+        yield
+    finally:
+        _AMBIENT_TRACE.reset(token)
 
 
 def new_engram_id() -> str:
@@ -214,6 +249,21 @@ class Signal(BaseModel):
     model_config = {"populate_by_name": True}
 
     v: str = Field(default="1", description="Protocol version")
+
+    @field_validator("v")
+    @classmethod
+    def _validate_version(cls, v: str) -> str:
+        """Compatibility policy (ENVELOPE_SPEC §2): same-major envelopes are
+        accepted (unknown payload/meta fields must be ignored by consumers);
+        a different major version is rejected at decode time rather than
+        half-interpreted."""
+        major = v.split(".", 1)[0]
+        if major != "1":
+            raise ValueError(
+                f"unsupported protocol version {v!r}: this SDK speaks "
+                f"major version 1 (accepts '1' or '1.x')"
+            )
+        return v
     id: str = Field(default_factory=new_event_id, description="Unique event ID (evt_<ULID>)")
     trace_id: str = Field(default_factory=new_trace_id, description="Trace group ID (trc_<ULID>)")
     parent_id: str | None = Field(default=None, description="Parent event ID")
@@ -304,13 +354,23 @@ def task_signal(
     input: dict[str, Any],
     context_ref: str | None = None,
     capabilities: list[str] | None = None,
+    finalize: bool = False,
     meta: dict[str, Any] | None = None,
 ) -> Signal:
+    """[C] Dispatch work. ``finalize=True`` tags the TASK as
+    terminal-handler-finalized: the worker Dendrite that runs the addressed
+    (or capability-routed) Axon promotes a successful AGENT_OUTPUT reply by
+    also emitting FINAL on the trace. Set automatically by
+    ``Dendrite.dispatch(scope="terminal")`` so terminal-scoped Pathways
+    resolve against default workers; leave False (default) when the
+    dispatcher orchestrates multi-step work and owns FINAL itself."""
     payload: dict[str, Any] = {"input": input}
     if context_ref:
         payload["context_ref"] = context_ref
     if capabilities:
         payload["capabilities"] = capabilities
+    if finalize:
+        payload["finalize"] = True
     return Signal(
         type=SignalType.TASK,
         trace_id=trace_id or new_trace_id(),
@@ -436,13 +496,14 @@ def clarification_answer_signal(
     directed: Directed | None = None,
     meta: dict[str, Any] | None = None,
 ) -> Signal:
-    """[C] Answer to a (blocking) CLARIFICATION request.
+    """[C] Discrete answer to a CLARIFICATION request.
 
-    ``parent_id`` MUST be the CLARIFICATION's id. This is the response
-    half of the *blocking* clarification flow (Neuron called ``ask(...)``
-    and is awaiting). It is distinct from the legacy return-marker flow,
-    where the orchestrator answers by re-dispatching a TASK via
-    ``respond_to_clarification``.
+    ``parent_id`` MUST be the CLARIFICATION's id. Consumers correlate by
+    that parent_id (``Dendrite.await_decision`` / the
+    ``on_clarification_answer`` decorator). Distinct from the
+    close-the-loop flow, where the orchestrator answers by re-dispatching
+    a TASK via ``respond_to_clarification`` so the asking Neuron runs
+    again.
     """
     return Signal(
         type=SignalType.CLARIFICATION_ANSWER,
@@ -502,25 +563,32 @@ def register_signal(
     capabilities: list[str] | None = None,
     version: str | None = None,
     engram: bool = False,
+    role: str | None = None,
     meta: dict[str, Any] | None = None,
 ) -> Signal:
     """[A] A participant announces itself on the Synapse.
 
     Both Neurons and Engrams register the same way. ``directed.id`` is the
-    participant id (neuron_id or engram_id), ``directed.type`` its type
-    (neuron type or engram_kind), and ``directed.capabilities`` its
-    capability list. Pass ``engram=True`` when the participant is an Engram
-    so the receiving Dendrite records it as an Engram registration and
-    routes RECALL/IMPRINT to it.
+    participant id (neuron_id or engram_id), ``directed.type`` its kind
+    (``neuron_kind`` for Neurons, ``engram_kind`` for Engrams), and
+    ``directed.capabilities`` its capability list.
+
+    Every REGISTER carries one universal discriminator, ``payload.role``
+    (``"neuron"`` or ``"engram"``): the single field every consumer
+    (Dendrite registry, Prism, doppler) checks to classify the participant.
+    ``role`` defaults from the ``engram`` flag when omitted, so callers may
+    pass either. The legacy ``payload.engram = true`` marker is still
+    emitted for Engrams as a back-compat alias.
 
     ``capabilities`` is mirrored into the payload for registry stores; when
     omitted it falls back to ``directed.capabilities``.
     """
     caps = list(capabilities) if capabilities is not None else list(directed.capabilities)
-    payload: dict[str, Any] = {"capabilities": caps}
+    resolved_role = role if role is not None else ("engram" if engram else "neuron")
+    payload: dict[str, Any] = {"role": resolved_role, "capabilities": caps}
     if version:
         payload["version"] = version
-    if engram:
+    if engram or resolved_role == "engram":
         payload["engram"] = True
     return Signal(
         type=SignalType.REGISTER,
@@ -639,17 +707,22 @@ def task_awarded_signal(
     input: dict[str, Any],
     winning_bid: dict[str, Any] | None = None,
     context_ref: str | None = None,
+    finalize: bool = False,
     meta: dict[str, Any] | None = None,
 ) -> Signal:
     """[C] Award a TASK_OFFER to one bidder. The winning Axon should treat
     this exactly like a TASK: ``input`` is the work payload, ``directed``
     addresses the winner. ``winning_bid`` carries the bid the producer
-    accepted (cost / eta_ms / confidence) for observability."""
+    accepted (cost / eta_ms / confidence) for observability. ``finalize``
+    propagates the terminal-handler-finalize tag (see ``task_signal``) into
+    the TASK the winner's Dendrite synthesises."""
     payload: dict[str, Any] = {"input": input}
     if winning_bid is not None:
         payload["winning_bid"] = winning_bid
     if context_ref is not None:
         payload["context_ref"] = context_ref
+    if finalize:
+        payload["finalize"] = True
     return Signal(
         type=SignalType.TASK_AWARDED,
         trace_id=trace_id,

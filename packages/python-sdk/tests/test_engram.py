@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import os
 import pytest
+import pytest_asyncio
 
 from cosmonapse import (
     Axon,
@@ -132,7 +133,7 @@ class TestEnvelope:
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture(params=["memory", "sqlite"])
+@pytest_asyncio.fixture(params=["memory", "sqlite"])
 async def any_engram(request, tmp_path):
     if request.param == "memory":
         eng: Engram = InMemoryEngram(engram_id="ctx-mem", engram_kind="context")
@@ -225,7 +226,7 @@ class TestEngramConformance:
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def host_dendrite():
     """Dendrite that hosts the Engram and processes RECALL/IMPRINT."""
     syn = MemorySynapse()
@@ -240,7 +241,7 @@ async def host_dendrite():
     await dendrite.stop()
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def caller_dendrite(host_dendrite):
     """A second Dendrite on the same Synapse that issues RECALL/IMPRINT."""
     _, syn = host_dendrite

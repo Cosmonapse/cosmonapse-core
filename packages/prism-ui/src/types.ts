@@ -51,11 +51,34 @@ export type SignalType =
   | "MEMORY_APPEND"
   | "CONTEXT_SYNC";
 
+export type ParticipantKind = "neuron" | "engram";
+
+/**
+ * The single uniform participant-kind check for the whole UI.
+ *
+ * Reads `payload.role` - the universal discriminator every SDK now emits on
+ * REGISTER ("neuron" | "engram"). For envelopes from pre-role SDKs it falls
+ * back, on REGISTER only, to the legacy `engram` flag and the `eng_` id
+ * convention. Returns `null` for signals that carry no kind evidence (e.g. a
+ * TASK or a RECALL) so callers keep whatever kind they already recorded -
+ * classification comes from registration, never from traffic.
+ */
+export function participantKind(sig: Signal): ParticipantKind | null {
+  const role = sig.payload?.role;
+  if (role === "neuron" || role === "engram") return role;
+  if (sig.type === "REGISTER") {
+    if (sig.payload?.engram === true) return "engram";
+    if (sig.directed?.id?.startsWith("eng_")) return "engram";
+    return "neuron";
+  }
+  return null;
+}
+
 // A neuron as Prism accumulates it from the signal stream.
 export interface NeuronView {
   id: string;
   count: number;
-  kind: "neuron" | "engram";
+  kind: ParticipantKind;
   capabilities: string[];
   version?: string;
   firstSeen: string;

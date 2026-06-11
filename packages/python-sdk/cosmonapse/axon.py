@@ -42,6 +42,7 @@ from cosmonapse.envelope import (
     clarification_signal,
     error_signal,
     permission_signal,
+    trace_context,
 )
 
 if TYPE_CHECKING:
@@ -75,6 +76,7 @@ class Axon(LifecycleHooks):
         neuron_fn: NeuronFn,
         capabilities: list[str] | None = None,
         version: str | None = None,
+        neuron_kind: str = "neuron",
         context_fetcher: ContextFetcher | None = None,
         engrams: list[EngramBinding] | None = None,
         output_parser: OutputParser | None = None,
@@ -83,6 +85,10 @@ class Axon(LifecycleHooks):
         self.neuron_id = neuron_id
         self.capabilities = capabilities or []
         self.version = version
+        # The participant kind carried on REGISTER as ``directed.type`` -
+        # the Neuron-side analogue of an Engram's ``engram_kind``. Defaults
+        # to the generic ``"neuron"`` so every REGISTER has a typed directed.
+        self.neuron_kind = neuron_kind
         self._fn = neuron_fn
         self._context_fetcher = context_fetcher or _noop_context_fetcher
         self._output_parser = output_parser
@@ -98,6 +104,10 @@ class Axon(LifecycleHooks):
             "permission": [],
             "output": [],
         }
+
+        # Pre-task hooks (@axon.before_task): transform/validate/reject the
+        # TASK input before the Neuron runs.
+        self._before_task_hooks: list[Callable[[dict[str, Any]], Any]] = []
 
         # Engram bindings the Neuron may address. Keyed by binding.name  - 
         # the Neuron passes that name to recall(...) / imprint(...). The
@@ -150,9 +160,11 @@ class Axon(LifecycleHooks):
         neuron_id: str,
         capabilities: list[str] | None = None,
         version: str | None = None,
+        neuron_kind: str = "neuron",
         context_fetcher: ContextFetcher | None = None,
         engrams: list[EngramBinding] | None = None,
         recognize: bool = True,
+        teach_intents: bool | None = None,
         **source_kwargs: Any,
     ) -> "Axon":
         """Build an Axon around ``Neuron(source=source, **source_kwargs)``.
@@ -165,8 +177,33 @@ class Axon(LifecycleHooks):
         (parses a ``{"cosmo": ...}`` intent block out of the model's text).
         Pass ``recognize=False`` to treat the Neuron's raw output as a plain
         AGENT_OUTPUT.
+
+        ``teach_intents`` controls whether ``COSMO_INTENT_SYSTEM_PROMPT`` is
+        appended to the source's ``system`` prompt so the model actually
+        knows the ``{"cosmo": ...}`` convention the recogniser parses.
+        Default (``None``): True exactly when ``recognize`` is on and the
+        source accepts a ``system=`` kwarg (every LLM source except
+        ``huggingface``; ``mcp`` is never taught). Pass False to opt out.
         """
         from cosmonapse.neuron import Neuron  # lazy: avoids import cycle
+
+        if teach_intents is None:
+            teach_intents = (
+                recognize and source.lower() in _SYSTEM_CAPABLE_SOURCES
+            )
+        if teach_intents:
+            if source.lower() not in _SYSTEM_CAPABLE_SOURCES:
+                raise ValueError(
+                    f"teach_intents=True is not supported for source "
+                    f"{source!r}: its Neuron wrapper accepts no system= "
+                    f"kwarg. Embed the convention in the prompt yourself "
+                    f"(cosmonapse.axon.COSMO_INTENT_SYSTEM_PROMPT)."
+                )
+            existing = source_kwargs.get("system")
+            source_kwargs["system"] = (
+                f"{existing}\n\n{COSMO_INTENT_SYSTEM_PROMPT}"
+                if existing else COSMO_INTENT_SYSTEM_PROMPT
+            )
 
         # Neuron(...) returns a callable _BaseNeuron at runtime, but its
         # __new__ return type leaves mypy inferring the nominal `Neuron`;
@@ -184,6 +221,7 @@ class Axon(LifecycleHooks):
             neuron_fn=neuron_fn,
             capabilities=capabilities,
             version=version,
+            neuron_kind=neuron_kind,
             context_fetcher=context_fetcher,
             engrams=engrams,
             output_parser=parser,
@@ -235,6 +273,33 @@ class Axon(LifecycleHooks):
     # Applied in precedence error -> clarification -> permission -> output by
     # ``_apply_recognisers``; they compose with (and run after) any
     # ``output_parser`` and before the literal ``__marker__`` checks.
+
+    def before_task(self, fn: Callable[[dict[str, Any]], Any]) -> Callable[[dict[str, Any]], Any]:
+        """Register a pre-task hook over the TASK's ``input`` dict.
+
+        Runs before ``neuron_fn`` (and before the engram helpers are
+        invoked by it). Sync or async; multiple hooks run in registration
+        order, each receiving the previous one's result. A hook may:
+
+        * return a (new) dict  -  replaces the input passed onward;
+        * return ``None``      -  input passes through unchanged;
+        * raise               -  the TASK is rejected; the exception
+          surfaces as an ERROR Signal (code ``NEURON_EXCEPTION``).
+
+        The natural place for input normalisation (e.g. reshaping a
+        re-dispatched clarification follow-up) or per-Axon policy checks.
+        """
+        self._before_task_hooks.append(fn)
+        return fn
+
+    async def _apply_before_task(self, input_data: dict[str, Any]) -> dict[str, Any]:
+        for fn in self._before_task_hooks:
+            r = fn(input_data)
+            if inspect.isawaitable(r):
+                r = await r
+            if r is not None:
+                input_data = r
+        return input_data
 
     def detects_output(self, fn: Callable[[Any], Any]) -> Callable[[Any], Any]:
         """Detector returning the AGENT_OUTPUT payload dict, or None to leave
@@ -335,7 +400,18 @@ class Axon(LifecycleHooks):
     # -- core: handle one TASK ----------------------------------------
 
     async def handle_task(self, task: Signal) -> Signal:
-        """Run the Neuron and return AGENT_OUTPUT / CLARIFICATION / ERROR."""
+        """Run the Neuron and return AGENT_OUTPUT / CLARIFICATION / ERROR.
+
+        Binds the TASK's (trace_id, parent_id=task.id) as the ambient trace
+        context for the whole handling pass - neuron_fn, detectors, and
+        lifecycle hooks included - so engram calls made without explicit
+        trace plumbing (e.g. ``dendrite.imprint`` from a
+        ``@detects_output`` hook) are attributed to this task's trace.
+        """
+        with trace_context(task.trace_id, task.id):
+            return await self._handle_task_inner(task)
+
+    async def _handle_task_inner(self, task: Signal) -> Signal:
         trace_id = task.trace_id
         parent_id = task.id
         input_data: dict[str, Any] = task.payload.get("input", {})
@@ -361,6 +437,8 @@ class Axon(LifecycleHooks):
             kwargs["imprint"] = self._build_imprint_helper(trace_id, parent_id)
 
         try:
+            if self._before_task_hooks:
+                input_data = await self._apply_before_task(input_data)
             if kwargs:
                 raw_output: dict[str, Any] = await self._fn(
                     input_data, context, **kwargs,
@@ -535,6 +613,33 @@ class Axon(LifecycleHooks):
 #
 # Anything else (prose, or JSON without a ``cosmo`` key) is a normal output, so
 # ordinary text never misfires.
+
+# System-prompt fragment teaching an LLM the ``cosmo`` intent convention.
+# Without it a hosted model never knows it *can* clarify / request
+# permission / signal a structured error, so the recognisers below have
+# nothing to recognise. ``Axon.from_source(recognize=True)`` appends this
+# to the source's ``system`` prompt by default for system-capable LLM
+# sources (opt out with ``teach_intents=False``).
+COSMO_INTENT_SYSTEM_PROMPT = (
+    "You can control the surrounding agent protocol by replying with a "
+    "single JSON object carrying a \"cosmo\" key (either as your whole "
+    "reply or inside a ```json fenced block):\n"
+    '{"cosmo": "clarification", "question": "<what you need to know>"} '
+    "- ask the orchestrator a question when the task is ambiguous.\n"
+    '{"cosmo": "permission", "action": "<action>", "scope": {...}, '
+    '"reason": "<why>"} - request approval before a sensitive action.\n'
+    '{"cosmo": "error", "code": "<CODE>", "message": "<details>"} '
+    "- report a structured failure.\n"
+    '{"cosmo": "output", "output": {...}} - return a structured result.\n'
+    "For a normal answer, just reply with plain text - do not wrap "
+    "ordinary answers in a cosmo object."
+)
+
+# Sources whose Neuron wrapper accepts a ``system=`` kwarg.
+_SYSTEM_CAPABLE_SOURCES = frozenset({
+    "ollama", "openai", "anthropic", "groq", "openrouter", "together",
+    "mistral",
+})
 
 _INTENT_KEY = "cosmo"
 _FENCED_JSON = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.DOTALL)

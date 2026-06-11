@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { participantKind } from "./types";
 import type { NeuronView, Signal, SignalType } from "./types";
 
 export interface SynapseTarget {
@@ -58,22 +59,21 @@ export function useSignalStream(
       if (!nid) return;
       setNeurons((prev) => {
         const next = new Map(prev);
-        const isEngram =
-          sig.directed?.type === "engram" ||
-          nid.startsWith("eng_") ||
-          sig.type === "RECALL" || sig.type === "IMPRINT" ||
-          sig.type === "RECALLED" || sig.type === "IMPRINTED";
+        // One uniform check: kind comes from the REGISTER's `role`. Non-REGISTER
+        // signals return null, so a participant keeps the kind it registered
+        // with - classification is never inferred from traffic.
+        const kind = participantKind(sig);
         const ex: NeuronView = next.get(nid) ?? {
           id: nid,
           count: 0,
-          kind: isEngram ? "engram" : "neuron",
+          kind: kind ?? "neuron",
           capabilities: [],
           firstSeen: sig.ts,
         };
         const updated: NeuronView = {
           ...ex,
           count: ex.count + 1,
-          kind: ex.kind,
+          kind: kind ?? ex.kind,
           lastType: sig.type as SignalType,
           lastTs: sig.ts,
         };
