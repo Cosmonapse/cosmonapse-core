@@ -272,9 +272,10 @@ def _hits_from_payload(raw_hits: list[dict[str, Any]]) -> list[Hit]:
     for h in raw_hits:
         if not isinstance(h, dict):
             continue
+        entry = h.get("entry")
         out.append(Hit(
             id=str(h.get("id", "")),
-            entry=h.get("entry") if isinstance(h.get("entry"), dict) else {"value": h.get("entry")},
+            entry=entry if isinstance(entry, dict) else {"value": entry},
             score=float(h.get("score", 1.0)),
         ))
     return out

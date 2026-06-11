@@ -22,6 +22,7 @@ See: ENVELOPE_SPEC.md sec 7
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import datetime, timezone
@@ -73,7 +74,7 @@ def ambient_trace() -> "tuple[str, str] | None":
 
 
 @contextmanager
-def trace_context(trace_id: str, parent_id: str):
+def trace_context(trace_id: str, parent_id: str) -> Iterator[None]:
     """Bind the ambient (trace_id, parent_id) for the duration of the block.
     Set by ``Axon.handle_task`` around the whole handling pass (neuron_fn,
     detectors, lifecycle hooks)."""
