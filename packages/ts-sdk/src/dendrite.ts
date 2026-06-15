@@ -53,6 +53,8 @@ import {
   critiqueSignal,
   deregisterSignal,
   errorSignal,
+  stopSignal,
+  stoppedSignal,
   escalationSignal,
   finalSignal,
   heartbeatSignal,
@@ -68,7 +70,8 @@ import {
   toolCallSignal,
   toolResultSignal,
 } from "./signals.js";
-import { Pathway, PATHWAY_TYPES, type PathwayScope } from "./pathway.js";
+import { Pathway, PATHWAY_TYPES, PathwayClosedError, type PathwayScope } from "./pathway.js";
+import { defaultRetryOn, type RetryStrategy, type RetryOutcome } from "./retry.js";
 import { Engram, type ImprintOp, type ImprintReceipt, type RecallMode, type RecallResult } from "./engram.js";
 import { EngramClient } from "./engram-client.js";
 import { imprintedSignal, recalledSignal } from "./signals.js";
@@ -174,6 +177,11 @@ export class Dendrite {
   /** Hosted Engrams keyed by engramId, plus a kind index so RECALL/IMPRINT
    *  addressed by engramKind reach every matching host. */
   private readonly _engrams = new Map<string, Engram>();
+  // In-flight neuron work keyed by trace_id so a STOP can abandon exactly
+  // one workflow. JS can't force-kill a running async body, so abort means
+  // 'stop awaiting + suppress the reply'; the neuron should also check the
+  // AbortSignal cooperatively where it can.
+  private readonly traceAborts = new Map<string, Set<AbortController>>();
   private readonly engramKindIndex = new Map<string, string[]>();
   /** Engrams learned from peer REGISTER signals (possibly out-of-process). */
   private readonly _engramRegistrations = new Map<string, Directed>();
@@ -692,6 +700,7 @@ export class Dendrite {
       }
       await this.ensureInboundSub(SignalType.TASK_AWARDED);
       await this.ensureInboundSub(SignalType.DISCOVER);
+      await this.ensureInboundSub(SignalType.STOP);
       if (this.autoBid) await this.ensureInboundSub(SignalType.TASK_OFFER);
       for (const axon of this._axons.values()) {
         await this.mirrorToStore(axon, "registered");
@@ -711,6 +720,11 @@ export class Dendrite {
       }
       await this.ensureInboundSub(SignalType.RECALL);
       await this.ensureInboundSub(SignalType.IMPRINT);
+      // Terminal events are the saga commit point - an Engram host must see
+      // FINAL/ERROR (and STOP, below) to commit or roll back its journal even
+      // when it never dispatches.
+      await this.ensureInboundSub(SignalType.FINAL);
+      await this.ensureInboundSub(SignalType.ERROR);
       await this.ensureInboundSub(SignalType.REGISTER);
       for (const engram of this._engrams.values()) {
         try {
@@ -735,6 +749,10 @@ export class Dendrite {
         await this.ensureInboundSub(t);
       }
     }
+
+    // Every started Dendrite listens for STOP so it can cancel its share of
+    // any trace it participates in.
+    await this.ensureInboundSub(SignalType.STOP);
 
     this.running = true;
 
@@ -1017,9 +1035,17 @@ export class Dendrite {
    *  Pathway, return the Signal. Use `scope: "terminal"` to wait only for
    *  FINAL / ERROR / CLARIFICATION / PERMISSION. */
   async dispatchAndWait(
-    args: DispatchArgs & { scope?: PathwayScope; finalize?: boolean; timeoutMs?: number },
+    args: DispatchArgs & {
+      scope?: PathwayScope;
+      finalize?: boolean;
+      timeoutMs?: number;
+      retry?: RetryStrategy;
+    },
   ): Promise<Signal> {
-    const { timeoutMs, ...rest } = args;
+    const { timeoutMs, retry, ...rest } = args;
+    if (retry) {
+      return this.runWithRetry({ ...rest, retry, ...(timeoutMs !== undefined ? { timeoutMs } : {}) });
+    }
     const pathway = await this.dispatch(rest);
     try {
       return await pathway.wait(timeoutMs ?? 30_000);
@@ -1824,9 +1850,11 @@ export class Dendrite {
       target = axon.neuronId;
     }
 
-    let reply: Signal;
+    const ac = new AbortController();
+    this.registerTraceAbort(task.trace_id, ac);
+    let reply: Signal | null;
     try {
-      reply = await axon.handleTask(task);
+      reply = await this.raceAbort(axon.handleTask(task), ac.signal);
     } catch (err) {
       reply = errorSignal({
         traceId: task.trace_id,
@@ -1836,6 +1864,12 @@ export class Dendrite {
         message: err instanceof Error ? err.message : String(err),
         recoverable: false,
       });
+    } finally {
+      this.unregisterTraceAbort(task.trace_id, ac);
+    }
+    if (reply === null) {
+      // STOP abandoned this trace; suppress the reply (STOPPED ack covers it).
+      return;
     }
     await this.publish(reply);
 
@@ -1853,6 +1887,228 @@ export class Dendrite {
         /* best-effort: promotion failure must not break the reply path */
       }
     }
+  }
+
+  // -- workflow control: STOP / STOPPED -------------------------------
+
+  private registerTraceAbort(traceId: string, ac: AbortController): void {
+    let set = this.traceAborts.get(traceId);
+    if (!set) {
+      set = new Set();
+      this.traceAborts.set(traceId, set);
+    }
+    set.add(ac);
+  }
+
+  private unregisterTraceAbort(traceId: string, ac: AbortController): void {
+    const set = this.traceAborts.get(traceId);
+    if (set) {
+      set.delete(ac);
+      if (set.size === 0) this.traceAborts.delete(traceId);
+    }
+  }
+
+  /** Resolve to the promise's value, or to null if the signal aborts first. */
+  private raceAbort<T>(p: Promise<T>, signal: AbortSignal): Promise<T | null> {
+    if (signal.aborted) return Promise.resolve(null);
+    return new Promise<T | null>((resolve, reject) => {
+      const onAbort = (): void => resolve(null);
+      signal.addEventListener("abort", onAbort, { once: true });
+      p.then(
+        (v) => {
+          signal.removeEventListener("abort", onAbort);
+          resolve(v);
+        },
+        (e) => {
+          signal.removeEventListener("abort", onAbort);
+          reject(e);
+        },
+      );
+    });
+  }
+
+  private async onStop(signal: Signal): Promise<void> {
+    const traceId = signal.trace_id;
+    if (!traceId) return;
+    const rollback = Boolean((signal.payload as Record<string, unknown>)["rollback"]);
+    let cancelled = 0;
+    let compensated = 0;
+    let didWork = false;
+
+    const acs = this.traceAborts.get(traceId);
+    if (acs) {
+      for (const ac of acs) {
+        if (!ac.signal.aborted) {
+          ac.abort();
+          cancelled++;
+        }
+      }
+      this.traceAborts.delete(traceId);
+      didWork = true;
+    }
+
+    try {
+      await this.cancelOpPathways(traceId);
+      this.engramClient.cancelTrace(traceId);
+    } catch {
+      /* best-effort */
+    }
+
+    for (const engram of this._engrams.values()) {
+      try {
+        if (rollback) {
+          const n = await engram.compensate(traceId);
+          if (n > 0) {
+            compensated += n;
+            didWork = true;
+          }
+        } else {
+          await engram.commit(traceId);
+        }
+      } catch {
+        /* best-effort */
+      }
+    }
+
+    const pw = this.pathways.get(traceId);
+    if (pw && !pw.closed) {
+      didWork = true;
+      try {
+        await pw.close();
+      } catch {
+        /* best-effort */
+      }
+    }
+
+    if (didWork) {
+      try {
+        await this.publish(
+          stoppedSignal({
+            traceId,
+            parentId: signal.id,
+            node: this.namespace,
+            rolledBack: rollback,
+            cancelled,
+            compensated,
+          }),
+        );
+      } catch {
+        /* best-effort ack */
+      }
+    }
+  }
+
+  /** Broadcast a STOP for `traceId` (orchestrator-gated). Best-effort and
+   *  idempotent. */
+  async emitStop(args: { traceId: string; rollback?: boolean; reason?: string }): Promise<Signal> {
+    this.requireOrchestrator("emitStop");
+    await this.ensureInboundSub(SignalType.STOP);
+    const sig = stopSignal({
+      traceId: args.traceId,
+      ...(args.rollback !== undefined ? { rollback: args.rollback } : {}),
+      ...(args.reason !== undefined ? { reason: args.reason } : {}),
+    });
+    await this.publish(sig);
+    return sig;
+  }
+
+  /** Stop a whole workflow. With `collectAcks` returns the STOPPED acks seen
+   *  within `timeoutMs` (best effort). */
+  async stopTrace(
+    traceId: string,
+    opts: { rollback?: boolean; reason?: string; collectAcks?: boolean; timeoutMs?: number } = {},
+  ): Promise<Signal[]> {
+    if (!opts.collectAcks) {
+      await this.emitStop({
+        traceId,
+        ...(opts.rollback !== undefined ? { rollback: opts.rollback } : {}),
+        ...(opts.reason !== undefined ? { reason: opts.reason } : {}),
+      });
+      return [];
+    }
+    const acks: Signal[] = [];
+    const collect = async (sig: Signal): Promise<void> => {
+      if (sig.trace_id === traceId) acks.push(sig);
+    };
+    const list = this.handlers.get(SignalType.STOPPED) ?? [];
+    list.push(collect);
+    this.handlers.set(SignalType.STOPPED, list);
+    await this.ensureInboundSub(SignalType.STOPPED);
+    try {
+      await this.emitStop({
+        traceId,
+        ...(opts.rollback !== undefined ? { rollback: opts.rollback } : {}),
+        ...(opts.reason !== undefined ? { reason: opts.reason } : {}),
+      });
+      await new Promise((r) => setTimeout(r, opts.timeoutMs ?? 1000));
+    } finally {
+      const idx = (this.handlers.get(SignalType.STOPPED) ?? []).indexOf(collect);
+      if (idx >= 0) (this.handlers.get(SignalType.STOPPED) ?? []).splice(idx, 1);
+    }
+    return acks;
+  }
+
+  // -- retry ----------------------------------------------------------
+
+  private async safeStop(traceId: string, retry: RetryStrategy): Promise<void> {
+    try {
+      await this.emitStop({
+        traceId,
+        rollback: Boolean(retry.rollbackOnRetry),
+        reason: retry.reason ?? "retry",
+      });
+    } catch {
+      /* best-effort preemptive STOP */
+    }
+  }
+
+  /** Dispatch and wait, retrying per `retry` until a non-retryable outcome or
+   *  attempts are exhausted. Returns the resolved Signal; re-throws the last
+   *  error when every attempt failed with an exception. */
+  async runWithRetry(
+    args: DispatchArgs & { scope?: PathwayScope; finalize?: boolean; timeoutMs?: number; retry: RetryStrategy },
+  ): Promise<Signal> {
+    const { retry, timeoutMs, traceId: callerTrace, ...rest } = args;
+    const maxAttempts = retry.maxAttempts ?? 3;
+    const retryOn = retry.retryOn ?? defaultRetryOn;
+    const newTrace = retry.newTrace ?? true;
+    const perTimeout = retry.timeoutMs ?? timeoutMs ?? 30_000;
+
+    let outcome: RetryOutcome | null = null;
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      const tid = callerTrace && !newTrace ? callerTrace : newTraceId();
+      const meta = { ...(rest.meta ?? {}), attempt };
+      try {
+        const pathway = await this.dispatch({ ...rest, traceId: tid, meta });
+        try {
+          outcome = await pathway.wait(perTimeout);
+        } finally {
+          await pathway.close();
+        }
+      } catch (err) {
+        outcome = err instanceof Error ? err : new Error(String(err));
+      }
+
+      if (!retryOn(outcome)) {
+        if (outcome instanceof Error) throw outcome;
+        return outcome;
+      }
+      if (newTrace) await this.safeStop(tid, retry);
+      if (attempt + 1 >= maxAttempts) {
+        if (outcome instanceof Error) throw outcome;
+        return outcome;
+      }
+      if (retry.onRetry) {
+        try {
+          retry.onRetry(attempt, outcome);
+        } catch {
+          /* hook errors are non-fatal */
+        }
+      }
+      const delay = retry.backoffMs ? retry.backoffMs(attempt) : 0;
+      if (delay > 0) await new Promise((r) => setTimeout(r, delay));
+    }
+    throw new Error("runWithRetry: exhausted attempts unexpectedly");
   }
 
   private async emitRegister(axon: Axon): Promise<void> {
@@ -1994,6 +2250,25 @@ export class Dendrite {
       return;
     }
 
+    // Workflow control: a STOP cancels everything this Dendrite owns on the
+    // trace. Deliver to trace observers first (so on(STOP) fires), then quiesce.
+    if (signal.type === SignalType.STOP) {
+      if (signal.trace_id) {
+        const pw = this.pathways.get(signal.trace_id);
+        if (pw) {
+          try {
+            await pw._deliver(signal);
+          } catch {
+            /* deliver must not break the inbound path */
+          }
+        }
+      }
+      await this.onStop(signal);
+      const hs = this.handlers.get(SignalType.STOP) ?? [];
+      if (hs.length) await Promise.allSettled(hs.map((h) => h(signal)));
+      return;
+    }
+
     // Engram I/O responses: resolve the caller-side correlation table.
     // Delivery continues below so pathways/observers still see them.
     if (signal.type === SignalType.RECALLED || signal.type === SignalType.IMPRINTED) {
@@ -2046,6 +2321,16 @@ export class Dendrite {
     ) {
       await this.cancelOpPathways(signal.trace_id);
       this.engramClient.cancelTrace(signal.trace_id);
+      // Saga commit point: discard each hosted Engram's journal so successful
+      // writes become permanent and journals can't leak.
+      for (const engram of this._engrams.values()) {
+        try {
+          await engram.commit(signal.trace_id);
+        } catch {
+          /* best-effort commit */
+        }
+      }
+      this.traceAborts.delete(signal.trace_id);
     }
 
     // TASK_AWARDED targeting one of our Axons: synthesise a TASK (carrying
@@ -2172,6 +2457,7 @@ export class Dendrite {
       try {
         const receipt: ImprintReceipt = await engram.imprint(op, entry, {
           imprintId: signal.id,
+          traceId: signal.trace_id,
           ...(mergeKey !== undefined ? { mergeKey } : {}),
         });
         reply = imprintedSignal({

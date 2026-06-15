@@ -92,6 +92,13 @@ export const SignalType = {
 
   // Discovery [C]
   DISCOVER: "DISCOVER",
+
+  // Workflow control [C]  -  cooperative cancellation of a whole trace.
+  // STOP is broadcast on the trace; every Dendrite filters by trace_id,
+  // cancels its in-flight work + engram I/O, optionally rolls back Engram
+  // writes via the saga journal, then acks with STOPPED.
+  STOP: "STOP",
+  STOPPED: "STOPPED",
 } as const;
 
 export type SignalType = (typeof SignalType)[keyof typeof SignalType];
@@ -135,6 +142,10 @@ export const SYNAPSE_TYPES: ReadonlySet<SignalType> = new Set<SignalType>([
   SignalType.RECALLED,
   SignalType.IMPRINT,
   SignalType.IMPRINTED,
+  // Workflow control - STOP is orchestrator-gated (see Dendrite role gate);
+  // STOPPED is the per-Dendrite ack.
+  SignalType.STOP,
+  SignalType.STOPPED,
 ]);
 
 // ---------------------------------------------------------------------------

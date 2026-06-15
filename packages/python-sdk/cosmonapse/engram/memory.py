@@ -24,6 +24,7 @@ by subclassing Engram, not by extending this one.
 from __future__ import annotations
 
 import asyncio
+import copy
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -183,11 +184,12 @@ class InMemoryEngram(Engram):
         *,
         merge_key: str | None = None,
         imprint_id: str | None = None,
+        trace_id: str | None = None,
     ) -> ImprintReceipt:
         t0 = time.monotonic()
 
         async with self._lock:
-            # Idempotency: replay returns the recorded receipt.
+            # Idempotency: replay returns the recorded receipt (no re-journal).
             if imprint_id is not None:
                 seen_entry_id = self._imprint_seen.get(imprint_id)
                 if seen_entry_id is not None:
@@ -211,6 +213,8 @@ class InMemoryEngram(Engram):
                 self._store(ent)
                 resulting_id = ent.id
                 version = ent.version
+                # inverse: remove what we just created
+                self._saga_record(trace_id, "delete", {"id": ent.id})
 
             elif op == "append":
                 ent = self._make_entry(entry, merge_key)
@@ -220,6 +224,7 @@ class InMemoryEngram(Engram):
                 self._store(ent)
                 resulting_id = ent.id
                 version = ent.version
+                self._saga_record(trace_id, "delete", {"id": ent.id})
 
             elif op == "upsert":
                 # merge_key is required; locate existing by merge_key.
@@ -227,6 +232,13 @@ class InMemoryEngram(Engram):
                 if existing_ids:
                     target_id = existing_ids[-1]
                     old = self._entries[target_id]
+                    # inverse: restore the prior content for this merge_key
+                    self._saga_record(
+                        trace_id, "upsert",
+                        {"id": target_id, "content": copy.deepcopy(old.content),
+                         "tags": list(old.tags), "meta": copy.deepcopy(old.extra)},
+                        merge_key=old.merge_key,
+                    )
                     new = self._make_entry({**entry, "id": target_id}, merge_key)
                     new.created_at = old.created_at
                     new.version = old.version + 1
@@ -238,6 +250,8 @@ class InMemoryEngram(Engram):
                     self._store(ent)
                     resulting_id = ent.id
                     version = ent.version
+                    # inverse: the upsert created a fresh entry  -  delete it
+                    self._saga_record(trace_id, "delete", {"id": ent.id})
 
             elif op == "merge":
                 existing_ids = self._by_merge_key.get(merge_key or "", [])
@@ -249,6 +263,14 @@ class InMemoryEngram(Engram):
                     )
                 target_id = existing_ids[-1]
                 old = self._entries[target_id]
+                # inverse: restore prior content (merge is non-destructive of
+                # the key, so an upsert back to the old value reverses it)
+                self._saga_record(
+                    trace_id, "upsert",
+                    {"id": target_id, "content": copy.deepcopy(old.content),
+                     "tags": list(old.tags), "meta": copy.deepcopy(old.extra)},
+                    merge_key=old.merge_key,
+                )
                 merged_content = _deep_merge(old.content, entry.get("content"))
                 merged_tags = list({*old.tags, *(entry.get("tags") or [])})
                 merged_extra = _deep_merge(old.extra, entry.get("meta"))
@@ -279,6 +301,14 @@ class InMemoryEngram(Engram):
                         engram_id=self.engram_id, op=op,
                         took_ms=int((time.monotonic() - t0) * 1000),
                     )
+                old = self._entries[target_id]
+                # inverse: re-create the deleted entry verbatim
+                self._saga_record(
+                    trace_id, "add",
+                    {"id": old.id, "content": copy.deepcopy(old.content),
+                     "tags": list(old.tags), "meta": copy.deepcopy(old.extra)},
+                    merge_key=old.merge_key,
+                )
                 self._evict(target_id)
                 resulting_id = target_id
                 version = None

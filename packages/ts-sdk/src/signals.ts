@@ -725,3 +725,59 @@ export function imprintedSignal(args: {
     meta: args.meta ?? {},
   });
 }
+
+
+// ---------------------------------------------------------------------------
+// Workflow control helpers (STOP / STOPPED)
+// ---------------------------------------------------------------------------
+
+/** [C] Broadcast a cooperative-cancellation request for a whole trace.
+ * `rollback` only reverses Engram state via the saga journal; external side
+ * effects a Neuron caused through an Axon are not reversible. */
+export function stopSignal(args: {
+  traceId: string;
+  parentId?: string | null;
+  rollback?: boolean;
+  reason?: string;
+  directed?: DirectedInput;
+  meta?: Json;
+}): Signal {
+  const payload: Json = { rollback: Boolean(args.rollback) };
+  if (args.reason !== undefined) payload["reason"] = args.reason;
+  return createSignal({
+    type: SignalType.STOP,
+    trace_id: args.traceId,
+    parent_id: args.parentId ?? null,
+    directed: args.directed ?? null,
+    payload,
+    meta: args.meta ?? {},
+  });
+}
+
+/** [C] Ack from one Dendrite that it has quiesced its share of a trace.
+ * `parentId` MUST be the STOP's id so the originator can correlate acks. */
+export function stoppedSignal(args: {
+  traceId: string;
+  parentId?: string | null;
+  node?: string;
+  rolledBack?: boolean;
+  cancelled?: number;
+  compensated?: number;
+  directed?: DirectedInput;
+  meta?: Json;
+}): Signal {
+  const payload: Json = {
+    rolled_back: Boolean(args.rolledBack),
+    cancelled: args.cancelled ?? 0,
+    compensated: args.compensated ?? 0,
+  };
+  if (args.node !== undefined) payload["node"] = args.node;
+  return createSignal({
+    type: SignalType.STOPPED,
+    trace_id: args.traceId,
+    parent_id: args.parentId ?? null,
+    directed: args.directed ?? null,
+    payload,
+    meta: args.meta ?? {},
+  });
+}

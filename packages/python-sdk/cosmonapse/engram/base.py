@@ -27,9 +27,12 @@ mounted on a hosting Dendrite via ``dendrite.attach_engram(engram)``.
 
 from __future__ import annotations
 
+import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, Iterator
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -221,11 +224,93 @@ class Engram(ABC):
         *,
         merge_key: str | None = None,
         imprint_id: str | None = None,
+        trace_id: str | None = None,
     ) -> ImprintReceipt:
         """Write to the backend. ``op`` is one of
         ``add | append | merge | upsert | delete``. ``imprint_id`` is
         the originating IMPRINT signal's id - use it for idempotency
-        (return a no-op receipt on re-delivery)."""
+        (return a no-op receipt on re-delivery).
+
+        ``trace_id`` is the containing TASK's trace. When set, a backend
+        that supports rollback records the *inverse* of this write in a
+        per-trace saga journal (via :meth:`_saga_record`) so the whole
+        trace can be reversed by :meth:`compensate`. A ``None`` trace_id
+        means "do not journal" - which is exactly how :meth:`compensate`
+        replays inverse ops without re-journaling them."""
+
+    # ------------------------------------------------------------------
+    # Saga / compensating-log rollback
+    # ------------------------------------------------------------------
+    # A backend opts in to rollback by calling ``_saga_record`` from inside
+    # ``imprint`` with the *inverse* op needed to undo the write it is about
+    # to apply (it already reads the prior row to do upsert/merge/delete, so
+    # capturing the inverse is cheap). ``compensate`` then replays those
+    # inverse ops in reverse order through the public ``imprint`` path with
+    # ``trace_id=None`` (so they neither re-journal nor consume idempotency
+    # keys). Because every inverse is itself a valid add/upsert/delete, this
+    # is fully backend-agnostic - a backend needs no bespoke "undo" code.
+
+    def _saga_record(
+        self,
+        trace_id: str | None,
+        op: str,
+        entry: dict[str, Any],
+        *,
+        merge_key: str | None = None,
+    ) -> None:
+        """Append one inverse op to the trace's journal. No-op when
+        ``trace_id`` is falsy (uncorrelated write, or a compensation replay)."""
+        if not trace_id:
+            return
+        journal: dict[str, list[dict[str, Any]]] = getattr(
+            self, "_saga_journal", None
+        )
+        if journal is None:
+            journal = {}
+            self._saga_journal = journal  # type: ignore[attr-defined]
+        journal.setdefault(trace_id, []).append(
+            {"op": op, "entry": entry, "merge_key": merge_key}
+        )
+
+    async def compensate(self, trace_id: str) -> int:
+        """Reverse every journaled write for ``trace_id`` and discard the
+        journal. Returns the number of inverse ops applied.
+
+        Replays in reverse (LIFO) so nested overwrites unwind to the
+        original state. Best-effort: a failing inverse is logged and the
+        rest still run. Only Engram state is reversed - external side
+        effects are out of scope (see :func:`cosmonapse.envelope.stop_signal`)."""
+        journal: dict[str, list[dict[str, Any]]] | None = getattr(
+            self, "_saga_journal", None
+        )
+        if not journal:
+            return 0
+        inverses = journal.pop(trace_id, [])
+        applied = 0
+        for inv in reversed(inverses):
+            try:
+                await self.imprint(
+                    inv["op"], inv["entry"],
+                    merge_key=inv.get("merge_key"), trace_id=None,
+                )
+                applied += 1
+            except Exception as exc:  # noqa: BLE001
+                logger.exception(
+                    "Engram %s: compensation step %r failed: %s",
+                    getattr(self, "engram_id", "?"), inv.get("op"), exc,
+                )
+        return applied
+
+    async def commit(self, trace_id: str) -> None:
+        """Discard the trace's saga journal without reversing anything.
+
+        Called at the workflow commit point (FINAL/ERROR on the trace) so
+        successful writes become permanent and the journal can't leak."""
+        journal: dict[str, list[dict[str, Any]]] | None = getattr(
+            self, "_saga_journal", None
+        )
+        if journal:
+            journal.pop(trace_id, None)
 
     # ------------------------------------------------------------------
     # Optional capability negotiation

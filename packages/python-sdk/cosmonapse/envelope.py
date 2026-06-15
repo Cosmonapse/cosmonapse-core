@@ -157,6 +157,13 @@ class SignalType(str, Enum):
     # Discovery [C]
     DISCOVER = "DISCOVER"
 
+    # Workflow control [C]  -  cooperative cancellation of a whole trace.
+    # STOP is broadcast on the trace; every Dendrite filters by trace_id,
+    # cancels in-flight neuron work + engram I/O, optionally rolls back
+    # Engram writes via the per-trace saga journal, then acks with STOPPED.
+    STOP = "STOP"
+    STOPPED = "STOPPED"
+
 
 # Which types the Axon (skill) is allowed to produce
 AXON_TYPES: frozenset[SignalType] = frozenset({
@@ -203,6 +210,10 @@ SYNAPSE_TYPES: frozenset[SignalType] = frozenset({
     SignalType.RECALLED,
     SignalType.IMPRINT,
     SignalType.IMPRINTED,
+    # Workflow control  -  STOP is orchestrator-gated (see Dendrite
+    # _ROLE_GATED_TYPES); STOPPED is the per-Dendrite ack.
+    SignalType.STOP,
+    SignalType.STOPPED,
 })
 
 
@@ -1159,6 +1170,80 @@ def imprinted_signal(
         payload["error"] = error
     return Signal(
         type=SignalType.IMPRINTED,
+        trace_id=trace_id,
+        parent_id=parent_id,
+        directed=directed,
+        payload=payload,
+        meta=meta or {},
+    )
+
+
+# ---------------------------------------------------------------------------
+# Workflow control helpers (STOP / STOPPED)
+# ---------------------------------------------------------------------------
+
+
+def stop_signal(
+    *,
+    trace_id: str,
+    parent_id: str | None = None,
+    rollback: bool = False,
+    reason: str | None = None,
+    directed: Directed | None = None,
+    meta: dict[str, Any] | None = None,
+) -> Signal:
+    """[C] Broadcast a cooperative-cancellation request for a whole trace.
+
+    Every Dendrite filters by ``trace_id`` and self-selects: it cancels any
+    in-flight neuron work and engram I/O bound to the trace, and  -  when
+    ``rollback`` is set  -  replays each hosted Engram's per-trace saga
+    journal in reverse before discarding it. Participants ack with
+    :func:`stopped_signal` parented to this STOP's id.
+
+    ``rollback`` only reverses *Engram* state. Side effects a Neuron caused
+    through an Axon (a sent email, an external write) are not reversible
+    unless that Neuron registers its own compensator.
+    """
+    payload: dict[str, Any] = {"rollback": bool(rollback)}
+    if reason is not None:
+        payload["reason"] = reason
+    return Signal(
+        type=SignalType.STOP,
+        trace_id=trace_id,
+        parent_id=parent_id,
+        directed=directed,
+        payload=payload,
+        meta=meta or {},
+    )
+
+
+def stopped_signal(
+    *,
+    trace_id: str,
+    parent_id: str | None = None,
+    node: str | None = None,
+    rolled_back: bool = False,
+    cancelled: int = 0,
+    compensated: int = 0,
+    directed: Directed | None = None,
+    meta: dict[str, Any] | None = None,
+) -> Signal:
+    """[C] Ack from one Dendrite that it has quiesced its share of a trace.
+
+    ``parent_id`` MUST be the STOP's id so the originator can correlate
+    acks. ``node`` is an optional human label for the responding Dendrite.
+    ``cancelled`` is the number of in-flight neuron tasks cancelled here;
+    ``compensated`` is the number of journal inverse-ops replayed.
+    """
+    payload: dict[str, Any] = {
+        "rolled_back": bool(rolled_back),
+        "cancelled": int(cancelled),
+        "compensated": int(compensated),
+    }
+    if node is not None:
+        payload["node"] = node
+    return Signal(
+        type=SignalType.STOPPED,
         trace_id=trace_id,
         parent_id=parent_id,
         directed=directed,

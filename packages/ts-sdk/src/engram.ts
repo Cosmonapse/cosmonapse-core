@@ -121,6 +121,14 @@ export interface ImprintOptions {
   mergeKey?: string;
   /** Originating IMPRINT signal id; backends use it for idempotency. */
   imprintId?: string;
+  /**
+   * Containing TASK's trace. When set, a backend that supports rollback
+   * records the inverse of this write in a per-trace saga journal (via
+   * `sagaRecord`) so the whole trace can be reversed by `compensate`. A
+   * missing traceId means "do not journal" - exactly how `compensate`
+   * replays inverse ops without re-journaling them.
+   */
+  traceId?: string;
 }
 
 /**
@@ -143,6 +151,60 @@ export abstract class Engram {
 
   /** Write to the backend. `op` is one of add | append | merge | upsert | delete. */
   abstract imprint(op: ImprintOp, entry: Json, opts?: ImprintOptions): Promise<ImprintReceipt>;
+
+  // ----------------------------------------------------------------------
+  // Saga / compensating-log rollback
+  // ----------------------------------------------------------------------
+  // A backend opts in by calling `sagaRecord` from inside `imprint` with the
+  // inverse op needed to undo the write it is about to apply. `compensate`
+  // then replays those inverses in reverse (LIFO) through the public
+  // `imprint` path with no traceId/imprintId (so they neither re-journal nor
+  // consume idempotency keys). Every inverse is itself a valid
+  // add/upsert/delete, so this is fully backend-agnostic.
+  protected sagaJournal: Map<string, Array<{ op: ImprintOp; entry: Json; mergeKey: string | undefined }>> =
+    new Map();
+
+  protected sagaRecord(
+    traceId: string | undefined,
+    op: ImprintOp,
+    entry: Json,
+    mergeKey?: string,
+  ): void {
+    if (!traceId) return;
+    let j = this.sagaJournal.get(traceId);
+    if (!j) {
+      j = [];
+      this.sagaJournal.set(traceId, j);
+    }
+    j.push({ op, entry, mergeKey });
+  }
+
+  /** Reverse every journaled write for `traceId` (LIFO) and discard the
+   * journal. Returns the number of inverse ops applied. Best-effort. Only
+   * Engram state is reversed - external side effects are out of scope. */
+  async compensate(traceId: string): Promise<number> {
+    const inverses = this.sagaJournal.get(traceId);
+    if (!inverses) return 0;
+    this.sagaJournal.delete(traceId);
+    let applied = 0;
+    for (let i = inverses.length - 1; i >= 0; i--) {
+      const inv = inverses[i]!;
+      try {
+        const opts = inv.mergeKey !== undefined ? { mergeKey: inv.mergeKey } : {};
+        await this.imprint(inv.op, inv.entry, opts);
+        applied++;
+      } catch {
+        // best-effort: a failing inverse is skipped, the rest still run
+      }
+    }
+    return applied;
+  }
+
+  /** Discard the trace's saga journal without reversing anything. Called at
+   * the workflow commit point (FINAL/ERROR on the trace). */
+  async commit(traceId: string): Promise<void> {
+    this.sagaJournal.delete(traceId);
+  }
 
   /** Return false if this Engram cannot satisfy the query. Default: serve all. */
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -284,9 +346,10 @@ export class InMemoryEngram extends Engram {
   async imprint(op: ImprintOp, entry: Json, opts: ImprintOptions = {}): Promise<ImprintReceipt> {
     const t0 = Date.now();
     const mergeKey = opts.mergeKey ?? null;
+    const traceId = opts.traceId;
     const tookMs = (): number => Date.now() - t0;
 
-    // Idempotency: replay returns the recorded receipt.
+    // Idempotency: replay returns the recorded receipt (no re-journal).
     if (opts.imprintId !== undefined) {
       const seen = this.imprintSeen.get(opts.imprintId);
       if (seen !== undefined) {
@@ -310,6 +373,7 @@ export class InMemoryEngram extends Engram {
       this.store(ent);
       resultingId = ent.id;
       version = ent.version;
+      this.sagaRecord(traceId, "delete", { id: ent.id });
     } else if (op === "append") {
       let ent = this.makeEntry(entry, mergeKey);
       while (this.entries.has(ent.id)) {
@@ -318,11 +382,19 @@ export class InMemoryEngram extends Engram {
       this.store(ent);
       resultingId = ent.id;
       version = ent.version;
+      this.sagaRecord(traceId, "delete", { id: ent.id });
     } else if (op === "upsert") {
       const existingIds = this.byMergeKey.get(mergeKey ?? "") ?? [];
       const targetId = existingIds[existingIds.length - 1];
       const old = targetId !== undefined ? this.entries.get(targetId) : undefined;
       if (old !== undefined) {
+        // inverse: restore prior content for this merge_key
+        this.sagaRecord(
+          traceId,
+          "upsert",
+          { id: old.id, content: structuredClone(old.content), tags: [...old.tags], meta: structuredClone(old.extra) } as Json,
+          old.mergeKey ?? undefined,
+        );
         const next = this.makeEntry({ ...entry, id: old.id }, mergeKey);
         next.createdAt = old.createdAt;
         next.version = old.version + 1;
@@ -334,6 +406,7 @@ export class InMemoryEngram extends Engram {
         this.store(ent);
         resultingId = ent.id;
         version = ent.version;
+        this.sagaRecord(traceId, "delete", { id: ent.id });
       }
     } else if (op === "merge") {
       const existingIds = this.byMergeKey.get(mergeKey ?? "") ?? [];
@@ -342,6 +415,13 @@ export class InMemoryEngram extends Engram {
       if (old === undefined) {
         return receipt(this.engramId, op, { error: `no entry for merge_key='${mergeKey}'`, tookMs: tookMs() });
       }
+      // inverse: an upsert back to the old value reverses a merge
+      this.sagaRecord(
+        traceId,
+        "upsert",
+        { id: old.id, content: structuredClone(old.content), tags: [...old.tags], meta: structuredClone(old.extra) } as Json,
+        old.mergeKey ?? undefined,
+      );
       const now = new Date().toISOString();
       const next: MemEntry = {
         id: old.id,
@@ -368,6 +448,14 @@ export class InMemoryEngram extends Engram {
       if (targetId === null || !this.entries.has(targetId)) {
         return receipt(this.engramId, op, { tookMs: tookMs() });
       }
+      const old = this.entries.get(targetId)!;
+      // inverse: re-create the deleted entry verbatim
+      this.sagaRecord(
+        traceId,
+        "add",
+        { id: old.id, content: structuredClone(old.content), tags: [...old.tags], meta: structuredClone(old.extra) } as Json,
+        old.mergeKey ?? undefined,
+      );
       this.evict(targetId);
       resultingId = targetId;
       version = null;

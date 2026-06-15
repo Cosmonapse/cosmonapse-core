@@ -221,6 +221,7 @@ class SqliteEngram(Engram):
         *,
         merge_key: str | None = None,
         imprint_id: str | None = None,
+        trace_id: str | None = None,
     ) -> ImprintReceipt:
         assert self._conn is not None, "SqliteEngram.connect() not called"
         conn = self._conn

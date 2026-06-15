@@ -104,6 +104,7 @@ from cosmonapse.dendrite import (
     CortexProtocolError,
 )
 from cosmonapse.pathway import PATHWAY_TYPES, Pathway, PathwayClosedError
+from cosmonapse.retry import RetryStrategy, default_retry_on
 from cosmonapse.storage import (
     NeuronRecord,
     RegistryStore,
@@ -148,6 +149,8 @@ from cosmonapse.envelope import (
     recalled_signal,
     imprint_signal,
     imprinted_signal,
+    stop_signal,
+    stopped_signal,
 )
 from cosmonapse.engram import (
     Engram,
@@ -205,6 +208,10 @@ __all__ = [
     "permission_decision_signal",
     "final_signal",
     "error_signal",
+    "stop_signal",
+    "stopped_signal",
+    "RetryStrategy",
+    "default_retry_on",
     "register_signal",
     "deregister_signal",
     "heartbeat_signal",

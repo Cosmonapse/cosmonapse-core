@@ -64,6 +64,8 @@ from cosmonapse.envelope import (
     plan_signal,
     recalled_signal,
     register_signal,
+    stop_signal,
+    stopped_signal,
     task_awarded_signal,
     task_declined_signal,
     task_offer_signal,
@@ -72,7 +74,8 @@ from cosmonapse.envelope import (
     tool_call_signal,
     tool_result_signal,
 )
-from cosmonapse.pathway import PATHWAY_TYPES, Pathway
+from cosmonapse.pathway import PATHWAY_TYPES, Pathway, PathwayClosedError
+from cosmonapse.retry import RetryStrategy
 from cosmonapse.storage.base import NeuronRecord, RegistryStore
 from cosmonapse.synapse.base import MessageHandler, Subscription, Synapse
 
@@ -177,6 +180,11 @@ class Dendrite(LifecycleHooks):
         # event (FINAL/ERROR) and on stop().
         self._op_pathways: dict[str, Pathway] = {}
 
+        # In-flight neuron handler tasks keyed by trace_id, so a STOP can
+        # cancel exactly the work belonging to one workflow. Populated by
+        # _on_task; drained when a handler finishes or is cancelled.
+        self._trace_tasks: dict[str, set[asyncio.Task[Any]]] = {}
+
         # Attached Engrams keyed by engram_id. Routing also indexes by
         # engram_kind so RECALL/IMPRINT with engram_kind= addresses all
         # matching hosts (typically one per kind by deployment convention).
@@ -258,7 +266,7 @@ class Dendrite(LifecycleHooks):
     # imprint can run over the generic dispatch + Pathway path from any role.
     # dispatch_offer still guards itself at entry, so competitive-bidding
     # initiation stays orchestrator-only independent of this set.
-    _ROLE_GATED_TYPES: frozenset[SignalType] = frozenset({SignalType.TASK})
+    _ROLE_GATED_TYPES: frozenset[SignalType] = frozenset({SignalType.TASK, SignalType.STOP})
 
     def _require_orchestrator(self, op: str) -> None:
         """Guard for TASK initiation. Only orchestrator-role Dendrites may
@@ -321,6 +329,7 @@ class Dendrite(LifecycleHooks):
         await self._refresh_routed_sub()
         await self._ensure_inbound_sub(SignalType.TASK_AWARDED)
         await self._ensure_inbound_sub(SignalType.DISCOVER)
+        await self._ensure_inbound_sub(SignalType.STOP)
         if self._auto_bid:
             await self._ensure_inbound_sub(SignalType.TASK_OFFER)
         await self._mirror_to_store(axon, status="registered")
@@ -924,6 +933,11 @@ class Dendrite(LifecycleHooks):
                     )
             await self._ensure_inbound_sub(SignalType.RECALL)
             await self._ensure_inbound_sub(SignalType.IMPRINT)
+            # Terminal events are the saga commit point - an Engram host
+            # must see FINAL/ERROR (and STOP, below) to commit or roll back
+            # its per-trace journal even when it never dispatches.
+            await self._ensure_inbound_sub(SignalType.FINAL)
+            await self._ensure_inbound_sub(SignalType.ERROR)
             # Engrams are Synapse participants: announce each hosted Engram
             # with REGISTER (engram=True) so peers can learn it, and listen
             # for peer Engram registrations.
@@ -950,6 +964,10 @@ class Dendrite(LifecycleHooks):
             for mgmt_type in (SignalType.REGISTER, SignalType.DEREGISTER,
                               SignalType.HEARTBEAT):
                 await self._ensure_inbound_sub(mgmt_type)
+
+        # Every started Dendrite listens for STOP so it can cancel its share
+        # of any trace it participates in.
+        await self._ensure_inbound_sub(SignalType.STOP)
 
         self._running = True
 
@@ -1305,6 +1323,7 @@ class Dendrite(LifecycleHooks):
         meta: dict[str, Any] | None = None,
         scope: str = "all",
         finalize: bool | None = None,
+        retry: RetryStrategy | None = None,
     ) -> Signal:
         """Sync-shape sugar: dispatch, block until first terminal Signal,
         close the Pathway, return the Signal.
@@ -1325,6 +1344,13 @@ class Dendrite(LifecycleHooks):
         is closed (e.g. by Dendrite shutdown) before any matching
         Signal arrives.
         """
+        if retry is not None:
+            return await self._dispatch_with_retry(
+                retry=retry, neuron=neuron, input=input, timeout_s=timeout_s,
+                trace_id=trace_id, parent_id=parent_id, context_ref=context_ref,
+                capabilities=capabilities, meta=meta, scope=scope,
+                finalize=finalize,
+            )
         pathway = await self.dispatch(
             neuron=neuron, input=input,
             trace_id=trace_id, parent_id=parent_id,
@@ -1333,6 +1359,103 @@ class Dendrite(LifecycleHooks):
         )
         async with pathway as pw:
             return await pw.wait(timeout_s=timeout_s)
+
+    async def run_with_retry(
+        self,
+        *,
+        retry: RetryStrategy,
+        neuron: str | None = None,
+        input: dict[str, Any],
+        timeout_s: float | None = 30.0,
+        trace_id: str | None = None,
+        parent_id: str | None = None,
+        context_ref: str | None = None,
+        capabilities: list[str] | None = None,
+        meta: dict[str, Any] | None = None,
+        scope: str = "all",
+        finalize: bool | None = None,
+    ) -> Signal:
+        """Dispatch and wait, retrying per ``retry`` until a non-retryable
+        outcome or attempts are exhausted. Returns the resolved Signal
+        (FINAL / AGENT_OUTPUT / CLARIFICATION / PERMISSION, or a final ERROR);
+        re-raises the last exception when every attempt timed out."""
+        return await self._dispatch_with_retry(
+            retry=retry, neuron=neuron, input=input, timeout_s=timeout_s,
+            trace_id=trace_id, parent_id=parent_id, context_ref=context_ref,
+            capabilities=capabilities, meta=meta, scope=scope, finalize=finalize,
+        )
+
+    async def _safe_stop(self, trace_id: str, retry: RetryStrategy) -> None:
+        try:
+            await self.emit_stop(
+                trace_id=trace_id, rollback=retry.rollback_on_retry,
+                reason=retry.reason,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "run_with_retry: preemptive STOP of %s failed: %s",
+                trace_id, exc,
+            )
+
+    async def _dispatch_with_retry(
+        self, *, retry: RetryStrategy, neuron, input, timeout_s, trace_id,
+        parent_id, context_ref, capabilities, meta, scope, finalize,
+    ) -> Signal:
+        attempts = retry.max_attempts
+        outcome: object = None
+        for attempt in range(attempts):
+            tid = (
+                trace_id if (trace_id and not retry.new_trace)
+                else new_trace_id()
+            )
+            per_timeout = (
+                retry.timeout_s if retry.timeout_s is not None else timeout_s
+            )
+            attempt_meta = {**(meta or {}), "attempt": attempt}
+            try:
+                pathway = await self.dispatch(
+                    neuron=neuron, input=input, trace_id=tid,
+                    parent_id=parent_id, context_ref=context_ref,
+                    capabilities=capabilities, meta=attempt_meta,
+                    scope=scope, finalize=finalize,
+                )
+                async with pathway as pw:
+                    sig = await pw.wait(timeout_s=per_timeout)
+            except (asyncio.TimeoutError, PathwayClosedError) as exc:
+                outcome = exc
+            else:
+                outcome = sig
+
+            should_retry = bool(retry.retry_on(outcome))
+            if not should_retry:
+                if isinstance(outcome, Signal):
+                    return outcome
+                raise outcome  # type: ignore[misc]
+
+            # Retryable: preempt the abandoned attempt so a stalled worker
+            # (and its half-finished Engram writes) can't outlive the retry.
+            if retry.new_trace:
+                await self._safe_stop(tid, retry)
+
+            if attempt + 1 >= attempts:
+                if isinstance(outcome, Signal):
+                    return outcome
+                raise outcome  # type: ignore[misc]
+
+            if retry.on_retry is not None:
+                try:
+                    retry.on_retry(attempt, outcome)
+                except Exception:  # noqa: BLE001
+                    logger.exception("run_with_retry: on_retry hook raised")
+
+            try:
+                delay = float(retry.backoff(attempt) or 0.0)
+            except Exception:  # noqa: BLE001
+                delay = 0.0
+            if delay > 0:
+                await asyncio.sleep(delay)
+
+        raise RuntimeError("run_with_retry: exhausted attempts unexpectedly")
 
     async def dispatch_and_subscribe(
         self,
@@ -2203,8 +2326,24 @@ class Dendrite(LifecycleHooks):
                 return
             target = axon.neuron_id
 
+        # Run the neuron in a child task registered under this trace so a
+        # STOP on the trace can cancel exactly this work (cooperative
+        # asyncio cancellation - the neuron_fn must clean up, not swallow,
+        # CancelledError).
+        child = asyncio.ensure_future(axon.handle_task(task))
+        self._register_trace_task(task.trace_id, child)
         try:
-            reply = await axon.handle_task(task)
+            reply = await child
+        except asyncio.CancelledError:
+            if child.cancelled():
+                # STOP cancelled the neuron mid-flight; the STOPPED ack
+                # emitted by _on_stop covers it, so publish no reply.
+                logger.info(
+                    "Dendrite: TASK on trace %s cancelled by STOP",
+                    task.trace_id,
+                )
+                return
+            raise
         except Exception as exc:
             logger.exception("Dendrite: Axon %s raised unexpectedly", target)
             reply = error_signal(
@@ -2212,6 +2351,8 @@ class Dendrite(LifecycleHooks):
                 directed=Directed(id=target), code="AXON_EXCEPTION",
                 message=str(exc), recoverable=False,
             )
+        finally:
+            self._unregister_trace_task(task.trace_id, child)
         await self._publish(reply)
 
         # Terminal-handler finalize: when the dispatching side tagged the
@@ -2239,6 +2380,143 @@ class Dendrite(LifecycleHooks):
                     "Dendrite: terminal-handler FINAL publish failed "
                     "for %s: %s", target, exc,
                 )
+
+    # ------------------------------------------------------------------
+    # Workflow control: STOP / STOPPED
+    # ------------------------------------------------------------------
+
+    def _register_trace_task(self, trace_id: str, task: "asyncio.Task[Any]") -> None:
+        self._trace_tasks.setdefault(trace_id, set()).add(task)
+
+    def _unregister_trace_task(self, trace_id: str, task: "asyncio.Task[Any]") -> None:
+        tasks = self._trace_tasks.get(trace_id)
+        if tasks is not None:
+            tasks.discard(task)
+            if not tasks:
+                self._trace_tasks.pop(trace_id, None)
+
+    async def _on_stop(self, signal: Signal) -> None:
+        """React to an inbound STOP. Self-selects by trace_id: cancels local
+        neuron work + engram I/O on the trace, optionally rolls back hosted
+        Engrams, closes the trace's Pathway, and acks with STOPPED."""
+        trace_id = signal.trace_id
+        if not trace_id:
+            return
+        rollback = bool((signal.payload or {}).get("rollback"))
+        cancelled = 0
+        compensated = 0
+        did_work = False
+
+        # 1. Cancel in-flight neuron handler tasks on this trace.
+        tasks = self._trace_tasks.pop(trace_id, None)
+        if tasks:
+            for t in list(tasks):
+                if not t.done():
+                    t.cancel()
+                    cancelled += 1
+            did_work = True
+
+        # 2. Cancel in-flight engram op I/O (surfaces as EngramCancelled to
+        #    any awaiting recall/imprint - same path FINAL/ERROR already use).
+        try:
+            await self._cancel_op_pathways(trace_id)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Dendrite: STOP op-pathway cancel failed for %s: %s",
+                trace_id, exc,
+            )
+
+        # 3. Roll back (or just discard) each hosted Engram's saga journal.
+        for engram in list(self._engrams.values()):
+            try:
+                if rollback:
+                    n = await engram.compensate(trace_id)
+                    if n:
+                        compensated += n
+                        did_work = True
+                else:
+                    await engram.commit(trace_id)
+            except Exception as exc:  # noqa: BLE001
+                logger.exception(
+                    "Dendrite: Engram %s STOP handling failed: %s",
+                    engram.engram_id, exc,
+                )
+
+        # 4. Close any open Pathway for this trace so awaiters unblock.
+        pw = self._pathways.get(trace_id)
+        if pw is not None and not pw.closed:
+            did_work = True
+            try:
+                await pw.close()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "Dendrite: STOP pathway close failed for %s: %s",
+                    trace_id, exc,
+                )
+
+        # 5. Ack only if this Dendrite had a stake in the trace, so idle
+        #    peers that received the broadcast stay quiet.
+        if did_work:
+            try:
+                await self._publish(stopped_signal(
+                    trace_id=trace_id, parent_id=signal.id,
+                    node=self._namespace, rolled_back=rollback,
+                    cancelled=cancelled, compensated=compensated,
+                ))
+            except Exception as exc:  # noqa: BLE001
+                logger.exception(
+                    "Dendrite: STOPPED publish failed for %s: %s", trace_id, exc,
+                )
+
+    async def emit_stop(
+        self, *, trace_id: str, rollback: bool = False,
+        reason: str | None = None,
+    ) -> Signal:
+        """Broadcast a STOP for ``trace_id`` (orchestrator-gated).
+
+        Returns the emitted STOP Signal. Best-effort and idempotent: STOP is
+        fire-and-forget, so a peer that never saw it simply isn't stopped."""
+        self._require_orchestrator("emit_stop")
+        # Ensure our own loopback STOP is handled (a Dendrite that both
+        # originates and hosts work must react to its own STOP).
+        await self._ensure_inbound_sub(SignalType.STOP)
+        sig = stop_signal(trace_id=trace_id, rollback=rollback, reason=reason)
+        await self._publish(sig)
+        return sig
+
+    async def stop_trace(
+        self, trace_id: str, *, rollback: bool = False,
+        reason: str | None = None, collect_acks: bool = False,
+        timeout_s: float = 1.0,
+    ) -> list[Signal]:
+        """Stop a whole workflow. Thin wrapper over :meth:`emit_stop`.
+
+        With ``collect_acks=True`` opens a short-lived STOPPED subscription
+        and returns the acks seen within ``timeout_s`` (best effort)."""
+        if not collect_acks:
+            await self.emit_stop(
+                trace_id=trace_id, rollback=rollback, reason=reason,
+            )
+            return []
+
+        acks: list[Signal] = []
+
+        async def _collect(sig: Signal) -> None:
+            if sig.trace_id == trace_id:
+                acks.append(sig)
+
+        self._handlers.setdefault(SignalType.STOPPED, []).append(_collect)
+        await self._ensure_inbound_sub(SignalType.STOPPED)
+        try:
+            await self.emit_stop(
+                trace_id=trace_id, rollback=rollback, reason=reason,
+            )
+            await asyncio.sleep(timeout_s)
+        finally:
+            handlers = self._handlers.get(SignalType.STOPPED, [])
+            if _collect in handlers:
+                handlers.remove(_collect)
+        return acks
 
     async def _handle_discover(self, signal: Signal) -> None:
         if self._discover_handlers:
@@ -2427,6 +2705,23 @@ class Dendrite(LifecycleHooks):
             await self._fire_handlers(signal)
             return
 
+        # Workflow control: a STOP cancels everything this Dendrite owns on
+        # the trace. Deliver to trace observers first (so @pw.on(STOP) fires),
+        # then quiesce and ack.
+        if signal.type is SignalType.STOP:
+            if signal.trace_id:
+                pw = self._pathways.get(signal.trace_id)
+                if pw is not None:
+                    try:
+                        await pw._deliver(signal)
+                    except Exception as exc:  # noqa: BLE001
+                        logger.exception(
+                            "Dendrite: STOP pathway deliver failed: %s", exc,
+                        )
+            await self._on_stop(signal)
+            await self._fire_handlers(signal)
+            return
+
         # Per-operation (request/reply) correlation: deliver any Signal whose
         # parent_id matches an open op-Pathway. This resolves the awaiting
         # recall()/imprint() (RECALLED/IMPRINTED) without a bespoke Future
@@ -2468,6 +2763,17 @@ class Dendrite(LifecycleHooks):
                     "Dendrite: op-Pathway cancel failed for %s: %s",
                     signal.trace_id, exc,
                 )
+            # Saga commit point: discard each hosted Engram's journal so
+            # successful writes become permanent and journals can't leak.
+            for engram in list(self._engrams.values()):
+                try:
+                    await engram.commit(signal.trace_id)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "Dendrite: Engram %s commit on terminal failed: %s",
+                        engram.engram_id, exc,
+                    )
+            self._trace_tasks.pop(signal.trace_id, None)
 
         # TASK_AWARDED targeting one of our Axons: synthesise a TASK
         # and route through the existing Axon handler.
@@ -2712,6 +3018,7 @@ class Dendrite(LifecycleHooks):
             try:
                 receipt = await engram.imprint(
                     op, entry, merge_key=merge_key, imprint_id=signal.id,
+                    trace_id=signal.trace_id,
                 )
             except Exception as exc:  # noqa: BLE001
                 logger.exception(

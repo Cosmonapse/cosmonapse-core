@@ -245,6 +245,7 @@ class PostgresEngram(Engram):
         *,
         merge_key: str | None = None,
         imprint_id: str | None = None,
+        trace_id: str | None = None,
     ) -> ImprintReceipt:
         assert self._pool is not None, "PostgresEngram.connect() not called"
         t0 = time.monotonic()

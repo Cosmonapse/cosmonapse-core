@@ -71,7 +71,11 @@ export {
   recalledSignal,
   imprintSignal,
   imprintedSignal,
+  stopSignal,
+  stoppedSignal,
 } from "./signals.js";
+export { defaultRetryOn } from "./retry.js";
+export type { RetryStrategy, RetryOutcome } from "./retry.js";
 
 // --- runtime primitives ---
 
