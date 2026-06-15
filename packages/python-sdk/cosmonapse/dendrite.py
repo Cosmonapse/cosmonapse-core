@@ -1398,8 +1398,19 @@ class Dendrite(LifecycleHooks):
             )
 
     async def _dispatch_with_retry(
-        self, *, retry: RetryStrategy, neuron, input, timeout_s, trace_id,
-        parent_id, context_ref, capabilities, meta, scope, finalize,
+        self,
+        *,
+        retry: RetryStrategy,
+        neuron: str | None,
+        input: dict[str, Any],
+        timeout_s: float | None,
+        trace_id: str | None,
+        parent_id: str | None,
+        context_ref: str | None,
+        capabilities: list[str] | None,
+        meta: dict[str, Any] | None,
+        scope: str,
+        finalize: bool | None,
     ) -> Signal:
         attempts = retry.max_attempts
         outcome: object = None
@@ -1430,7 +1441,8 @@ class Dendrite(LifecycleHooks):
             if not should_retry:
                 if isinstance(outcome, Signal):
                     return outcome
-                raise outcome  # type: ignore[misc]
+                assert isinstance(outcome, BaseException)
+                raise outcome
 
             # Retryable: preempt the abandoned attempt so a stalled worker
             # (and its half-finished Engram writes) can't outlive the retry.
@@ -1440,7 +1452,8 @@ class Dendrite(LifecycleHooks):
             if attempt + 1 >= attempts:
                 if isinstance(outcome, Signal):
                     return outcome
-                raise outcome  # type: ignore[misc]
+                assert isinstance(outcome, BaseException)
+                raise outcome
 
             if retry.on_retry is not None:
                 try:

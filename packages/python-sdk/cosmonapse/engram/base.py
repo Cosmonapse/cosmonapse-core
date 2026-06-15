@@ -250,6 +250,10 @@ class Engram(ABC):
     # keys). Because every inverse is itself a valid add/upsert/delete, this
     # is fully backend-agnostic - a backend needs no bespoke "undo" code.
 
+    # Per-trace inverse-op journal. ``None`` (the immutable class default) until
+    # the first journaled write; each instance then binds its own dict.
+    _saga_journal: "dict[str, list[dict[str, Any]]] | None" = None
+
     def _saga_record(
         self,
         trace_id: str | None,
@@ -262,13 +266,9 @@ class Engram(ABC):
         ``trace_id`` is falsy (uncorrelated write, or a compensation replay)."""
         if not trace_id:
             return
-        journal: dict[str, list[dict[str, Any]]] = getattr(
-            self, "_saga_journal", None
-        )
-        if journal is None:
-            journal = {}
-            self._saga_journal = journal  # type: ignore[attr-defined]
-        journal.setdefault(trace_id, []).append(
+        if self._saga_journal is None:
+            self._saga_journal = {}
+        self._saga_journal.setdefault(trace_id, []).append(
             {"op": op, "entry": entry, "merge_key": merge_key}
         )
 
@@ -280,12 +280,9 @@ class Engram(ABC):
         original state. Best-effort: a failing inverse is logged and the
         rest still run. Only Engram state is reversed - external side
         effects are out of scope (see :func:`cosmonapse.envelope.stop_signal`)."""
-        journal: dict[str, list[dict[str, Any]]] | None = getattr(
-            self, "_saga_journal", None
-        )
-        if not journal:
+        if not self._saga_journal:
             return 0
-        inverses = journal.pop(trace_id, [])
+        inverses = self._saga_journal.pop(trace_id, [])
         applied = 0
         for inv in reversed(inverses):
             try:
@@ -306,11 +303,8 @@ class Engram(ABC):
 
         Called at the workflow commit point (FINAL/ERROR on the trace) so
         successful writes become permanent and the journal can't leak."""
-        journal: dict[str, list[dict[str, Any]]] | None = getattr(
-            self, "_saga_journal", None
-        )
-        if journal:
-            journal.pop(trace_id, None)
+        if self._saga_journal:
+            self._saga_journal.pop(trace_id, None)
 
     # ------------------------------------------------------------------
     # Optional capability negotiation
