@@ -2776,16 +2776,20 @@ class Dendrite(LifecycleHooks):
                     "Dendrite: op-Pathway cancel failed for %s: %s",
                     signal.trace_id, exc,
                 )
-            # Saga commit point: discard each hosted Engram's journal so
-            # successful writes become permanent and journals can't leak.
-            for engram in list(self._engrams.values()):
-                try:
-                    await engram.commit(signal.trace_id)
-                except Exception as exc:  # noqa: BLE001
-                    logger.warning(
-                        "Dendrite: Engram %s commit on terminal failed: %s",
-                        engram.engram_id, exc,
-                    )
+            # Saga commit point is success (FINAL) only: discard each hosted
+            # Engram's journal so successful writes become permanent. On ERROR
+            # the journal is *kept* so the caller can still stop_trace(
+            # rollback=True) to compensate a failed workflow (a plain
+            # stop_trace, or a successful retry's preemptive STOP, discards it).
+            if signal.type is SignalType.FINAL:
+                for engram in list(self._engrams.values()):
+                    try:
+                        await engram.commit(signal.trace_id)
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning(
+                            "Dendrite: Engram %s commit on FINAL failed: %s",
+                            engram.engram_id, exc,
+                        )
             self._trace_tasks.pop(signal.trace_id, None)
 
         # TASK_AWARDED targeting one of our Axons: synthesise a TASK

@@ -2321,13 +2321,18 @@ export class Dendrite {
     ) {
       await this.cancelOpPathways(signal.trace_id);
       this.engramClient.cancelTrace(signal.trace_id);
-      // Saga commit point: discard each hosted Engram's journal so successful
-      // writes become permanent and journals can't leak.
-      for (const engram of this._engrams.values()) {
-        try {
-          await engram.commit(signal.trace_id);
-        } catch {
-          /* best-effort commit */
+      // Saga commit point is success (FINAL) only: discard each hosted
+      // Engram's journal so successful writes become permanent. On ERROR the
+      // journal is kept so the caller can still stopTrace({rollback:true}) to
+      // compensate a failed workflow (a plain stop, or a successful retry's
+      // preemptive STOP, discards it).
+      if (signal.type === SignalType.FINAL) {
+        for (const engram of this._engrams.values()) {
+          try {
+            await engram.commit(signal.trace_id);
+          } catch {
+            /* best-effort commit */
+          }
         }
       }
       this.traceAborts.delete(signal.trace_id);
