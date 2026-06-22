@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.6] - 2026-06-22
+
 ### Fixed
 - **`on_task_offer(capability=...)` / `onTaskOffer(.., {capability})` silently
   dropped every offer.** The handler's capability filter resolved the offer's

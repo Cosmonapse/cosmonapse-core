@@ -10,7 +10,7 @@ dynamic = ["version"]
 description = "Event-driven Agent-to-Agent protocol SDK and developer CLI"
 readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "MIT" }
+license = { text = "Apache-2.0" }
 keywords = ["agents", "a2a", "protocol", "multi-agent"]
 dependencies = [
     # --- core SDK runtime ---
@@ -66,7 +66,7 @@ source = "vcs"
 
 [tool.hatch.version.raw-options]
 # `v0.1.1` -> `0.1.1`; the leading `v` is stripped automatically.
-fallback_version = "0.1.0"
+fallback_version = "0.1.6"
 
 # ---------------------------------------------------------------------------
 # Build configuration
