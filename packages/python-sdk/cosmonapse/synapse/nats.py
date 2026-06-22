@@ -16,7 +16,7 @@ inside `connect()`; if the package is missing, a clear `ImportError`
 is raised pointing at the right `pip install`.
 
 Install:
-    pip install "cosmonapse[nats]"   # or: pip install nats-py
+    pip install cosmonapse   # or: pip install nats-py
 """
 
 from __future__ import annotations
@@ -87,7 +87,7 @@ class NatsSynapse(Synapse):
         except ImportError as exc:
             raise ImportError(
                 "NatsSynapse requires the 'nats-py' package. "
-                "Install it with: pip install 'cosmonapse[nats]'  "
+                "Install it with: pip install cosmonapse  "
                 "(or: pip install nats-py)"
             ) from exc
 

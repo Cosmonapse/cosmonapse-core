@@ -461,7 +461,16 @@ export class Dendrite {
       if (filter.neuron !== undefined && sigNeuron !== filter.neuron) return;
       if (filter.traceId !== undefined && sig.trace_id !== filter.traceId) return;
       if (filter.capability !== undefined) {
-        if (!(await this.neuronHasCapability(sigNeuron, filter.capability))) return;
+        // A TASK_OFFER is a broadcast carrying its required capabilities
+        // in payload.capabilities with no directed neuron, so the
+        // neuron-capability lookup never matches. Narrow against the
+        // offer's requested set instead (an empty set is open to all).
+        if (sig.type === SignalType.TASK_OFFER) {
+          const requested = (sig.payload?.capabilities as string[] | undefined) ?? [];
+          if (requested.length > 0 && !requested.includes(filter.capability)) return;
+        } else if (!(await this.neuronHasCapability(sigNeuron, filter.capability))) {
+          return;
+        }
       }
       await fn(sig);
     };

@@ -478,7 +478,18 @@ class Dendrite(LifecycleHooks):
             if trace_id is not None and sig.trace_id != trace_id:
                 return
             if capability is not None:
-                if not await self._neuron_has_capability(sig_neuron, capability):
+                # A TASK_OFFER is a broadcast: it carries its required
+                # capabilities in ``payload["capabilities"]`` and has no
+                # directed neuron, so the neuron-capability lookup below
+                # never matches. Narrow against the offer's requested set
+                # instead (an offer with no capabilities is open to all).
+                if sig.type is SignalType.TASK_OFFER:
+                    requested = sig.payload.get("capabilities") or []
+                    if requested and capability not in requested:
+                        return
+                elif not await self._neuron_has_capability(
+                    sig_neuron, capability
+                ):
                     return
             await fn(sig)
 

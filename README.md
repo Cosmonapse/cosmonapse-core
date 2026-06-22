@@ -65,11 +65,12 @@ cosmonapse-core/
 ## Install (Python)
 
 ```bash
-pip install -e cosmonapse-core/packages/python-sdk
+pip install cosmonapse
 ```
 
 This installs both `import cosmonapse` and the `cosmo` command. Optional extras:
-`[nats]`, `[kafka]`, `[postgres]`, and `[flask]`. See
+`[nats]`, `[kafka]`, `[postgres]`, and `[flask]`. To work against a local
+checkout instead, use `pip install -e cosmonapse-core/packages/python-sdk`. See
 [`packages/python-sdk/README.md`](packages/python-sdk/README.md) for full SDK
 and CLI documentation.
 

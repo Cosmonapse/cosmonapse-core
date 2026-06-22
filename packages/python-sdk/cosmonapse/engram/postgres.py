@@ -15,7 +15,7 @@ For vector search, layer a separate PgVectorEngram on top of pgvector
 rather than extending this. See ENGRAM_DESIGN.md §6.
 
 Install:
-    pip install "cosmonapse[postgres]"   # or: pip install asyncpg
+    pip install cosmonapse   # or: pip install asyncpg
 """
 
 from __future__ import annotations
@@ -145,7 +145,7 @@ class PostgresEngram(Engram):
         except ImportError as exc:
             raise ImportError(
                 "PostgresEngram requires asyncpg. Install with "
-                "`pip install asyncpg` or `pip install \"cosmonapse[postgres]\"`."
+                "`pip install asyncpg` or `pip install \"cosmonapse\"`."
             ) from exc
 
         self._pool = await asyncpg.create_pool(

@@ -11,7 +11,7 @@ database for the Cortex if you don't want it sharing a namespace with
 your application tables.
 
 Install:
-    pip install "cosmonapse[postgres]"   # or: pip install asyncpg
+    pip install cosmonapse   # or: pip install asyncpg
 """
 
 from __future__ import annotations
@@ -89,7 +89,7 @@ class PostgresRegistryStore(RegistryStore):
         except ImportError as exc:
             raise ImportError(
                 "PostgresRegistryStore requires 'asyncpg'. "
-                "Install it with: pip install 'cosmonapse[postgres]'  "
+                "Install it with: pip install cosmonapse  "
                 "(or: pip install asyncpg)"
             ) from exc
 

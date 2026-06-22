@@ -6,6 +6,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- **`on_task_offer(capability=...)` / `onTaskOffer(.., {capability})` silently
+  dropped every offer.** The handler's capability filter resolved the offer's
+  *directed neuron*, but a TASK_OFFER is a broadcast that carries its required
+  capabilities in `payload.capabilities` and has no directed neuron  -  so the
+  filter always failed and no BID was ever emitted (the `10-bidding` example
+  timed out). The filter now narrows against the offer's requested capability
+  set; an offer with no capabilities stays open to all. Fixed at parity in both
+  SDKs.
+
 ## [0.1.1] - 2026-06-05
 
 ### Added

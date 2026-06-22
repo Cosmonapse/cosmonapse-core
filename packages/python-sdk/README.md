@@ -11,13 +11,6 @@ Event-driven Agent-to-Agent protocol SDK for Python.
 ```bash
 pip install cosmonapse
 
-# Optional synapse adapters
-pip install "cosmonapse[nats]"      # NATS transport
-pip install "cosmonapse[kafka]"     # Kafka transport (aiokafka)
-
-# Optional storage backend
-pip install "cosmonapse[postgres]"  # Postgres registry store (asyncpg)
-
 # Provider-backed Neurons (Ollama / HuggingFace / OpenAI / Anthropic / groq /
 # openrouter / together / mistral) need httpx
 pip install httpx
@@ -192,8 +185,8 @@ Requires `httpx` (`pip install httpx`).
 |---|---|
 | `MemorySynapse` | tests, single-process |
 | `DevSynapse` | multi-process dev on one host (`cosmo synapse start memory`) |
-| `NatsSynapse` | production default (`pip install cosmonapse[nats]`) |
-| `KafkaSynapse` | durable audit log (`pip install "cosmonapse[kafka]"`) |
+| `NatsSynapse` | production default (`pip install cosmonapse`) |
+| `KafkaSynapse` | durable audit log (`pip install cosmonapse`) |
 
 URL factory:
 
@@ -217,7 +210,124 @@ await synapse.connect()
 
 ## Storage backends
 
+A `RegistryStore` is the orchestrator's view of the live Neuron population,
+rebuilt from `REGISTER` / `HEARTBEAT` / `DEREGISTER` Signals. Pass one as
+`registry_store=` when an orchestrator dispatches by capability instead of by
+`neuron_id`.
+
 | Import | Use when |
 |---|---|
 | `MemoryRegistryStore` | tests, ephemeral orchestrators |
-| `SqliteRegistryStore` | single-process production, zero extra 
+| `SqliteRegistryStore` | single-process production, zero extra deps |
+| `PostgresRegistryStore` | multi-process / multi-host (`pip install cosmonapse`) |
+
+---
+
+## Pathway
+
+`dendrite.dispatch(...)` returns a `Pathway` - a per-trace event handle with
+three consumption shapes on the same primitive:
+
+```python
+# 1. Sequential request/reply - block for the first terminal Signal.
+sig = await orch.dispatch_and_wait(neuron="answerer", input={"q": "hi"}, timeout_s=5.0)
+print(sig.payload["output"])
+
+# 2. Reactive - trace-scoped callbacks.
+pw = await orch.dispatch_and_subscribe(capabilities=["plan"], input={"goal": "..."})
+
+@pw.on(SignalType.THOUGHT_DELTA)
+async def stream(s):
+    print(s.payload["delta"], end="")
+
+# 3. Streaming iteration.
+async with await orch.dispatch(capabilities=["plan"], input={"goal": "..."}) as pw:
+    async for sig in pw:
+        if sig.type is SignalType.AGENT_OUTPUT:
+            break
+```
+
+`Pathway(scope=...)` filters delivery. `"all"` (default) sees every
+`PATHWAY_TYPES` Signal on the trace; `"terminal"` delivers only
+FINAL / ERROR / CLARIFICATION / PERMISSION - the decentralised pattern where
+intermediate orchestration is handled peer-to-peer and the Cortex only wakes
+for a conclusion or a blocked decision. Pathways auto-close on FINAL or ERROR.
+`observe_pathway(trace_id)` opens a Pathway in observer role for a trace another
+peer started. See the `04-pathway` example.
+
+---
+
+## Engram (shared memory)
+
+An `Engram` is a memory backend addressed over the bus. The Neuron stays pure -
+it gains keyword-only `recall` / `imprint` parameters that the Axon injects
+because the Axon was constructed with `engrams=[EngramBinding(...)]`. Under the
+hood `recall(...)` emits a `RECALL` Signal on the current trace and awaits the
+matching `RECALLED` reply.
+
+```python
+from cosmonapse import Axon, Dendrite, EngramBinding, InMemoryEngram
+
+async def researcher(input, context, *, recall, imprint):
+    prior = await recall("ctx", query={"text": input["question"]})
+    if prior.hits:
+        return {"answer": prior.hits[0].entry["answer"], "source": "cache"}
+    answer = solve(input["question"])
+    await imprint("ctx", op="upsert", merge_key=f"q:{input['question']}",
+                  entry={"question": input["question"], "answer": answer})
+    return {"answer": answer, "source": "computed"}
+
+# Host owns the backend; engram_id is the wire address.
+host.attach_engram(InMemoryEngram(engram_id="ctx", engram_kind="context"))
+
+# Worker binds a local name to that wire id, so ops can repoint the
+# backend without editing Neuron code.
+worker.attach_axon(Axon(
+    neuron_id="researcher", neuron_fn=researcher, capabilities=["research"],
+    engrams=[EngramBinding(name="ctx", directed_id="ctx")],
+))
+```
+
+Backends: `InMemoryEngram` (tests), `SqliteEngram` (single-host durable),
+`PostgresEngram` (`pip install cosmonapse`). See the
+`06-engram-integration` and `11-rag` examples.
+
+---
+
+## The cosmo CLI
+
+`pip install cosmonapse` also installs the `cosmo` command:
+
+| Command | What it does |
+|---|---|
+| `cosmo init [name]` | Scaffold a runnable Axon + Dendrite project (`-n` namespace, `--force`) |
+| `cosmo synapse start memory --namespace=demo` | Boot a local TCP+NDJSON dev broker at `cosmo://127.0.0.1:7070` |
+| `cosmo dispatch` | Dispatch a TASK from the terminal and await the reply |
+| `cosmo registry` | Inspect the live Neuron population (DISCOVER-based) |
+| `cosmo answer` | Interactively answer CLARIFICATION / PERMISSION requests |
+| `cosmo doppler -n demo` | Stream every Signal on the bus to stdout (`--type` to filter, `--prism` for the browser view) |
+| `cosmo schema` | Export the Signal envelope JSON Schema |
+| `cosmo validate` | Validate that Signals on the bus conform to the envelope spec |
+| `cosmo completion` | Print a shell-completion script (bash / zsh / fish) |
+
+Watch any workflow live:
+
+```bash
+cosmo synapse start memory --namespace=demo
+cosmo doppler --prism --url=cosmo://127.0.0.1:7070 -n demo   # opens http://127.0.0.1:7071
+```
+
+---
+
+## Examples
+
+The companion `cosmonapse-examples` repo has 13 runnable, numbered examples -
+from a single-process hello-world up through capability routing, competitive
+bidding, a full hybrid-retrieval RAG system, an MCP-backed coding agent, and
+retry / STOP / saga-rollback. Start with `01-quickstart`.
+
+---
+
+## License
+
+MIT (c) 2026 Aqib Khan

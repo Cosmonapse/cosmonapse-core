@@ -395,6 +395,46 @@ def test_user_offer_handler_suppresses_auto_bid():
     _run(run())
 
 
+def test_filtered_offer_handler_bids():
+    """Regression: @on_task_offer(capability=...) must still fire and bid.
+
+    The capability filter used to resolve the offer's *directed neuron*,
+    but a TASK_OFFER is a broadcast carrying its capabilities in the
+    payload  -  so the filter silently swallowed every offer and no BID
+    was ever sent (the 10-bidding example timed out)."""
+    async def run():
+        s = await _make_synapse()
+        worker = Dendrite(synapse=s, namespace="t", role="worker",
+                          heartbeat_s=0)
+        worker.attach_axon(Axon(
+            neuron_id="e", neuron_fn=_echo, capabilities=["echo"],
+        ))
+        orch = Dendrite(synapse=s, namespace="t", heartbeat_s=0)
+        bids = []
+        try:
+            @worker.on_task_offer(capability="echo")
+            async def _respond(offer):
+                await worker.bid(offer, neuron="e", cost=0.001,
+                                 confidence=0.9)
+
+            @orch.on_bid
+            async def _seen(sig):
+                bids.append(sig)
+
+            async with worker, orch:
+                pw = await orch.dispatch_offer(
+                    input={"text": "hi"}, capabilities=["echo"],
+                    deadline_ms=250, select="lowest_cost",
+                )
+                sig = await pw.wait(timeout_s=5.0)
+                assert len(bids) == 1
+                assert sig.directed and sig.directed.id == "e"
+                assert sig.payload["output"]["echo"] == "hi"
+        finally:
+            await s.close()
+    _run(run())
+
+
 # ---------------------------------------------------------------------------
 # Built-in Neuron follow-up rendering
 # ---------------------------------------------------------------------------

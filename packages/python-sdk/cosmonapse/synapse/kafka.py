@@ -24,7 +24,7 @@ The `aiokafka` library is **lazy-imported**  -  the module imports fine
 without it; `connect()` raises a clear `ImportError` if it is missing.
 
 Install:
-    pip install "cosmonapse[kafka]"   # or: pip install aiokafka
+    pip install cosmonapse   # or: pip install aiokafka
 
 Caveats
 -------
@@ -134,7 +134,7 @@ class KafkaSynapse(Synapse):
         except ImportError as exc:
             raise ImportError(
                 "KafkaSynapse requires the 'aiokafka' package. "
-                "Install it with: pip install 'cosmonapse[kafka]'  "
+                "Install it with: pip install cosmonapse  "
                 "(or: pip install aiokafka)"
             ) from exc
 
