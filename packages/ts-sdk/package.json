@@ -1,6 +1,6 @@
 {
   "name": "@cosmonapse/sdk",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "Event-driven Agent-to-Agent protocol SDK  -  TypeScript surface of the Cosmonapse envelope spec",
   "license": "Apache-2.0",
   "type": "module",
@@ -15,7 +15,8 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "bin"
   ],
   "keywords": [
     "agents",
@@ -71,5 +72,8 @@
   },
   "publishConfig": {
     "access": "public"
+  },
+  "bin": {
+    "cosmo": "./bin/cosmo.js"
   }
 }

@@ -6,6 +6,20 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- **`cosmo` for npm users - one CLI build, two registries.** The npm package
+  now installs a `cosmo` command (`npm install -g @cosmonapse/sdk`). It is a
+  self-bootstrapping launcher (`bin/cosmo.js`, zero dependencies): it
+  delegates to `$COSMO_PYTHON` or any system Python that already has the
+  `cosmonapse` package; failing that it creates a private venv under
+  `~/.cosmonapse/cli-venv` and pip-installs `cosmonapse` pinned to the npm
+  package's own version (one-time, refreshed on version change). Every path
+  runs `python -m cosmo`, so pip and npm users always run the single
+  canonical CLI implementation from the Python package - by design there is
+  no second CLI codebase to drift. Added `cosmo/__main__.py` as the
+  delegation target. Requires a Python 3.11+ interpreter on PATH; without
+  one the launcher exits 127 with clear instructions.
+
 ## [0.1.6] - 2026-06-22
 
 ### Fixed

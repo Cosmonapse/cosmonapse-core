@@ -56,6 +56,10 @@ publish-pypi:
     - python -m pip install --upgrade pip build twine
   script:
     - cd packages/python-sdk
+    # Pin the version to the tag (mirrors the GitHub workflow); GitLab's
+    # shallow clone can hide the tag from hatch-vcs, which would silently
+    # fall back to fallback_version.
+    - export SETUPTOOLS_SCM_PRETEND_VERSION="${CI_COMMIT_TAG#v}"
     - python -m build                       # wheel + sdist into dist/
     - python -m twine check dist/*
     - python -m twine upload dist/*
@@ -68,6 +72,9 @@ publish-npm:
     - cd packages/ts-sdk
     - npm ci || npm install
   script:
+    # Version comes from the tag, set at publish time rather than committed
+    # (mirrors the GitHub workflow). `v0.1.7` -> `0.1.7`.
+    - npm version "${CI_COMMIT_TAG#v}" --no-git-tag-version --allow-same-version
     - npm run build
     - echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > .npmrc
     - npm publish --access public

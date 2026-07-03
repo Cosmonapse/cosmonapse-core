@@ -2,7 +2,7 @@
 
 Event-driven Agent-to-Agent protocol SDK for Python.
 
-**v0.1.0**  -  Python 3.11+ · MIT
+Python 3.11+ · Apache-2.0
 
 ---
 
@@ -15,6 +15,12 @@ pip install cosmonapse
 # openrouter / together / mistral) need httpx
 pip install httpx
 ```
+
+This puts both `import cosmonapse` and the `cosmo` CLI on your PATH. The CLI
+has a single implementation - this package - and is also reachable from npm:
+`npm install -g @cosmonapse/sdk` ships a launcher that delegates to
+`python -m cosmo`, auto-installing this package into a private environment on
+first run if needed. One CLI build either way.
 
 ---
 

@@ -136,7 +136,7 @@ Choose the shortest path that matches how you want to use Cosmonapse.
 | --- | --- | --- |
 | Python SDK | Building and running agents | `pip install cosmonapse` |
 | TypeScript SDK | Node / browser agents | `npm install @cosmonapse/sdk` |
-| CLI | Terminal-first workflows | bundled with the Python package as `cosmo` |
+| CLI | Terminal-first workflows | one build; `pip install cosmonapse` or `npm i -g @cosmonapse/sdk` |
 
 ### Install (Python)
 
@@ -158,12 +158,41 @@ See [`packages/python-sdk/README.md`](packages/python-sdk/README.md) for full SD
 npm install @cosmonapse/sdk
 ```
 
+The `cosmo` CLI has a single implementation, shipped in the Python package —
+there is exactly one CLI build, so pip and npm users always run identical
+tooling. The npm package includes a `cosmo` launcher that installs and runs
+it for you:
+
+```bash
+npm install -g @cosmonapse/sdk
+cosmo --help
+```
+
+On first run the launcher looks for a Python that already has `cosmonapse`
+installed and delegates to it (`python -m cosmo`). If none is found, it
+bootstraps automatically: it creates a private environment under
+`~/.cosmonapse/cli-venv` and pip-installs `cosmonapse` pinned to the npm
+package's version, so the two stay in lockstep. The only requirement is a
+Python 3.11+ interpreter on PATH (`$COSMO_PYTHON` overrides discovery). If
+you already `pip install cosmonapse`, its own `cosmo` entry point is the same
+code and the launcher simply defers to it.
+
+To work against a local checkout of the SDK:
+
+```bash
+cd packages/ts-sdk
+npm install
+npm run build   # builds dist/index.{js,cjs,d.ts}
+```
+
+See [`packages/ts-sdk/README.md`](packages/ts-sdk/README.md) for full SDK documentation.
+
 ## Repository Map
 
 | Path | Purpose |
 | --- | --- |
 | `packages/python-sdk/` | The `cosmonapse` SDK and bundled `cosmo` CLI |
-| `packages/ts-sdk/` | TypeScript SDK |
+| `packages/ts-sdk/` | TypeScript SDK (+ `cosmo` launcher for npm installs) |
 | `packages/prism-ui/` | Prism UI |
 | `examples/` | Runnable end-to-end examples |
 | `design/SDK_DESIGN.md` | Design rationale |
@@ -175,6 +204,7 @@ npm install @cosmonapse/sdk
 ## Documentation
 
 - [Python SDK README](packages/python-sdk/README.md) — install, quick start, API, CLI
+- [TypeScript SDK README](packages/ts-sdk/README.md) — install, quick start, API, CLI
 - [SDK_DESIGN.md](design/SDK_DESIGN.md) — design rationale
 - [ENVELOPE_SPEC.md](design/ENVELOPE_SPEC.md) — the Signal wire format
 - [ENGRAM_DESIGN.md](design/ENGRAM_DESIGN.md) — shared memory design
