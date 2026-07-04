@@ -46,6 +46,7 @@ from cosmonapse.engram.base import EngramBinding, EngramNotBound
 from cosmonapse.envelope import (
     Directed,
     Signal,
+    SignalType,
     agent_output_signal,
     clarification_signal,
     error_signal,
@@ -104,8 +105,7 @@ class _HostProxy:
         self._axon = axon
 
     @staticmethod
-    def _signal_type_for(name: str):
-        from cosmonapse.envelope import SignalType
+    def _signal_type_for(name: str) -> SignalType | None:
         key = name[3:].removesuffix("_signal").upper()
         try:
             return SignalType[key]
