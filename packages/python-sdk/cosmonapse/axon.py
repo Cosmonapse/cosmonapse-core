@@ -11,9 +11,17 @@ The Axon does not touch the Synapse. It owns:
                          raised exception -> ERROR,
                          clarification marker -> CLARIFICATION
 
+Host-side behaviour (the standard wiring pattern):
+  @axon.host.on_<signal>    deferred Dendrite decorator - queued at module
+                            level, registered on the HOSTING Dendrite once
+                            it announces this Axon (subscription ensured).
+                            e.g. @axon.host.on_agent_output(neuron="planner"),
+                                 @axon.host.on_tool_call(neuron="websearch")
+
 Lifecycle hooks (from cosmonapse._hooks.LifecycleHooks):
   @axon.on_connect          fires after the hosting Dendrite has emitted
-                            REGISTER for this Axon
+                            REGISTER for this Axon (and after @host.on_*
+                            registrations have been applied)
   @axon.on_refresh          fires on each heartbeat tick from the
                             hosting Dendrite (reason="heartbeat")
   @axon.on_schedule(every_s=N)  developer-supplied periodic task
@@ -66,6 +74,66 @@ async def _noop_context_fetcher(ref: str) -> list[Any]:
     return []
 
 
+class _HostProxy:
+    """Deferred Dendrite signal decorators, declared on the Axon.
+
+    ``@axon.host.on_<signal>(**filters)`` queues a handler registration at
+    module level; the Axon replays it onto the **hosting Dendrite** right
+    after that Dendrite emits REGISTER for this Axon (i.e. just before the
+    ``@axon.on_connect`` hooks fire), and ensures the matching inbound
+    subscription. This is THE standard way to declare host-side behaviour
+    (chain handlers, tool servers) in a Neuron's module - no hand-written
+    ``on_connect`` wiring::
+
+        @AXON.host.on_agent_output(neuron="planner")
+        async def chain(sig): ...
+
+        @AXON.host.on_tool_call(neuron="websearch")
+        async def call(sig): ...
+
+    Any ``Dendrite.on_*`` signal decorator with the standard
+    ``(fn, *, neuron=, capability=, trace_id=)`` shape is accepted; the
+    name is validated eagerly so a typo fails at import time, not at
+    connect time.
+    """
+
+    #: Dendrite ``on_*`` methods with a non-standard registration shape.
+    _UNSUPPORTED: frozenset[str] = frozenset({"on_discover", "on_trace"})
+
+    def __init__(self, axon: "Axon") -> None:
+        self._axon = axon
+
+    @staticmethod
+    def _signal_type_for(name: str):
+        from cosmonapse.envelope import SignalType
+        key = name[3:].removesuffix("_signal").upper()
+        try:
+            return SignalType[key]
+        except KeyError:
+            return None
+
+    def __getattr__(self, name: str) -> Any:
+        if not name.startswith("on_") or name in self._UNSUPPORTED:
+            raise AttributeError(
+                f"axon.host has no decorator {name!r} - use the "
+                f"Dendrite's on_<signal> family (e.g. on_agent_output, "
+                f"on_tool_call)"
+            )
+        st = self._signal_type_for(name)
+        from cosmonapse.dendrite import Dendrite
+        if st is None or not hasattr(Dendrite, name):
+            raise AttributeError(
+                f"axon.host.{name}: not a Dendrite signal decorator"
+            )
+
+        def register(fn: Any = None, **filters: Any) -> Any:
+            def deco(f: Any) -> Any:
+                self._axon._host_regs.append((name, st, dict(filters), f))
+                return f
+            return deco(fn) if callable(fn) else deco
+        return register
+
+
 class Axon(LifecycleHooks):
     """Agent-side tool that turns raw Neuron output into protocol-valid Signals."""
 
@@ -93,6 +161,11 @@ class Axon(LifecycleHooks):
         self._context_fetcher = context_fetcher or _noop_context_fetcher
         self._output_parser = output_parser
         self._dendrite: "Dendrite | None" = None
+
+        # Deferred host-side registrations (@axon.host.on_<signal>), replayed
+        # onto the hosting Dendrite when it announces this Axon.
+        self._host_regs: list[tuple[str, Any, dict[str, Any], Any]] = []
+        self._host_regs_applied = False
 
         # Decorator-registered recognisers, one bucket per capability. Each
         # entry is a detector (sync or async) that inspects the Neuron's raw
@@ -361,6 +434,11 @@ class Axon(LifecycleHooks):
     def dendrite(self) -> "Dendrite | None":
         return self._dendrite
 
+    @property
+    def host(self) -> _HostProxy:
+        """Deferred Dendrite decorators - see :class:`_HostProxy`."""
+        return _HostProxy(self)
+
     def attach_to(self, dendrite: "Dendrite") -> None:
         if self._dendrite is not None and self._dendrite is not dendrite:
             raise RuntimeError(
@@ -375,7 +453,15 @@ class Axon(LifecycleHooks):
 
     async def _on_register_emitted(self) -> None:
         """Called by the Dendrite right after it emits REGISTER for us.
-        Fires on_connect hooks once, starts on_schedule loops."""
+        Replays ``@host.on_*`` registrations onto the hosting Dendrite,
+        fires on_connect hooks once, starts on_schedule loops."""
+        if self._host_regs and not self._host_regs_applied:
+            self._host_regs_applied = True
+            assert self._dendrite is not None
+            for name, st, filters, fn in self._host_regs:
+                getattr(self._dendrite, name)(fn, **filters)
+            await self._dendrite.ensure_subscribed(
+                *{st for _, st, _, _ in self._host_regs})
         self._launch_schedule()
         await self._fire_connect()
 

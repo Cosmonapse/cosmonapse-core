@@ -12,6 +12,12 @@
  *       clarification marker -> CLARIFICATION
  *       thrown error         -> ERROR
  *
+ * Host-side behaviour (the standard wiring pattern): `axon.host.on*(fn,
+ * filter?)` queues a Dendrite signal-handler registration at module scope;
+ * the hosting Dendrite replays it right after emitting REGISTER for this
+ * Axon (before the onConnect hooks fire) and ensures the inbound
+ * subscription. This replaces hand-written onConnect wiring.
+ *
  * Like the Python Axon, this one carries LifecycleHooks (onConnect /
  * onRefresh / onSchedule). The hosting Dendrite drives them: it fires the
  * connect hooks and launches the schedule loops once the Axon is attached and
@@ -44,11 +50,11 @@ import {
   type RefreshHook,
   type ScheduleHook,
 } from "./hooks.js";
-import type { Json, Signal } from "./envelope.js";
+import { SignalType, type Json, type Signal } from "./envelope.js";
 // Type-only import: erased at runtime under verbatimModuleSyntax, so this does
 // NOT introduce a runtime import cycle with dendrite.ts. It restores type
 // safety on the back-reference from an Axon to its hosting Dendrite.
-import type { Dendrite } from "./dendrite.js";
+import type { Dendrite, HandlerFilter, SignalHandler } from "./dendrite.js";
 
 /**
  * Package-internal keys for the attach/detach handshake. These are deliberately
@@ -60,6 +66,8 @@ import type { Dendrite } from "./dendrite.js";
  */
 export const ATTACH: unique symbol = Symbol("cosmonapse.axon.attach");
 export const DETACH: unique symbol = Symbol("cosmonapse.axon.detach");
+/** @internal Applies queued `axon.host` registrations to the hosting Dendrite. */
+export const APPLY_HOST: unique symbol = Symbol("cosmonapse.axon.applyHost");
 
 /**
  * Recognises a Neuron's *native* output (an LLM's `{ response }`, an MCP
@@ -118,6 +126,87 @@ export interface AxonExtra {
 
 const noopContextFetcher: ContextFetcher = () => [];
 
+/** One queued `axon.host` registration, replayed onto the hosting Dendrite. */
+interface HostRegistration {
+  type: SignalType;
+  fn: SignalHandler;
+  filter?: HandlerFilter;
+}
+
+/**
+ * Deferred Dendrite signal decorators, declared on the Axon.
+ *
+ * `axon.host.onToolCall(fn, { neuron: "websearch" })` queues a handler at
+ * module scope; the Axon replays it onto the **hosting Dendrite** right
+ * after that Dendrite emits REGISTER for it (before `axon.onConnect` hooks
+ * fire) and ensures the inbound subscription. THE standard way to declare
+ * host-side behaviour (chain handlers, tool servers) in a Neuron's module -
+ * no hand-written onConnect wiring:
+ *
+ * ```ts
+ * AXON.host.onAgentOutput(async (sig) => { ... }, { neuron: "planner" });
+ * AXON.host.onToolCall(async (sig) => { ... }, { neuron: "websearch" });
+ * ```
+ *
+ * `onSignal` is the generic escape hatch for any SignalType; the named
+ * helpers mirror the Dendrite's cognition / reply surface.
+ */
+export class AxonHost {
+  constructor(private readonly regs: HostRegistration[]) {}
+
+  /** Generic form - queue a handler for any SignalType. */
+  onSignal(type: SignalType, fn: SignalHandler, filter?: HandlerFilter): SignalHandler {
+    this.regs.push(filter === undefined ? { type, fn } : { type, fn, filter });
+    return fn;
+  }
+
+  // -- reply / lifecycle --
+  onAgentOutput(fn: SignalHandler, filter?: HandlerFilter): SignalHandler {
+    return this.onSignal(SignalType.AGENT_OUTPUT, fn, filter);
+  }
+  onFinal(fn: SignalHandler, filter?: HandlerFilter): SignalHandler {
+    return this.onSignal(SignalType.FINAL, fn, filter);
+  }
+  onErrorSignal(fn: SignalHandler, filter?: HandlerFilter): SignalHandler {
+    return this.onSignal(SignalType.ERROR, fn, filter);
+  }
+  onClarification(fn: SignalHandler, filter?: HandlerFilter): SignalHandler {
+    return this.onSignal(SignalType.CLARIFICATION, fn, filter);
+  }
+  onPermission(fn: SignalHandler, filter?: HandlerFilter): SignalHandler {
+    return this.onSignal(SignalType.PERMISSION, fn, filter);
+  }
+
+  // -- cognition --
+  onPlan(fn: SignalHandler, filter?: HandlerFilter): SignalHandler {
+    return this.onSignal(SignalType.PLAN, fn, filter);
+  }
+  onThoughtDelta(fn: SignalHandler, filter?: HandlerFilter): SignalHandler {
+    return this.onSignal(SignalType.THOUGHT_DELTA, fn, filter);
+  }
+  onToolCall(fn: SignalHandler, filter?: HandlerFilter): SignalHandler {
+    return this.onSignal(SignalType.TOOL_CALL, fn, filter);
+  }
+  onToolResult(fn: SignalHandler, filter?: HandlerFilter): SignalHandler {
+    return this.onSignal(SignalType.TOOL_RESULT, fn, filter);
+  }
+  onMemoryAppend(fn: SignalHandler, filter?: HandlerFilter): SignalHandler {
+    return this.onSignal(SignalType.MEMORY_APPEND, fn, filter);
+  }
+  onCritique(fn: SignalHandler, filter?: HandlerFilter): SignalHandler {
+    return this.onSignal(SignalType.CRITIQUE, fn, filter);
+  }
+  onEscalation(fn: SignalHandler, filter?: HandlerFilter): SignalHandler {
+    return this.onSignal(SignalType.ESCALATION, fn, filter);
+  }
+  onConsensus(fn: SignalHandler, filter?: HandlerFilter): SignalHandler {
+    return this.onSignal(SignalType.CONSENSUS, fn, filter);
+  }
+  onContextSync(fn: SignalHandler, filter?: HandlerFilter): SignalHandler {
+    return this.onSignal(SignalType.CONTEXT_SYNC, fn, filter);
+  }
+}
+
 export class Axon {
   readonly neuronId: string;
   readonly capabilities: string[];
@@ -148,6 +237,12 @@ export class Axon {
 
   /** @internal  -  lifecycle hooks, driven by the hosting Dendrite. */
   readonly hooks: LifecycleHooks<Axon> = new LifecycleHooks<Axon>(this);
+
+  /** Deferred host-side registrations, replayed at REGISTER time. */
+  private readonly hostRegs: HostRegistration[] = [];
+  private hostRegsApplied = false;
+  /** Deferred Dendrite decorators - see {@link AxonHost}. */
+  readonly host: AxonHost = new AxonHost(this.hostRegs);
 
   constructor(opts: AxonOptions) {
     this.neuronId = opts.neuronId;
@@ -420,6 +515,23 @@ export class Axon {
   /** Package-internal: invoked via the {@link DETACH} symbol. */
   [DETACH](): void {
     this.dendrite = null;
+  }
+
+  /**
+   * Package-internal: invoked by the hosting Dendrite (via {@link APPLY_HOST})
+   * right after it emits REGISTER for this Axon and before the onConnect
+   * hooks fire. Replays every `axon.host` registration onto the Dendrite and
+   * ensures the inbound subscriptions. Applied exactly once per Axon.
+   */
+  async [APPLY_HOST](dendrite: Dendrite): Promise<void> {
+    if (this.hostRegsApplied || this.hostRegs.length === 0) return;
+    this.hostRegsApplied = true;
+    const types = new Set<SignalType>();
+    for (const { type, fn, filter } of this.hostRegs) {
+      dendrite.onSignal(type, fn, filter);
+      types.add(type);
+    }
+    await dendrite.ensureSubscribed(...types);
   }
 
   /** Run the Neuron and return AGENT_OUTPUT / CLARIFICATION / ERROR.

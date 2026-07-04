@@ -142,6 +142,7 @@ export {
 
 export {
   Axon,
+  AxonHost,
   parseLlmIntents,
   parseMcpIntents,
   COSMO_INTENT_SYSTEM_PROMPT,

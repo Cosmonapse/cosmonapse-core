@@ -30,7 +30,7 @@
  * `await using dendrite = new Dendrite({...})`.
  */
 
-import { Axon, ATTACH, DETACH } from "./axon.js";
+import { Axon, APPLY_HOST, ATTACH, DETACH } from "./axon.js";
 import {
   LifecycleHooks,
   type ConnectHook,
@@ -309,6 +309,7 @@ export class Dendrite {
     if (this.autoBid) await this.ensureInboundSub(SignalType.TASK_OFFER);
     await this.mirrorToStore(axon, "registered");
     await this.emitRegister(axon);
+    await axon[APPLY_HOST](this);
     await axon.hooks._fireConnect();
     axon.hooks._launchSchedule();
   }
@@ -772,6 +773,7 @@ export class Dendrite {
     await this.hooks._fireConnect();
     this.hooks._launchSchedule();
     for (const axon of this._axons.values()) {
+      await axon[APPLY_HOST](this);
       await axon.hooks._fireConnect();
       axon.hooks._launchSchedule();
     }

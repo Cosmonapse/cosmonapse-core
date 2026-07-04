@@ -7,6 +7,20 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- **`Axon.host` - deferred Dendrite decorators (python-sdk + ts-sdk).** The
+  standard way to declare host-side behaviour in a Neuron's module. Python:
+  `@AXON.host.on_agent_output(neuron=...)` / `@AXON.host.on_tool_call(...)`
+  queue a handler at module level; the Axon applies it to the **hosting
+  Dendrite** right after that Dendrite emits REGISTER for it (before
+  `@axon.on_connect` hooks fire) and ensures the inbound subscription.
+  Replaces the hand-written `on_connect -> node = a.dendrite -> @node.on_* ->
+  ensure_subscribed` wiring; any `Dendrite.on_*` decorator with the standard
+  `(fn, *, neuron=, capability=, trace_id=)` shape is supported, names are
+  validated eagerly at import time. TypeScript: `axon.host.onToolCall(fn,
+  { neuron })` and the full cognition/reply `on*` family (plus the generic
+  `axon.host.onSignal(type, fn, filter)`), replayed by the hosting Dendrite
+  in `start()` and `addAxon()`; `AxonHost` is exported from the package
+  root. Example 14 is refactored onto it.
 - **`cosmo` for npm users - one CLI build, two registries.** The npm package
   now installs a `cosmo` command (`npm install -g @cosmonapse/sdk`). It is a
   self-bootstrapping launcher (`bin/cosmo.js`, zero dependencies): it
