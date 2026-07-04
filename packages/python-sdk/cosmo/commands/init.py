@@ -1,17 +1,28 @@
 """
 cosmo init
 ~~~~~~~~~~
-Scaffold a minimal, runnable Cosmonapse project: one worker Dendrite hosting
-an Axon, and one orchestrator that dispatches a task and prints the result.
+Scaffold a runnable Cosmonapse project in the **standard package skeleton**
+(the layout every cosmonapse-example follows):
+
+    my-app/
+      config.py        shared settings (env, namespace, knobs)
+      neurons/         Axon modules - each exposes AXON (or make_axon)
+        hello.py
+      brain.py         the wiring: who hosts what + dispatch helpers
+      demo.py          entry - hosts the worker, dispatches one TASK
+      README.md
 
     cosmo init                  # scaffold ./cosmonapse-app
     cosmo init my-app           # scaffold ./my-app
     cosmo init my-app -n demo   # choose the namespace
     cosmo init . --force        # scaffold into the current directory
 
-The generated project is intentionally tiny  -  two Python files plus a README
- -  so a new developer can go from `pip install cosmonapse` to a working
-Axon + Dendrite round-trip in under a minute.
+The generated project is intentionally tiny: `python demo.py` gives a
+working Axon + Dendrite round-trip in ONE process (in-process MemorySynapse)
+straight after `pip install cosmonapse`; SYNAPSE_URL swaps the transport.
+It grows without restructuring: new Axon modules go under neurons/, wiring
+changes stay in brain.py, entries stay thin - the README shows the 10-line
+worker.py to add when workers should become their own processes.
 """
 
 from __future__ import annotations
@@ -25,106 +36,112 @@ import click
 # with str.replace so the Python f-strings / dict literals inside survive.
 # ---------------------------------------------------------------------------
 
-_WORKER_PY = '''"""
-worker.py  -  a Cosmonapse worker.
+_CONFIG_PY = '''"""Shared settings for the __PROJECT__ package."""
+import os
 
-Hosts one Axon (the `hello` neuron) on the synapse and waits for TASK signals.
-Run the synapse first, then this worker:
-
-    cosmo synapse start memory --namespace=__NAMESPACE__
-    python worker.py
-"""
-
-import asyncio
-import signal as _signal
-
-from cosmonapse import Axon, Dendrite, connect_synapse
-
-SYNAPSE_URL = "cosmo://127.0.0.1:7070"
+# Unset -> demo.py runs on an in-process MemorySynapse (no broker, no
+# setup). Set it (e.g. cosmo://127.0.0.1:7070) to run over a real synapse
+# instead - same topology, different transport.
+SYNAPSE_URL = os.environ.get("SYNAPSE_URL", "")
 NAMESPACE = "__NAMESPACE__"
+'''
 
 
-# A Neuron is just an async function (input: dict, context: list) -> dict.
-# It has zero knowledge of the protocol.
+_NEURONS_INIT_PY = '''"""Neuron modules - each exposes an AXON (or a make_axon factory)."""
+'''
+
+
+_NEURONS_HELLO_PY = '''"""hello - a Neuron is just an async function, zero protocol knowledge.
+
+Swap the body for a model call whenever you're ready - the unified factory
+wraps any source behind the same NeuronFn contract:
+
+    from cosmonapse import Neuron
+    fn = Neuron(source="ollama", model="llama3")
+    fn = Neuron(source="huggingface", endpoint=..., model=..., api_key=...)
+    fn = Neuron(source="mcp", server="filesystem", args=["."])
+"""
+from cosmonapse import Axon
+
+
 async def hello(input: dict, context: list) -> dict:
     name = input.get("name", "world")
     return {"message": f"Hello, {name}!"}
 
 
-# An Axon gives the neuron an identity on the bus.
-axon = Axon(
+# The Axon gives the Neuron an identity on the bus.
+AXON = Axon(
     neuron_id="hello",
     neuron_fn=hello,
     capabilities=["greet"],
     version="0.0.1",
 )
-
-
-async def main() -> None:
-    synapse = await connect_synapse(SYNAPSE_URL)
-    try:
-        dendrite = Dendrite(
-            synapse=synapse,
-            namespace=NAMESPACE,
-            dendrite_id="hello-worker",
-        )
-        dendrite.attach_axon(axon)
-
-        async with dendrite:
-            print(f"worker ready  -  neuron 'hello' on namespace {NAMESPACE!r}")
-            print("Press Ctrl+C to stop.\\n")
-
-            stop = asyncio.Event()
-            loop = asyncio.get_running_loop()
-            for sig in (getattr(_signal, "SIGINT", None), getattr(_signal, "SIGTERM", None)):
-                if sig is not None:
-                    try:
-                        loop.add_signal_handler(sig, stop.set)
-                    except (NotImplementedError, RuntimeError):
-                        pass
-            try:
-                await stop.wait()
-            except (KeyboardInterrupt, asyncio.CancelledError):
-                pass
-    finally:
-        await synapse.close()
-        print("worker stopped.")
-
-
-if __name__ == "__main__":
-    asyncio.run(main())
 '''
 
 
-_ORCHESTRATOR_PY = '''"""
-orchestrator.py  -  dispatch one task and print the result.
+_BRAIN_PY = '''"""__PROJECT__ brain - the wiring: who hosts what.
 
-Run the synapse and worker first, then this orchestrator:
+Modules under neurons/ declare *behaviour* (Axons + hooks); this file owns
+*deployment* (which Dendrite hosts which Axon, roles, ids). Entries stay
+thin.
 
-    cosmo synapse start memory --namespace=__NAMESPACE__   # terminal 1
-    python worker.py                                       # terminal 2
-    python orchestrator.py                                 # terminal 3
+Host-side behaviour can be declared right in a neuron's module with the
+deferred host decorators - no wiring here needed:
+
+    @AXON.host.on_agent_output(neuron="hello")
+    async def chain(sig): ...
 """
+from cosmonapse import Dendrite
 
+from config import NAMESPACE
+from neurons import hello
+
+
+def build_worker(synapse) -> Dendrite:
+    """role="worker": hosts Axons, replies to TASKs, cannot dispatch."""
+    worker = Dendrite(
+        synapse=synapse, namespace=NAMESPACE,
+        dendrite_id="hello-worker", role="worker",
+    )
+    worker.attach_axon(hello.AXON)
+    return worker
+
+
+def build_orchestrator(synapse) -> Dendrite:
+    """The dispatching side - dispatch_and_wait / Pathways live here."""
+    return Dendrite(
+        synapse=synapse, namespace=NAMESPACE,
+        dendrite_id="orchestrator", heartbeat_s=0,
+    )
+'''
+
+
+_DEMO_PY = '''"""demo.py - dispatch one task and print the result.
+
+One process, both sides: this entry hosts the worker Dendrite AND the
+orchestrator. SYNAPSE_URL only swaps the transport:
+
+    python demo.py                                   # in-process MemorySynapse
+    SYNAPSE_URL=cosmo://127.0.0.1:7070 python demo.py   # a running synapse
+"""
 import asyncio
 
-from cosmonapse import Dendrite, SignalType, connect_synapse
+from cosmonapse import MemorySynapse, SignalType, connect_synapse
 
-SYNAPSE_URL = "cosmo://127.0.0.1:7070"
-NAMESPACE = "__NAMESPACE__"
+from brain import build_orchestrator, build_worker
+from config import SYNAPSE_URL
 
 
 async def main() -> None:
-    synapse = await connect_synapse(SYNAPSE_URL)
+    if SYNAPSE_URL:
+        synapse = await connect_synapse(SYNAPSE_URL)
+    else:
+        synapse = MemorySynapse()        # in-process bus - no broker, no setup
+        await synapse.connect()
     try:
-        orch = Dendrite(
-            synapse=synapse,
-            namespace=NAMESPACE,
-            dendrite_id="orchestrator",
-            heartbeat_s=0,
-        )
-
-        async with orch:
+        worker = build_worker(synapse)
+        orch = build_orchestrator(synapse)
+        async with worker, orch:
             input_data = {"name": "Cosmonapse"}
             print(f"dispatching TASK  neuron=hello  input={input_data}")
 
@@ -157,8 +174,22 @@ if __name__ == "__main__":
 
 _README_MD = '''# __PROJECT__
 
-A minimal Cosmonapse project: one worker hosting an Axon, one orchestrator
-that dispatches a task and prints the result.
+A Cosmonapse project in the standard package skeleton: one worker hosting an
+Axon, one orchestrator that dispatches a task and prints the result.
+
+## Layout
+
+```
+__PROJECT__/
+  config.py        shared settings (env, namespace, knobs)
+  neurons/         Axon modules - each exposes AXON (or make_axon)
+    hello.py
+  brain.py         the wiring: who hosts what + dispatch helpers
+  demo.py          entry - hosts the worker, dispatches one TASK
+```
+
+Every cosmonapse-example follows this same layout, so anything you learn
+there drops straight in here.
 
 ## Setup
 
@@ -168,20 +199,21 @@ pip install cosmonapse
 
 ## Run
 
-Open three terminals (or run the synapse in the background).
+One process, no setup - demo.py boots an in-process MemorySynapse and hosts
+both sides:
 
 ```bash
-# 1. Start the dev synapse (the message bus)
-cosmo synapse start memory --namespace=__NAMESPACE__
-
-# 2. Start the worker
-python worker.py
-
-# 3. Dispatch a task
-python orchestrator.py
+python demo.py
 ```
 
-Expected output from the orchestrator:
+To run over a real synapse instead (same topology, different transport):
+
+```bash
+cosmo synapse start memory --namespace=__NAMESPACE__
+SYNAPSE_URL=cosmo://127.0.0.1:7070 python demo.py
+```
+
+Expected output from the demo:
 
 ```
 result: {'message': 'Hello, Cosmonapse!'}
@@ -189,24 +221,49 @@ result: {'message': 'Hello, Cosmonapse!'}
 
 ## Observe the bus
 
-While the worker is running, watch every Signal cross the synapse:
+When split across processes, watch every Signal cross the synapse:
 
 ```bash
 cosmo doppler --url=cosmo://127.0.0.1:7070 --namespace=__NAMESPACE__
 ```
 
-## What's here
+## Grow it
 
-- `worker.py`  -  a `Neuron` (plain async fn) wrapped in an `Axon`, hosted by a
-  `Dendrite` that handles REGISTER / heartbeat / TASK routing.
-- `orchestrator.py`  -  a `Dendrite` that dispatches a TASK and awaits the
-  AGENT_OUTPUT.
+- New tool or model? Add a module under `neurons/` exposing `AXON`, attach
+  it in `brain.py` (one Dendrite can host several Axons).
+- Workers as their own processes? That's a thin entry over `build_worker` -
+  drop this in as `worker.py`, run it against a real synapse, and delete the
+  `build_worker` line from demo.py:
+
+  ```python
+  import asyncio
+  from cosmonapse import connect_synapse
+  from brain import build_worker
+  from config import SYNAPSE_URL
+
+  async def main() -> None:
+      synapse = await connect_synapse(SYNAPSE_URL)
+      async with build_worker(synapse):
+          await asyncio.Event().wait()      # serve until Ctrl-C
+
+  asyncio.run(main())
+  ```
+- Host-side behaviour (chain handlers, tool servers) is declared in the
+  neuron's own module with the deferred host decorators:
+  `@AXON.host.on_agent_output(...)` / `@AXON.host.on_tool_call(...)`.
+- Serving HTTP? Add `app.py` (FastAPI lifespan + `build_*` from brain.py) -
+  see cosmonapse-examples/05 and /14 for the pattern.
+- Shared memory? Add `engram/` with the backend and an
+  `EngramBinding` on the Axon - see cosmonapse-examples/06.
 '''
 
 
 _FILES = {
-    "worker.py": _WORKER_PY,
-    "orchestrator.py": _ORCHESTRATOR_PY,
+    "config.py": _CONFIG_PY,
+    "neurons/__init__.py": _NEURONS_INIT_PY,
+    "neurons/hello.py": _NEURONS_HELLO_PY,
+    "brain.py": _BRAIN_PY,
+    "demo.py": _DEMO_PY,
     "README.md": _README_MD,
 }
 
@@ -224,8 +281,10 @@ def _render(template: str, *, namespace: str, project: str) -> str:
                    "contains files (existing files with the same names are "
                    "overwritten).")
 def init(name: str, namespace: str, force: bool) -> None:
-    """Scaffold a minimal Axon + Dendrite project in ./NAME.
+    """Scaffold a standard-skeleton Cosmonapse project in ./NAME.
 
+    \b
+    Creates: config.py, neurons/, brain.py, demo.py, README.md
     \b
     Examples:
       cosmo init
@@ -249,6 +308,7 @@ def init(name: str, namespace: str, force: bool) -> None:
     written: list[str] = []
     for filename, template in _FILES.items():
         dest = target / filename
+        dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_text(_render(template, namespace=namespace, project=project),
                         encoding="utf-8")
         written.append(filename)
@@ -260,9 +320,11 @@ def init(name: str, namespace: str, force: bool) -> None:
     click.echo("Next steps:")
     if target != Path.cwd():
         click.echo(f"  cd {name}")
+    click.echo("  python demo.py     # one process, in-process bus - no setup")
+    click.echo()
+    click.echo("Same code over a real synapse:")
     click.echo(f"  cosmo synapse start memory --namespace={namespace}")
-    click.echo("  python worker.py        # in a second terminal")
-    click.echo("  python orchestrator.py  # in a third terminal")
+    click.echo("  SYNAPSE_URL=cosmo://127.0.0.1:7070 python demo.py")
 
 
 def _FILES_present(target: Path) -> list[Path]:

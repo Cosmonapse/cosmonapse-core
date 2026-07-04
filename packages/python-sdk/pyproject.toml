@@ -7,7 +7,7 @@ name = "cosmonapse"
 # Version is derived from the git tag at build time (see [tool.hatch.version]).
 # Tag a release as `vX.Y.Z` -> the wheel/sdist version is X.Y.Z. No manual edit.
 dynamic = ["version"]
-description = "Event-driven Agent-to-Agent protocol SDK and developer CLI"
+description = "Cosmonapse is the open protocol for building distributed multi-agent/model harnesses"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "Apache-2.0" }

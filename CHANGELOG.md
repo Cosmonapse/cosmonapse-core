@@ -34,6 +34,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   delegation target. Requires a Python 3.11+ interpreter on PATH; without
   one the launcher exits 127 with clear instructions.
 
+### Changed
+- **`cosmo init` scaffolds the standard package skeleton.** New projects get
+  `config.py` + `neurons/hello.py` + `brain.py` (wiring) + `demo.py` +
+  README - the same layout every cosmonapse-example now follows (entries
+  stay thin; behaviour lives in neurons/, deployment in brain.py).
+  `python demo.py` is self-contained: it hosts BOTH sides, and SYNAPSE_URL
+  only swaps the transport (in-process MemorySynapse vs a running synapse).
+  No worker.py is generated - the README carries the 10-line entry to add
+  when workers should become their own processes. Replaces the old
+  two-file `worker.py` + `orchestrator.py` scaffold.
+
 ## [0.1.6] - 2026-06-22
 
 ### Fixed
