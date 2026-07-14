@@ -10,7 +10,7 @@ interface Props {
   onSelect: (sig: Signal | null) => void;
 }
 
-// Traces made up purely of these types are housekeeping, not tasks - they get
+// Traces made up purely of these types are housekeeping, not tasks — they get
 // folded into one "lifecycle" bucket so grouped view stays readable.
 const LIFECYCLE = new Set<SignalType>(["REGISTER", "DEREGISTER", "HEARTBEAT", "DISCOVER"]);
 
@@ -25,8 +25,8 @@ const REQUEST_TYPES = new Set<SignalType>([
 ]);
 
 // Engram / memory traffic. A trace made ONLY of these (no TASK) is an orphan
-// side-effect - e.g. an imprint dispatched from a detector hook gets a fresh
-// trace_id - and is stitched into the task that was in flight at that moment.
+// side-effect — e.g. an imprint dispatched from a detector hook gets a fresh
+// trace_id — and is stitched into the task that was in flight at that moment.
 const ENGRAM_TYPES = new Set<SignalType>([
   "RECALL",
   "RECALLED",
@@ -86,7 +86,7 @@ const ts = (s: Signal) => new Date(s.ts).getTime() || 0;
  * A pathway is the SDK's request/reply unit: signals with no request lineage
  * sit on the main task pathway; a request signal (RECALL, IMPRINT,
  * CLARIFICATION, …) opens a sub-pathway that collects its replies
- * (parent_id = request id). Within a task, signals read chronologically -
+ * (parent_id = request id). Within a task, signals read chronologically —
  * the same shape as the execution trace.
  *
  * Orphan engram traces (imprints fired outside the task context get a fresh
@@ -142,7 +142,7 @@ function groupSignals(signals: Signal[]): Grouped {
       taskTraces.set(owner, merged);
       for (const s of o.sigs) stitched.add(s.id);
     } else {
-      taskTraces.set(o.trace, o.sigs); // no candidate - keep as its own group
+      taskTraces.set(o.trace, o.sigs); // no candidate — keep as its own group
     }
   }
 
@@ -384,7 +384,7 @@ function GroupHeader({ level, collapsed, color, tag, title, hint, count, approx,
   return (
     <div
       onClick={onClick}
-      title={approx ? "Linked by time - this engram op was dispatched on a separate trace" : undefined}
+      title={approx ? "Linked by time — this engram op was dispatched on a separate trace" : undefined}
       style={{
         display: "flex",
         alignItems: "center",

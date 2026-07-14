@@ -77,7 +77,7 @@ export function Header({
       </div>
       <span style={{ color: C.textFaint, flexShrink: 0 }}>│</span>
 
-      {/* Synapse tabs - one pill per monitored synapse */}
+      {/* Synapse tabs — one pill per monitored synapse */}
       <div
         style={{
           display: "flex",

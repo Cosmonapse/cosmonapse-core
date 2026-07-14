@@ -6,7 +6,7 @@ import type { SynapseTarget } from "../useSignalStream";
 interface Props {
   initial?: Partial<SynapseTarget>;
   onConnect: (target: SynapseTarget) => void;
-  /** Shown when adding an extra tab - lets the user return to open sessions. */
+  /** Shown when adding an extra tab — lets the user return to open sessions. */
   onCancel?: () => void;
 }
 

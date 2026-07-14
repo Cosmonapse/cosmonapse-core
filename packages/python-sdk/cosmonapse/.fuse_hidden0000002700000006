@@ -6,8 +6,8 @@ behind the protocol's ``NeuronFn`` signature without writing boilerplate.
 
 A Neuron is not just an LLM agent. It is any unit of real-world behaviour:
 
-* an **LLM / Agent**     - Ollama, HuggingFace TGI / vLLM / OpenAI-compatible,
-* an **MCP server**      - any stdio MCP server, wrapped as a tool surface.
+* an **LLM / Agent**     – Ollama, HuggingFace TGI / vLLM / OpenAI-compatible,
+* an **MCP server**      – any stdio MCP server, wrapped as a tool surface.
 
 ``Neuron(source=...)`` returns a callable that satisfies ``NeuronFn``
 (``async (input: dict[str, Any], context: list) -> dict``), so it slots directly into
@@ -183,7 +183,7 @@ class _HuggingFaceNeuron(_BaseNeuron):
     max_new_tokens:
         Maximum tokens to generate.  Defaults to 512.
     api_key:
-        Bearer token - use your HF Hub token for hosted endpoints.
+        Bearer token – use your HF Hub token for hosted endpoints.
     timeout:
         HTTP timeout in seconds.  Defaults to 120.
     """

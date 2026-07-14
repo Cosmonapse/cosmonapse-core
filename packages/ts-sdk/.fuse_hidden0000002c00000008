@@ -1,7 +1,7 @@
 # @cosmonapse/sdk
 
 Event-driven Agent-to-Agent protocol SDK for TypeScript, plus the `cosmo`
-developer CLI - the TypeScript surface of the Cosmonapse envelope spec, at
+developer CLI — the TypeScript surface of the Cosmonapse envelope spec, at
 parity with the Python reference implementation.
 
 ## Install
@@ -51,7 +51,7 @@ cosmo synapse start memory --namespace=demo
 ## The `cosmo` CLI
 
 The CLI has **one implementation**, shipped in the Python package
-([`cosmonapse` on PyPI](https://pypi.org/project/cosmonapse/)) - a deliberate
+([`cosmonapse` on PyPI](https://pypi.org/project/cosmonapse/)) — a deliberate
 single-build design so pip and npm users can never drift apart. This package's
 `cosmo` bin installs and runs it for you:
 
@@ -80,8 +80,8 @@ npm run build       # tsup -> dist/index.{js,cjs,d.ts}
 
 ## Documentation
 
-- [Envelope spec](https://github.com/Cosmonapse/cosmonapse-core/blob/main/design/ENVELOPE_SPEC.md) - the Signal wire format
-- [SDK design](https://github.com/Cosmonapse/cosmonapse-core/blob/main/design/SDK_DESIGN.md) - design rationale
-- [Python SDK](https://pypi.org/project/cosmonapse/) - the reference implementation
+- [Envelope spec](https://github.com/Cosmonapse/cosmonapse-core/blob/main/design/ENVELOPE_SPEC.md) — the Signal wire format
+- [SDK design](https://github.com/Cosmonapse/cosmonapse-core/blob/main/design/SDK_DESIGN.md) — design rationale
+- [Python SDK](https://pypi.org/project/cosmonapse/) — the reference implementation
 
 Apache-2.0

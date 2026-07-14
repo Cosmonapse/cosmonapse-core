@@ -41,7 +41,7 @@ export const PrismCanvas = forwardRef<PrismCanvasHandle, Props>(function PrismCa
   const [particles, setParticles] = useState<Particle[]>([]);
   const pulseTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
   const tendrilTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
-  // trace_id → { neuronId, sigId, expireAt } - buffers axon signals waiting for a target reply
+  // trace_id → { neuronId, sigId, expireAt } — buffers axon signals waiting for a target reply
   const axonBuffer = useRef(new Map<string, { neuronId: string; expireAt: number }>());
 
   useEffect(() => {
@@ -103,7 +103,7 @@ export const PrismCanvas = forwardRef<PrismCanvasHandle, Props>(function PrismCa
           flash(`${SYNAPSE_NODE}::${nid}`);
           setParticles((p) => [...p, { id: pid, from: buffered.neuronId, via: SYNAPSE_NODE, to: nid, color }]);
         } else {
-          // No known source - just animate synapse → neuron
+          // No known source — just animate synapse → neuron
           pulse(SYNAPSE_NODE);
           pulse(nid);
           flash(`${SYNAPSE_NODE}::${nid}`);
@@ -111,7 +111,7 @@ export const PrismCanvas = forwardRef<PrismCanvasHandle, Props>(function PrismCa
         }
 
       } else {
-        // Undirected signal - pulse synapse only
+        // Undirected signal — pulse synapse only
         pulse(SYNAPSE_NODE);
       }
     },
@@ -180,7 +180,7 @@ export const PrismCanvas = forwardRef<PrismCanvasHandle, Props>(function PrismCa
         );
       })}
 
-      {/* Signal particles - drawn above nodes so the ball of light is
+      {/* Signal particles — drawn above nodes so the ball of light is
           visible leaving the source and arriving at the destination */}
       {particles.map((p) => (
         <ParticleDot key={p.id} id={p.id} from={layout[p.from]} via={p.via ? layout[p.via] : undefined} to={layout[p.to]} color={p.color} onDone={dropParticle} />
@@ -307,7 +307,7 @@ function NeuronNode({ x, y, color, pulse, kind = "neuron", label, sublabel, onHo
     );
   }
 
-  // Circle - standard Neuron node
+  // Circle — standard Neuron node
   return (
     <g transform={`translate(${x},${y})`} style={{ cursor: "pointer" }} onMouseEnter={onHover} onMouseLeave={onLeave}>
       <circle r={R * 2.8} fill={color} fillOpacity={pulse ? 0.18 : 0.07} filter="url(#blur-md)" style={{ transition: "fill-opacity 0.4s" }} />
@@ -402,7 +402,7 @@ function ParticleDot({ id, from, via, to, color, onDone }: {
 
   return (
     <g style={{ pointerEvents: "none" }}>
-      {/* Comet tail - staggered followers tracing the same path */}
+      {/* Comet tail — staggered followers tracing the same path */}
       {TAIL.map((t, i) => (
         <circle key={i} r={t.r} fill={color} opacity="0">
           {motion(t.delay)}

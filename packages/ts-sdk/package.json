@@ -1,6 +1,6 @@
 {
   "name": "@cosmonapse/sdk",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "description": "Cosmonapse is the open protocol for building distributed multi-agent/model harnesses",
   "license": "Apache-2.0",
   "type": "module",

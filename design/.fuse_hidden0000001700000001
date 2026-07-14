@@ -149,7 +149,7 @@ All envelopes are serialised as **UTF-8 encoded JSON objects**. Compact (no unne
 | `cost_micro_usd`     | integer | Cost in millionths of a USD. Rolled up through delegation. |
 | `seq`                | integer | Monotonic sequence number within a `(trace_id, directed.id, type)` triple. |
 | `synapse_hops`       | integer | Number of synapse-level hops this envelope has traversed.  |
-| `capability_score`   | number  | Orchestrator's capability match score at dispatch time (0-1). |
+| `capability_score`   | number  | Orchestrator's capability match score at dispatch time (0–1). |
 
 ### 5.5 The `directed` addressing object
 
@@ -249,7 +249,7 @@ Contains the raw output from the Neuron with no workflow interpretation. The orc
 
 #### `FINAL`  `[D]`
 
-Signals successful completion of a task. Produced by an orchestrating Dendrite after it has processed one or more `AGENT_OUTPUT` envelopes according to its workflow rules - or by the worker Dendrite itself when the TASK carried `payload.finalize` (terminal-handler finalize, see `TASK`). Exactly one `FINAL` per task.
+Signals successful completion of a task. Produced by an orchestrating Dendrite after it has processed one or more `AGENT_OUTPUT` envelopes according to its workflow rules — or by the worker Dendrite itself when the TASK carried `payload.finalize` (terminal-handler finalize, see `TASK`). Exactly one `FINAL` per task.
 
 ```json
 {
@@ -331,7 +331,7 @@ Orchestrator-produced; Dendrites pass them through if any Axon is meant to react
 |---|---|---|
 | `cost`        | yes      | Estimated cost of doing the work. |
 | `eta_ms`      | no       | Estimated time to completion in milliseconds. |
-| `confidence`  | no       | Bidder confidence (0-1). |
+| `confidence`  | no       | Bidder confidence (0–1). |
 
 #### `TASK_AWARDED`
 
@@ -586,11 +586,11 @@ Produced by the **Dendrite** on behalf of each attached participant. Both **Neur
 
 Identity is carried in `directed`, not in a top-level field:
 
-- `directed.id`     - the participant id (`neuron_id` or `engram_id`).
-- `directed.type`   - the participant **kind**: a `neuron_kind` for Neurons (defaults to `"neuron"`), an `engram_kind` for Engrams (`"context"`, `"vectors"`, …).
-- `directed.capabilities` - the capability list (mirrored into `payload.capabilities` for registry stores).
+- `directed.id`     — the participant id (`neuron_id` or `engram_id`).
+- `directed.type`   — the participant **kind**: a `neuron_kind` for Neurons (defaults to `"neuron"`), an `engram_kind` for Engrams (`"context"`, `"vectors"`, …).
+- `directed.capabilities` — the capability list (mirrored into `payload.capabilities` for registry stores).
 
-Every REGISTER carries one **universal discriminator**, `payload.role`, with value `"neuron"` or `"engram"`. This is the single field a consumer checks to classify a participant - registry stores, Prism, and dopplers all branch on `payload.role` alone rather than inferring kind from id prefixes or message traffic.
+Every REGISTER carries one **universal discriminator**, `payload.role`, with value `"neuron"` or `"engram"`. This is the single field a consumer checks to classify a participant — registry stores, Prism, and dopplers all branch on `payload.role` alone rather than inferring kind from id prefixes or message traffic.
 
 ```json
 {
@@ -658,7 +658,7 @@ Identity is carried in `directed.id`. The SDK emits `status` by default; `load` 
 | Payload field | Required | Description |
 |---|---|---|
 | `status`      | yes      | Liveness status (default `"ok"`). |
-| `load`        | no       | Optional load factor (0-1). |
+| `load`        | no       | Optional load factor (0–1). |
 | `in_flight`   | no       | Optional count of tasks currently being handled. |
 
 ### 7.7 Discovery  `[D]`
@@ -694,7 +694,7 @@ with attached Axons that satisfy the filter re-emits a standard
 already consumes REGISTER handles these identically.
 
 **Thundering-herd mitigation.** Each responding Dendrite waits a small
-random jitter (0-100 ms) before emitting REGISTER, so on a namespace
+random jitter (0–100 ms) before emitting REGISTER, so on a namespace
 with many participants the responses spread rather than spike.
 
 **Relation to other discovery mechanisms.** DISCOVER complements the
@@ -797,7 +797,7 @@ An envelope is **valid** if and only if:
 10. `meta`, if present, is a JSON object.
 11. Required payload fields for the given `type` are present and correctly typed.
 
-`cosmo validate` checks rules 1-11. Envelope validity is purely structural; the protocol enforces no sequencing or lifecycle rules.
+`cosmo validate` checks rules 1–11. Envelope validity is purely structural; the protocol enforces no sequencing or lifecycle rules.
 
 ---
 

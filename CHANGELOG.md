@@ -6,6 +6,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+- npm package version aligned to `0.1.8` (`package.json` was left at
+  `0.1.7` when the 0.1.8 release was tagged).
+
+### Removed
+- The GitLab CI config (`.gitlab-ci.yml`). GitHub Actions (`ci.yml` /
+  `release.yml`) is the single CI going forward.
+
+## [0.1.8] - 2026-07-13
+
+The first public release of Cosmonapse. Earlier 0.1.x entries below were
+internal milestones on the way here.
+
 ### Added
 - **`Axon.host` - deferred Dendrite decorators (python-sdk + ts-sdk).** The
   standard way to declare host-side behaviour in a Neuron's module. Python:
@@ -20,7 +33,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   { neuron })` and the full cognition/reply `on*` family (plus the generic
   `axon.host.onSignal(type, fn, filter)`), replayed by the hosting Dendrite
   in `start()` and `addAxon()`; `AxonHost` is exported from the package
-  root. Example 14 is refactored onto it.
+  root.
 - **`cosmo` for npm users - one CLI build, two registries.** The npm package
   now installs a `cosmo` command (`npm install -g @cosmonapse/sdk`). It is a
   self-bootstrapping launcher (`bin/cosmo.js`, zero dependencies): it
@@ -37,13 +50,22 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Changed
 - **`cosmo init` scaffolds the standard package skeleton.** New projects get
   `config.py` + `neurons/hello.py` + `brain.py` (wiring) + `demo.py` +
-  README - the same layout every cosmonapse-example now follows (entries
-  stay thin; behaviour lives in neurons/, deployment in brain.py).
+  README (entries stay thin; behaviour lives in neurons/, deployment in
+  brain.py).
   `python demo.py` is self-contained: it hosts BOTH sides, and SYNAPSE_URL
   only swaps the transport (in-process MemorySynapse vs a running synapse).
   No worker.py is generated - the README carries the 10-line entry to add
   when workers should become their own processes. Replaces the old
   two-file `worker.py` + `orchestrator.py` scaffold.
+
+### Known limitations
+- **Open models drift from strict action schemas.** A harness that asks a
+  plain-chat LLM for `{"tool", "args"}` JSON will eventually get shorthand
+  variants or truncated objects back; today `@detects_output` can only
+  transform or error, so every harness must carry its own fallback parsing. The planned fix is an Axon-level reject-and-repair contract
+  (`InvalidOutput(reason, hint)` + bounded `output_retries`, plus
+  `response_format`/`tools` passthrough on OpenAI-compatible providers) -
+  scheduled for 0.2.0; see the roadmap.
 
 ## [0.1.6] - 2026-06-22
 
@@ -52,8 +74,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   dropped every offer.** The handler's capability filter resolved the offer's
   *directed neuron*, but a TASK_OFFER is a broadcast that carries its required
   capabilities in `payload.capabilities` and has no directed neuron  -  so the
-  filter always failed and no BID was ever emitted (the `10-bidding` example
-  timed out). The filter now narrows against the offer's requested capability
+  filter always failed and no BID was ever emitted (competitive bidding
+  simply timed out). The filter now narrows against the offer's requested capability
   set; an offer with no capabilities stays open to all. Fixed at parity in both
   SDKs.
 
@@ -70,8 +92,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   worker. The supported pattern is the reverse: keep your web framework (Flask,
   Express, …) on the outside as an HTTP boundary and dispatch TASK Signals from
   its route handlers via an orchestrator Dendrite, wiring
-  `@dendrite.on_agent_output` directly in the app. The `neuron_real_world`
-  example and the quickstart now show this.
+  `@dendrite.on_agent_output` directly in the app.
 - The `[flask]` optional dependency was dropped from the Python SDK; the shared
   `CloseableNeuronFn` type moved from `neuron-express.ts` to `neuron.ts` in the
   TS SDK.
