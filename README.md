@@ -152,6 +152,25 @@ pip install -e cosmonapse-core/packages/python-sdk
 
 See [`packages/python-sdk/README.md`](packages/python-sdk/README.md) for full SDK and CLI documentation.
 
+### Scaffold, then code
+
+```bash
+cosmo init my-app -n demo
+cd my-app
+python demo.py     # one process, in-process bus - no setup
+```
+
+`cosmo init` writes the standard package skeleton every example follows -
+`config.py`, `neurons/`, `effector/`, `brain.py`, `demo.py` - with a working
+Axon + Dendrite round-trip and one tool call. From there you code: new Neuron
+modules go under `neurons/`, tool families under `effector/`, wiring changes
+stay in `brain.py`. Same code over a real synapse:
+
+```bash
+cosmo synapse start memory --namespace=demo
+SYNAPSE_URL=cosmo://127.0.0.1:7070 python demo.py
+```
+
 ### Install (TypeScript)
 
 ```bash

@@ -125,3 +125,38 @@ def test_anthropic_system_message_extraction(monkeypatch):
 def test_openai_missing_model_raises_type_error():
     with pytest.raises(TypeError):
         Neuron(source="openai")  # missing required `model`
+
+
+# ---------------------------------------------------------------------------
+# HuggingFace raw /v1/completions path
+# ---------------------------------------------------------------------------
+
+
+def test_huggingface_chat_and_completions_flags_are_mutually_exclusive():
+    pytest.importorskip("httpx", reason="httpx not installed")
+    with pytest.raises(ValueError) as exc:
+        Neuron(source="huggingface", endpoint="http://localhost:8080",
+               use_chat_api=True, use_completions_api=True)
+    assert "mutually exclusive" in str(exc.value)
+
+
+def test_huggingface_completions_refuses_messages():
+    # The raw completions path takes a rendered prompt ONLY - the Neuron
+    # does not guess chat templates. The error fires before any HTTP.
+    pytest.importorskip("httpx", reason="httpx not installed")
+    n = Neuron(source="huggingface", endpoint="http://localhost:8080",
+               use_completions_api=True)
+    with pytest.raises(ValueError) as exc:
+        _run(n({"messages": [{"role": "user", "content": "hi"}]}, []))
+    assert "chat template" in str(exc.value)
+
+
+def test_huggingface_completions_accepts_prompt_construction():
+    # Construction with the completions knobs; no network at build time.
+    pytest.importorskip("httpx", reason="httpx not installed")
+    n = Neuron(source="huggingface", endpoint="http://localhost:8080/llm",
+               model="Qwen/Qwen2.5-Coder-14B-Instruct",
+               use_completions_api=True, stop=["<|im_end|>"])
+    assert n.use_completions_api is True
+    assert n.stop == ["<|im_end|>"]
+    assert n.endpoint == "http://localhost:8080/llm"

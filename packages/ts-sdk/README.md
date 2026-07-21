@@ -60,6 +60,11 @@ npm install -g @cosmonapse/sdk
 cosmo --help
 ```
 
+`cosmo init my-app -n demo` scaffolds the standard project skeleton
+(init -> scaffold -> code): `config.py`, `neurons/`, `effector/`, `brain.py`,
+`demo.py` - Python entry files, since the scaffold targets the Python SDK.
+TypeScript projects mirror the same layout by hand (see the Quick start).
+
 Resolution order on each run: `$COSMO_PYTHON`; any system Python that can
 already `import cosmo`; otherwise a one-time bootstrap that creates a private
 venv under `~/.cosmonapse/cli-venv` and pip-installs `cosmonapse` pinned to

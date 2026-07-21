@@ -219,7 +219,7 @@ export function registerSignal(args: {
   capabilities?: string[];
   version?: string;
   engram?: boolean;
-  role?: "neuron" | "engram";
+  role?: "neuron" | "engram" | "effector";
   meta?: Json;
 }): Signal {
   const caps = args.capabilities ?? args.directed?.capabilities ?? [];

@@ -23,6 +23,16 @@ This module defines:
 
 Engrams are *not* Neurons. They do not produce AGENT_OUTPUT. They are
 mounted on a hosting Dendrite via ``dendrite.attach_engram(engram)``.
+
+Host-side behaviour (the standard wiring pattern - mirrors ``Axon.host``):
+  @engram.host.on_<signal>   deferred Dendrite decorator - queued at
+                              module level, registered on the HOSTING
+                              Dendrite once it connects this Engram (i.e.
+                              during ``Dendrite.start()`` / after
+                              ``attach_engram``), subscription ensured.
+                              e.g. @ENGRAM.host.on_imprint_signal - react
+                              to writes without a hand-wired ``@host.on_*``
+                              on the Dendrite instance itself.
 """
 
 from __future__ import annotations
@@ -30,9 +40,77 @@ from __future__ import annotations
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, Iterator
+from typing import TYPE_CHECKING, Any, Iterator
+
+from cosmonapse.envelope import SignalType
+
+if TYPE_CHECKING:
+    from cosmonapse.dendrite import Dendrite
 
 logger = logging.getLogger(__name__)
+
+
+class _EngramHostProxy:
+    """Deferred Dendrite signal decorators, declared on the Engram.
+
+    ``@engram.host.on_<signal>(**filters)`` queues a handler registration
+    at module level; the hosting Dendrite replays it right after it
+    connects this Engram - during ``Dendrite.start()`` (or a future live
+    ``add_engram``), just after the Engram's own ``connect()`` and REGISTER
+    - and ensures the matching inbound subscription. Mirrors
+    ``Axon.host`` exactly, for the memory side::
+
+        ENGRAM = InMemoryEngram(engram_id="session-memory", engram_kind="context")
+
+        @ENGRAM.host.on_imprint_signal
+        async def persist(sig): ...
+
+        host = Dendrite(synapse=synapse, role="worker")
+        host.attach_engram(ENGRAM)
+        await host.start()   # persist() is now live on `host`
+
+    Any ``Dendrite.on_*`` signal decorator with the standard
+    ``(fn, *, neuron=, capability=, trace_id=)`` shape is accepted; the
+    name is validated eagerly so a typo fails at import time, not at
+    connect time.
+    """
+
+    #: Dendrite ``on_*`` methods with a non-standard registration shape.
+    _UNSUPPORTED: frozenset[str] = frozenset({"on_discover", "on_trace"})
+
+    def __init__(self, engram: "Engram") -> None:
+        self._engram = engram
+
+    @staticmethod
+    def _signal_type_for(name: str) -> SignalType | None:
+        key = name[3:].removesuffix("_signal").upper()
+        try:
+            return SignalType[key]
+        except KeyError:
+            return None
+
+    def __getattr__(self, name: str) -> Any:
+        if not name.startswith("on_") or name in self._UNSUPPORTED:
+            raise AttributeError(
+                f"engram.host has no decorator {name!r} - use the "
+                f"Dendrite's on_<signal> family (e.g. on_imprint_signal, "
+                f"on_recall_signal)"
+            )
+        st = self._signal_type_for(name)
+        from cosmonapse.dendrite import Dendrite
+        if st is None or not hasattr(Dendrite, name):
+            raise AttributeError(
+                f"engram.host.{name}: not a Dendrite signal decorator"
+            )
+
+        def register(fn: Any = None, **filters: Any) -> Any:
+            def deco(f: Any) -> Any:
+                if self._engram._host_regs is None:
+                    self._engram._host_regs = []
+                self._engram._host_regs.append((name, st, dict(filters), f))
+                return f
+            return deco(fn) if callable(fn) else deco
+        return register
 
 
 # ---------------------------------------------------------------------------
@@ -185,6 +263,44 @@ class Engram(ABC):
     engram_kind: str
     capabilities: list[str]
     version: str | None = None
+
+    # Deferred host-side registrations (@engram.host.on_<signal>), replayed
+    # onto the hosting Dendrite when it connects this Engram. Class-level
+    # ``None``/``False`` defaults (no ``__init__`` on this ABC - concrete
+    # backends set their own attributes on construction, same reasoning as
+    # ``_saga_journal`` below); ``host`` lazily creates the instance list.
+    _host_regs: "list[tuple[str, Any, dict[str, Any], Any]] | None" = None
+    _host_regs_applied: bool = False
+
+    # The hosting Dendrite, set by ``Dendrite.attach_engram`` / cleared by
+    # ``detach_engram`` - the memory-side analogue of ``Axon._dendrite`` /
+    # ``Axon.dendrite``. Lets an ``@engram.host.on_*`` handler reach the
+    # Dendrite it was replayed onto (e.g. to ``dispatch_task`` / call a
+    # tool) without a hand-wired module-level reference.
+    _dendrite: "Dendrite | None" = None
+
+    @property
+    def dendrite(self) -> "Dendrite | None":
+        """The hosting Dendrite, once attached - see ``_dendrite`` above."""
+        return self._dendrite
+
+    @property
+    def host(self) -> "_EngramHostProxy":
+        """Deferred Dendrite decorators - see :class:`_EngramHostProxy`."""
+        return _EngramHostProxy(self)
+
+    async def _on_hosted(self, dendrite: "Dendrite") -> None:
+        """Called by the hosting Dendrite right after it connects this
+        Engram (``start()``, after ``connect()``/REGISTER). Replays
+        ``@engram.host.on_*`` registrations onto ``dendrite`` and ensures
+        their subscriptions, exactly once per Engram instance - the
+        Engram-side twin of ``Axon._on_register_emitted``."""
+        if self._host_regs and not self._host_regs_applied:
+            self._host_regs_applied = True
+            for name, st, filters, fn in self._host_regs:
+                getattr(dendrite, name)(fn, **filters)
+            await dendrite.ensure_subscribed(
+                *{st for _, st, _, _ in self._host_regs})
 
     # ------------------------------------------------------------------
     # Lifecycle

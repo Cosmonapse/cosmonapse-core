@@ -52,6 +52,18 @@ export interface NeuronHelpers {
       meta?: Record<string, unknown>;
     },
   ): Promise<unknown>;
+  /** Dispatch one tool call through a declared Effector binding (`name`) and
+   *  await the ToolOutcome. Throws EffectorNotBound for undeclared names. */
+  callTool(
+    name: string,
+    args: {
+      tool: string;
+      args?: Record<string, unknown>;
+      callId?: string;
+      deadlineMs?: number;
+      meta?: Record<string, unknown>;
+    },
+  ): Promise<unknown>;
 }
 
 export type NeuronFn = (

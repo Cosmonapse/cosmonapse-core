@@ -152,6 +152,18 @@ from cosmonapse.envelope import (
     stop_signal,
     stopped_signal,
 )
+from cosmonapse.effector import (
+    Effector,
+    EffectorBinding,
+    EffectorClient,
+    TOOL_STANDARDS,
+    EffectorCancelled,
+    EffectorError,
+    EffectorNotBound,
+    EffectorOverloaded,
+    EffectorTimeout,
+    ToolOutcome,
+)
 from cosmonapse.engram import (
     Engram,
     EngramBinding,
@@ -253,6 +265,17 @@ __all__ = [
     "PostgresRegistryStore",
     "synapse_from_url",
     "connect_synapse",
+    # Effector
+    "Effector",
+    "EffectorBinding",
+    "EffectorClient",
+    "TOOL_STANDARDS",
+    "EffectorError",
+    "EffectorCancelled",
+    "EffectorNotBound",
+    "EffectorOverloaded",
+    "EffectorTimeout",
+    "ToolOutcome",
     # Engram
     "new_engram_id",
     "recall_signal",

@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { C, MONO, colorFor } from "../theme";
-import type { Signal, SignalType } from "../types";
+import { groupSignals, type TaskGroup } from "../grouping";
+import type { Signal } from "../types";
 
 interface Props {
   open: boolean;
@@ -8,189 +9,6 @@ interface Props {
   signals: Signal[];
   selected: Signal | null;
   onSelect: (sig: Signal | null) => void;
-}
-
-// Traces made up purely of these types are housekeeping, not tasks - they get
-// folded into one "lifecycle" bucket so grouped view stays readable.
-const LIFECYCLE = new Set<SignalType>(["REGISTER", "DEREGISTER", "HEARTBEAT", "DISCOVER"]);
-
-// Signal types that OPEN a request pathway. Their replies carry
-// parent_id = opener.id, so opener + replies group together.
-const REQUEST_TYPES = new Set<SignalType>([
-  "RECALL",
-  "IMPRINT",
-  "CLARIFICATION",
-  "PERMISSION",
-  "TASK_OFFER",
-]);
-
-// Engram / memory traffic. A trace made ONLY of these (no TASK) is an orphan
-// side-effect - e.g. an imprint dispatched from a detector hook gets a fresh
-// trace_id - and is stitched into the task that was in flight at that moment.
-const ENGRAM_TYPES = new Set<SignalType>([
-  "RECALL",
-  "RECALLED",
-  "IMPRINT",
-  "IMPRINTED",
-  "MEMORY_APPEND",
-  "CONTEXT_SYNC",
-]);
-
-// Max age gap (ms) allowed when stitching an orphan engram trace to a task.
-const STITCH_WINDOW_MS = 60_000;
-
-const MAIN_PATHWAY = "__main__";
-
-interface PathwayGroup {
-  key: string;
-  label: string;
-  /** True when the group was linked by time, not by trace/parent ids. */
-  approx: boolean;
-  signals: Signal[];
-}
-
-interface TaskGroup {
-  trace: string;
-  hint?: string;
-  count: number;
-  pathways: PathwayGroup[];
-}
-
-interface Grouped {
-  tasks: TaskGroup[];
-  lifecycle: Signal[];
-}
-
-/** Pull a human hint for a task group out of its TASK signal payload. */
-function taskHint(sig: Signal | undefined): string | undefined {
-  if (!sig?.payload) return undefined;
-  for (const k of ["input", "prompt", "task", "description", "goal"]) {
-    const v = sig.payload[k];
-    if (typeof v === "string" && v.trim()) return v.trim();
-    if (v && typeof v === "object") {
-      // common shape: payload.input.prompt
-      for (const kk of ["prompt", "task", "text", "query"]) {
-        const vv = (v as Record<string, unknown>)[kk];
-        if (typeof vv === "string" && vv.trim()) return vv.trim();
-      }
-    }
-  }
-  return undefined;
-}
-
-const ts = (s: Signal) => new Date(s.ts).getTime() || 0;
-
-/**
- * Group the rolling buffer into:  task (trace) → pathway → signals.
- *
- * A pathway is the SDK's request/reply unit: signals with no request lineage
- * sit on the main task pathway; a request signal (RECALL, IMPRINT,
- * CLARIFICATION, …) opens a sub-pathway that collects its replies
- * (parent_id = request id). Within a task, signals read chronologically -
- * the same shape as the execution trace.
- *
- * Orphan engram traces (imprints fired outside the task context get a fresh
- * trace_id) are stitched into the task whose signals immediately precede
- * them in the stream, and marked approximate.
- */
-function groupSignals(signals: Signal[]): Grouped {
-  // signals arrive newest-first; iterate in that order so task groups are
-  // ordered by most recent activity.
-  const byTrace = new Map<string, Signal[]>();
-  const byId = new Map<string, Signal>();
-  for (const sig of signals) {
-    const trace = sig.trace_id || "no-trace";
-    let arr = byTrace.get(trace);
-    if (!arr) byTrace.set(trace, (arr = []));
-    arr.push(sig);
-    if (sig.id) byId.set(sig.id, sig);
-  }
-
-  const lifecycle: Signal[] = [];
-  const taskTraces = new Map<string, Signal[]>(); // insertion = recency order
-  const orphans: { trace: string; sigs: Signal[] }[] = [];
-
-  for (const [trace, sigs] of byTrace) {
-    if (sigs.every((s) => LIFECYCLE.has(s.type))) {
-      lifecycle.push(...sigs);
-    } else if (!sigs.some((s) => s.type === "TASK") && sigs.every((s) => ENGRAM_TYPES.has(s.type))) {
-      orphans.push({ trace, sigs });
-    } else {
-      taskTraces.set(trace, sigs);
-    }
-  }
-
-  // ── stitch orphan engram traces into the task in flight at that time ──
-  const stitched = new Set<string>(); // signal ids that were stitched in
-  for (const o of orphans) {
-    const oldest = o.sigs[o.sigs.length - 1];
-    const start = signals.indexOf(oldest);
-    let owner: string | null = null;
-    // Walk older signals in stream order; the first one that belongs to a
-    // task trace is the task that was running when the orphan began.
-    for (let i = start + 1; i < signals.length; i++) {
-      const cand = signals[i];
-      const candTrace = cand.trace_id || "no-trace";
-      if (!taskTraces.has(candTrace)) continue;
-      if (ts(oldest) - ts(cand) > STITCH_WINDOW_MS) break;
-      owner = candTrace;
-      break;
-    }
-    if (owner) {
-      const merged = [...taskTraces.get(owner)!, ...o.sigs];
-      merged.sort((a, b) => ts(b) - ts(a)); // keep newest-first invariant
-      taskTraces.set(owner, merged);
-      for (const s of o.sigs) stitched.add(s.id);
-    } else {
-      taskTraces.set(o.trace, o.sigs); // no candidate - keep as its own group
-    }
-  }
-
-  // ── build pathway groups inside each task ──
-  const tasks: TaskGroup[] = [];
-  for (const [trace, sigs] of taskTraces) {
-    const pathways = new Map<string, Signal[]>();
-    for (const sig of sigs) {
-      let key = MAIN_PATHWAY;
-      if (REQUEST_TYPES.has(sig.type)) {
-        key = sig.id || MAIN_PATHWAY; // request opens its own pathway
-      } else if (sig.parent_id) {
-        const parent = byId.get(sig.parent_id);
-        // Reply to a request → that request's pathway. Parent unseen →
-        // its own thread. Parent is the TASK itself → main pathway.
-        if (!parent || REQUEST_TYPES.has(parent.type)) key = sig.parent_id;
-      }
-      let arr = pathways.get(key);
-      if (!arr) pathways.set(key, (arr = []));
-      arr.push(sig);
-    }
-
-    const groups: PathwayGroup[] = [];
-    for (const [key, arr] of pathways) {
-      arr.sort((a, b) => ts(a) - ts(b)); // chronological within a pathway
-      if (key === MAIN_PATHWAY) {
-        groups.push({ key, label: "task pathway", approx: false, signals: arr });
-        continue;
-      }
-      const opener = byId.get(key);
-      const approx = arr.some((s) => stitched.has(s.id));
-      const label = opener
-        ? `↳ ${opener.type}${opener.directed?.id ? " · " + opener.directed.id : ""}`
-        : `↳ thread ${key.slice(4, 12)}`;
-      groups.push({ key, label, approx, signals: arr });
-    }
-    // main first, then sub-pathways in the order they opened
-    groups.sort((a, b) => {
-      if (a.key === MAIN_PATHWAY) return -1;
-      if (b.key === MAIN_PATHWAY) return 1;
-      return ts(a.signals[0]) - ts(b.signals[0]);
-    });
-
-    const taskSig = [...sigs].reverse().find((s) => s.type === "TASK");
-    tasks.push({ trace, hint: taskHint(taskSig), count: sigs.length, pathways: groups });
-  }
-
-  return { tasks, lifecycle };
 }
 
 export function Sidebar({ open, width, signals, selected, onSelect }: Props) {
@@ -232,6 +50,52 @@ export function Sidebar({ open, width, signals, selected, onSelect }: Props) {
         onClick={() => onSelect(selected === sig ? null : sig)}
         onToggleFull={() => toggleFull(key)}
       />
+    );
+  };
+
+  // Render one task and, beneath it, its pathways and nested child tasks.
+  const renderTask = (task: TaskGroup) => {
+    const tKey = `t:${task.trace}`;
+    const tCollapsed = collapsed.has(tKey);
+    const base = task.depth * 16;
+    return (
+      <div key={tKey}>
+        <GroupHeader
+          level={0}
+          indent={base}
+          collapsed={tCollapsed}
+          color={colorFor("TASK")}
+          tag={task.depth > 0 ? "subtask" : "task"}
+          title={task.trace.slice(0, 16)}
+          hint={task.hint}
+          count={task.subtreeCount}
+          onClick={() => toggleCollapsed(tKey)}
+        />
+        {!tCollapsed && (
+          <>
+            {task.pathways.map((pw) => {
+              const pKey = `p:${task.trace}:${pw.key}`;
+              const pCollapsed = collapsed.has(pKey);
+              return (
+                <div key={pKey}>
+                  <GroupHeader
+                    level={1}
+                    indent={base}
+                    collapsed={pCollapsed}
+                    color={C.accent}
+                    title={pw.label}
+                    approx={pw.approx}
+                    count={pw.signals.length}
+                    onClick={() => toggleCollapsed(pKey)}
+                  />
+                  {!pCollapsed && pw.signals.map((sig, i) => renderRow(sig, i, 26 + base))}
+                </div>
+              );
+            })}
+            {task.children.map(renderTask)}
+          </>
+        )}
+      </div>
     );
   };
 
@@ -309,43 +173,7 @@ export function Sidebar({ open, width, signals, selected, onSelect }: Props) {
 
         {groups && (
           <>
-            {groups.tasks.map((task) => {
-              const tKey = `t:${task.trace}`;
-              const tCollapsed = collapsed.has(tKey);
-              return (
-                <div key={tKey}>
-                  <GroupHeader
-                    level={0}
-                    collapsed={tCollapsed}
-                    color={colorFor("TASK")}
-                    tag="task"
-                    title={task.trace.slice(0, 16)}
-                    hint={task.hint}
-                    count={task.count}
-                    onClick={() => toggleCollapsed(tKey)}
-                  />
-                  {!tCollapsed &&
-                    task.pathways.map((pw) => {
-                      const pKey = `p:${task.trace}:${pw.key}`;
-                      const pCollapsed = collapsed.has(pKey);
-                      return (
-                        <div key={pKey}>
-                          <GroupHeader
-                            level={1}
-                            collapsed={pCollapsed}
-                            color={C.accent}
-                            title={pw.label}
-                            approx={pw.approx}
-                            count={pw.signals.length}
-                            onClick={() => toggleCollapsed(pKey)}
-                          />
-                          {!pCollapsed && pw.signals.map((sig, i) => renderRow(sig, i, 26))}
-                        </div>
-                      );
-                    })}
-                </div>
-              );
-            })}
+            {groups.roots.map(renderTask)}
 
             {groups.lifecycle.length > 0 && (
               <div>
@@ -370,8 +198,9 @@ export function Sidebar({ open, width, signals, selected, onSelect }: Props) {
 }
 
 // ── group header row ──────────────────────────────────────────────────────
-function GroupHeader({ level, collapsed, color, tag, title, hint, count, approx, onClick }: {
+function GroupHeader({ level, indent = 0, collapsed, color, tag, title, hint, count, approx, onClick }: {
   level: 0 | 1;
+  indent?: number;
   collapsed: boolean;
   color: string;
   tag?: string;
@@ -381,6 +210,7 @@ function GroupHeader({ level, collapsed, color, tag, title, hint, count, approx,
   approx?: boolean;
   onClick: () => void;
 }) {
+  const padLeft = (level === 0 ? 16 : 28) + indent;
   return (
     <div
       onClick={onClick}
@@ -389,7 +219,7 @@ function GroupHeader({ level, collapsed, color, tag, title, hint, count, approx,
         display: "flex",
         alignItems: "center",
         gap: 8,
-        padding: level === 0 ? "9px 16px" : "6px 16px 6px 28px",
+        padding: level === 0 ? `9px 16px 9px ${padLeft}px` : `6px 16px 6px ${padLeft}px`,
         cursor: "pointer",
         userSelect: "none",
         background: level === 0 ? "rgba(255,255,255,0.025)" : "transparent",

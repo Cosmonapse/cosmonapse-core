@@ -32,8 +32,10 @@ const TYPE_COLOR: Record<string, string> = {
   TASK_DECLINED: "#7c3aed",
   THOUGHT_DELTA: "#64748b",
   PLAN: "#94a3b8",
-  TOOL_CALL: "#e2e8f0",
-  TOOL_RESULT: "#e2e8f0",
+  // Effector (tools act) - kept in sync with `effectorColor` in
+  // PrismCanvas.tsx, the same way RECALL/RECALLED match `engramColor`.
+  TOOL_CALL: "#f59e0b",
+  TOOL_RESULT: "#f59e0b",
   MEMORY_APPEND: "#22d3ee",
   ESCALATION: "#fb923c",
   CONSENSUS: "#06b6d4",

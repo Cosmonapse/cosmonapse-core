@@ -163,11 +163,16 @@ class _HuggingFaceNeuron(_BaseNeuron):
     endpoint, or any OpenAI-compatible inference server (vLLM, LM Studio,
     llama.cpp ``--server`` mode).
 
-    TGI auto-detection
-    ------------------
+    Path selection
+    --------------
+    * ``use_completions_api=True``: the OpenAI-compatible raw
+      ``/v1/completions`` path. Takes a rendered ``prompt`` string ONLY -
+      the Neuron will not guess your model's chat template; render it
+      caller-side (ChatML, Llama, ...) and pass ``prompt=``. For servers
+      that expose no chat route.
     * If the input contains ``messages`` **or** ``use_chat_api=True`` is set,
       the OpenAI-compatible ``/v1/chat/completions`` path is used.
-    * Otherwise the native ``/generate`` endpoint is used.
+    * Otherwise the native TGI ``/generate`` endpoint is used.
 
     Parameters
     ----------
@@ -178,6 +183,12 @@ class _HuggingFaceNeuron(_BaseNeuron):
         multi-model servers like vLLM; ignored by single-model TGI).
     use_chat_api:
         Force the ``/v1/chat/completions`` path even for plain prompts.
+    use_completions_api:
+        Use the raw ``/v1/completions`` path (mutually exclusive with
+        ``use_chat_api``).
+    stop:
+        Stop sequences, sent on every path (e.g. ``["<|im_end|>"]`` when
+        rendering ChatML for the completions path).
     temperature:
         Sampling temperature.
     max_new_tokens:
@@ -193,15 +204,24 @@ class _HuggingFaceNeuron(_BaseNeuron):
         endpoint: str,
         model: str | None = None,
         use_chat_api: bool = False,
+        use_completions_api: bool = False,
         temperature: float | None = None,
         max_new_tokens: int = 512,
+        stop: list[str] | None = None,
         api_key: str | None = None,
         timeout: float = 120.0,
     ):
+        if use_chat_api and use_completions_api:
+            raise ValueError(
+                "HuggingFace Neuron: use_chat_api and use_completions_api "
+                "are mutually exclusive - pick the path the server serves"
+            )
         self._httpx = _require_httpx()
         self.endpoint = endpoint.rstrip("/")
         self.model = model
         self.use_chat_api = use_chat_api
+        self.use_completions_api = use_completions_api
+        self.stop = list(stop) if stop else None
         self.temperature = temperature
         self.max_new_tokens = max_new_tokens
         self.timeout = timeout
@@ -211,6 +231,16 @@ class _HuggingFaceNeuron(_BaseNeuron):
 
     async def __call__(self, input: dict[str, Any], context: list[Any]) -> dict[str, Any]:
         prompt, messages = self._require_input(input, "HuggingFace")
+
+        if self.use_completions_api:
+            if messages is not None:
+                raise ValueError(
+                    "HuggingFace Neuron (use_completions_api=True): the raw "
+                    "/v1/completions path takes a rendered 'prompt' string "
+                    "only - the Neuron will not guess your model's chat "
+                    "template. Render it caller-side and pass prompt=..."
+                )
+            return await self._completions(prompt)  # type: ignore[arg-type]
 
         if messages is not None or self.use_chat_api:
             msgs = messages or [{"role": "user", "content": prompt or ""}]
@@ -223,6 +253,8 @@ class _HuggingFaceNeuron(_BaseNeuron):
         params: dict[str, Any] = {"max_new_tokens": self.max_new_tokens}
         if self.temperature is not None:
             params["temperature"] = self.temperature
+        if self.stop:
+            params["stop"] = self.stop
 
         body = {"inputs": prompt, "parameters": params}
 
@@ -249,6 +281,8 @@ class _HuggingFaceNeuron(_BaseNeuron):
             body["model"] = self.model
         if self.temperature is not None:
             body["temperature"] = self.temperature
+        if self.stop:
+            body["stop"] = self.stop
 
         async with self._httpx.AsyncClient(timeout=self.timeout, headers=self._headers) as client:
             r = await client.post(f"{self.endpoint}/v1/chat/completions", json=body)
@@ -261,6 +295,29 @@ class _HuggingFaceNeuron(_BaseNeuron):
                 .get("content", "")
         )
         return {"response": content, "meta": data}
+
+    async def _completions(self, prompt: str) -> dict[str, Any]:
+        """OpenAI-compatible raw /v1/completions (vLLM, llama.cpp, LM
+        Studio, and proxies that expose no chat route). ``prompt`` is the
+        caller's fully rendered template."""
+        body: dict[str, Any] = {
+            "prompt": prompt,
+            "max_tokens": self.max_new_tokens,
+        }
+        if self.model:
+            body["model"] = self.model
+        if self.temperature is not None:
+            body["temperature"] = self.temperature
+        if self.stop:
+            body["stop"] = self.stop
+
+        async with self._httpx.AsyncClient(timeout=self.timeout, headers=self._headers) as client:
+            r = await client.post(f"{self.endpoint}/v1/completions", json=body)
+            r.raise_for_status()
+            data = r.json()
+
+        text = data.get("choices", [{}])[0].get("text", "")
+        return {"response": text, "meta": data}
 
 
 # ---------------------------------------------------------------------------

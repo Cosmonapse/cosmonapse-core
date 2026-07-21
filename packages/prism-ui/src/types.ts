@@ -51,21 +51,23 @@ export type SignalType =
   | "MEMORY_APPEND"
   | "CONTEXT_SYNC";
 
-export type ParticipantKind = "neuron" | "engram";
+export type ParticipantKind = "neuron" | "engram" | "effector";
 
 /**
  * The single uniform participant-kind check for the whole UI.
  *
  * Reads `payload.role` - the universal discriminator every SDK now emits on
- * REGISTER ("neuron" | "engram"). For envelopes from pre-role SDKs it falls
- * back, on REGISTER only, to the legacy `engram` flag and the `eng_` id
- * convention. Returns `null` for signals that carry no kind evidence (e.g. a
- * TASK or a RECALL) so callers keep whatever kind they already recorded -
- * classification comes from registration, never from traffic.
+ * REGISTER ("neuron" | "engram" | "effector"). For envelopes from pre-role
+ * SDKs it falls back, on REGISTER only, to the legacy `engram` flag and the
+ * `eng_` id convention - Effectors have no pre-role legacy form (the
+ * primitive is new), so `role` is the only signal for them. Returns `null`
+ * for signals that carry no kind evidence (e.g. a TASK or a RECALL) so
+ * callers keep whatever kind they already recorded - classification comes
+ * from registration, never from traffic.
  */
 export function participantKind(sig: Signal): ParticipantKind | null {
   const role = sig.payload?.role;
-  if (role === "neuron" || role === "engram") return role;
+  if (role === "neuron" || role === "engram" || role === "effector") return role;
   if (sig.type === "REGISTER") {
     if (sig.payload?.engram === true) return "engram";
     if (sig.directed?.id?.startsWith("eng_")) return "engram";
@@ -107,6 +109,10 @@ export const AXON_TYPES = new Set<SignalType>([
   // Engram request side (Axon → Engram backend)
   "RECALL",
   "IMPRINT",
+  // Effector request side (caller → Effector backend). TOOL_CALL is
+  // directed at the effector_id (the target, same as RECALL is directed
+  // at the engram_id) - see Dendrite._on_tool_call.
+  "TOOL_CALL",
 ]);
 
 // Signal types targeted at a specific neuron (synapse → neuron).
@@ -118,6 +124,10 @@ export const TARGET_TYPES = new Set<SignalType>([
   // Engram reply side (Engram backend → Axon)
   "RECALLED",
   "IMPRINTED",
+  // Effector reply side (Effector backend → caller). TOOL_RESULT is
+  // attributed to the effector_id that answered, not the caller - mirrors
+  // RECALLED - so it pulses the same node TOOL_CALL buffered.
+  "TOOL_RESULT",
   // Responses to clarification / permission requests
   "CLARIFICATION_ANSWER",
   "PERMISSION_DECISION",

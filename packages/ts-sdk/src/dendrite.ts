@@ -74,6 +74,8 @@ import { Pathway, PATHWAY_TYPES, PathwayClosedError, type PathwayScope } from ".
 import { defaultRetryOn, type RetryStrategy, type RetryOutcome } from "./retry.js";
 import { Engram, type ImprintOp, type ImprintReceipt, type RecallMode, type RecallResult } from "./engram.js";
 import { EngramClient } from "./engram-client.js";
+import { Effector, EFFECTOR_APPLY_HOST, type ToolOutcome } from "./effector.js";
+import { EffectorClient } from "./effector-client.js";
 import { imprintedSignal, recalledSignal } from "./signals.js";
 import { ambientTrace } from "./trace-context.js";
 import { newEventId, type Directed } from "./envelope.js";
@@ -189,6 +191,15 @@ export class Dendrite {
   /** Caller-side correlation table for RECALL/IMPRINT awaiting
    *  RECALLED/IMPRINTED. The Dendrite owns the subscriptions and feeds it. */
   readonly engramClient: EngramClient = new EngramClient(this);
+  /** Hosted Effectors keyed by effectorId, with an effectorKind index so a
+   *  TOOL_CALL with directed.type addresses every hosted match - the
+   *  action-side mirror of the Engram tables above. */
+  private readonly _effectors = new Map<string, Effector>();
+  private readonly effectorKindIndex = new Map<string, string[]>();
+  /** Caller-side correlation table for TOOL_CALL awaiting TOOL_RESULT - the
+   *  action-side twin of {@link engramClient}, surfaced for the Axon to call
+   *  directly. */
+  readonly effectorClient: EffectorClient = new EffectorClient(this);
   private heartbeatTimer: ReturnType<typeof setTimeout> | null = null;
   private heartbeatStopped = true;
   private running = false;
@@ -406,6 +417,64 @@ export class Dendrite {
 
   get engrams(): ReadonlyMap<string, Engram> {
     return new Map(this._engrams);
+  }
+
+  /**
+   * Mount an Effector on this Dendrite.
+   *
+   * After attachment (and start), the Dendrite subscribes to TOOL_CALL
+   * signals addressed to `effector.effectorId` or matching
+   * `effector.effectorKind` and dispatches them to the attached instance,
+   * publishing the TOOL_RESULT reply. The Effector still owns its backend
+   * lifecycle - the Dendrite calls `connect()` on start and `close()` on
+   * stop/detach. Multiple Effectors may share an `effectorKind`; addressed
+   * routing by `effectorId` still works because the receiving Dendrite
+   * indexes both. When the Dendrite is already running, the backend is
+   * connected and the subscriptions/REGISTER are established immediately.
+   */
+  async attachEffector(effector: Effector): Promise<void> {
+    if (this._effectors.has(effector.effectorId)) {
+      throw new Error(
+        `Dendrite already hosts an Effector with effectorId='${effector.effectorId}'`,
+      );
+    }
+    this._effectors.set(effector.effectorId, effector);
+    const bucket = this.effectorKindIndex.get(effector.effectorKind) ?? [];
+    bucket.push(effector.effectorId);
+    this.effectorKindIndex.set(effector.effectorKind, bucket);
+    effector._dendrite = this;
+    if (this.running) {
+      await effector.connect();
+      await this.ensureInboundSub(SignalType.TOOL_CALL);
+      await this.ensureInboundSub(SignalType.REGISTER);
+      await this.emitEffectorRegister(effector);
+      await effector[EFFECTOR_APPLY_HOST](this);
+    }
+  }
+
+  /** Remove a hosted Effector. Closes its backend if the Dendrite is running. */
+  async detachEffector(effectorId: string): Promise<void> {
+    const effector = this._effectors.get(effectorId);
+    if (!effector) {
+      throw new Error(`Dendrite has no Effector with effectorId='${effectorId}'`);
+    }
+    if (this.running) {
+      try {
+        await effector.close();
+      } catch {
+        /* best-effort teardown */
+      }
+    }
+    const bucket = this.effectorKindIndex.get(effector.effectorKind) ?? [];
+    const kept = bucket.filter((id) => id !== effectorId);
+    if (kept.length) this.effectorKindIndex.set(effector.effectorKind, kept);
+    else this.effectorKindIndex.delete(effector.effectorKind);
+    this._effectors.delete(effectorId);
+    effector._dendrite = null;
+  }
+
+  get effectors(): ReadonlyMap<string, Effector> {
+    return new Map(this._effectors);
   }
 
   /** Engrams learned via REGISTER, keyed by directed.id (or directed.type
@@ -744,11 +813,43 @@ export class Dendrite {
         }
       }
     }
+    // Effector hosting: connect backends, listen for TOOL_CALL, announce
+    // each hosted Effector with REGISTER (role="effector") so peers - and
+    // Prism - can learn it and classify it distinctly from a Neuron/Engram,
+    // and replay each Effector's queued `host.on*` registrations.
+    if (this._effectors.size > 0) {
+      for (const effector of this._effectors.values()) {
+        try {
+          await effector.connect();
+        } catch {
+          /* backend connect failures must not break start */
+        }
+      }
+      await this.ensureInboundSub(SignalType.TOOL_CALL);
+      await this.ensureInboundSub(SignalType.REGISTER);
+      for (const effector of this._effectors.values()) {
+        try {
+          await this.emitEffectorRegister(effector);
+        } catch {
+          /* best-effort announce */
+        }
+        try {
+          await effector[EFFECTOR_APPLY_HOST](this);
+        } catch {
+          /* host-proxy replay must not break start */
+        }
+      }
+    }
+
     // Always listen for RECALLED/IMPRINTED  -  the Dendrite owns the
     // EngramClient's correlation table even when it hosts no Axons, because
     // an orchestrator calls dendrite.recall/imprint directly.
     await this.ensureInboundSub(SignalType.RECALLED);
     await this.ensureInboundSub(SignalType.IMPRINTED);
+    // ... and TOOL_RESULT, for the same reason: the Dendrite owns the
+    // EffectorClient's correlation table even when it hosts no Effectors,
+    // because Axons and orchestrator code call callTool.
+    await this.ensureInboundSub(SignalType.TOOL_RESULT);
 
     for (const [type, hs] of this.handlers) {
       if (hs.length) await this.ensureInboundSub(type);
@@ -823,8 +924,10 @@ export class Dendrite {
     this.opPathways.clear();
 
     // Cancel in-flight engram I/O so awaiters wake with EngramCancelled
-    // instead of hanging on a deadline.
+    // instead of hanging on a deadline; same for in-flight tool calls
+    // (EffectorCancelled).
     this.engramClient.cancelAll();
+    this.effectorClient.cancelAll();
 
     if (!this.running) return;
     this.running = false;
@@ -832,6 +935,14 @@ export class Dendrite {
     for (const engram of this._engrams.values()) {
       try {
         await engram.close();
+      } catch {
+        /* best-effort teardown */
+      }
+    }
+
+    for (const effector of this._effectors.values()) {
+      try {
+        await effector.close();
       } catch {
         /* best-effort teardown */
       }
@@ -931,6 +1042,17 @@ export class Dendrite {
    * (terminal-handler finalize  -  see {@link dispatch}). Only
    * orchestrator-role Dendrites may dispatch.
    */
+  /** Default `parentId` from the ambient task context so a TASK dispatched
+   *  from inside a running task links to that task instead of surfacing as
+   *  an orphan trace — the request/reply counterpart to how imprint/recall
+   *  inherit the trace. An explicit `parentId` always wins; outside a task
+   *  the ambient is null and dispatch behaves exactly as before. */
+  private inheritParent(parentId?: string | null): string | null | undefined {
+    if (parentId !== undefined) return parentId;
+    const amb = ambientTrace();
+    return amb ? amb[1] : undefined;
+  }
+
   async dispatchTask(args: DispatchArgs & { finalize?: boolean }): Promise<Signal> {
     this.requireOrchestrator("dispatchTask");
     if (!args.neuron && !args.capabilities?.length) {
@@ -939,11 +1061,12 @@ export class Dendrite {
           "(capability-routed)",
       );
     }
+    const parentId = this.inheritParent(args.parentId);
     const sig = taskSignal({
       input: args.input,
       ...(args.neuron ? { directed: { id: args.neuron } } : {}),
       ...(args.traceId !== undefined ? { traceId: args.traceId } : {}),
-      ...(args.parentId !== undefined ? { parentId: args.parentId } : {}),
+      ...(parentId !== undefined ? { parentId } : {}),
       ...(args.contextRef !== undefined ? { contextRef: args.contextRef } : {}),
       ...(args.capabilities !== undefined ? { capabilities: args.capabilities } : {}),
       ...(args.finalize !== undefined ? { finalize: args.finalize } : {}),
@@ -1022,11 +1145,12 @@ export class Dendrite {
     });
     this.pathways.set(tid, pathway);
 
+    const parentId = this.inheritParent(args.parentId);
     const sig = taskSignal({
       input: args.input,
       traceId: tid,
       ...(args.neuron ? { directed: { id: args.neuron } } : {}),
-      ...(args.parentId !== undefined ? { parentId: args.parentId } : {}),
+      ...(parentId !== undefined ? { parentId } : {}),
       ...(args.contextRef !== undefined ? { contextRef: args.contextRef } : {}),
       ...(args.capabilities !== undefined ? { capabilities: args.capabilities } : {}),
       finalize,
@@ -1201,11 +1325,12 @@ export class Dendrite {
     });
     this.pathways.set(tid, pathway);
 
+    const parentId = this.inheritParent(args.parentId);
     const offer = taskOfferSignal({
       traceId: tid,
       input: args.input,
       deadlineMs,
-      ...(args.parentId !== undefined ? { parentId: args.parentId } : {}),
+      ...(parentId !== undefined ? { parentId } : {}),
       ...(args.capabilities !== undefined ? { capabilities: args.capabilities } : {}),
       ...(args.meta !== undefined ? { meta: args.meta } : {}),
     });
@@ -1367,13 +1492,16 @@ export class Dendrite {
     traceId: string;
     parentId: string;
     result: Json;
+    /** Attribute the FINAL to the producing Neuron (the attribution
+     * terminal-handler promotion uses) instead of this Dendrite. */
+    neuron?: string;
     meta?: Json;
   }): Promise<Signal> {
     const sig = finalSignal({
       traceId: args.traceId,
       parentId: args.parentId,
       result: args.result,
-      directed: { id: this.dendriteId },
+      directed: { id: args.neuron ?? this.dendriteId },
       ...(args.meta !== undefined ? { meta: args.meta } : {}),
     });
     await this.emit(sig);
@@ -1386,13 +1514,14 @@ export class Dendrite {
     code: string;
     message: string;
     recoverable?: boolean;
+    neuron?: string;
     meta?: Json;
   }): Promise<Signal> {
     const sig = errorSignal({
       traceId: args.traceId,
       code: args.code,
       message: args.message,
-      directed: { id: this.dendriteId },
+      directed: { id: args.neuron ?? this.dendriteId },
       ...(args.parentId !== undefined ? { parentId: args.parentId } : {}),
       ...(args.recoverable !== undefined ? { recoverable: args.recoverable } : {}),
       ...(args.meta !== undefined ? { meta: args.meta } : {}),
@@ -1961,6 +2090,7 @@ export class Dendrite {
     try {
       await this.cancelOpPathways(traceId);
       this.engramClient.cancelTrace(traceId);
+      this.effectorClient.cancelTrace(traceId);
     } catch {
       /* best-effort */
     }
@@ -2261,6 +2391,15 @@ export class Dendrite {
       return;
     }
 
+    // Effector servicing: route a TOOL_CALL addressed to a hosted Effector
+    // (server side) and publish TOOL_RESULT. Unlike RECALL/IMPRINT this does
+    // NOT consume the signal - TOOL_CALL is a PATHWAY_TYPES member, so trace
+    // observers, op-Pathway correlation, and onToolCall handlers below must
+    // still see it.
+    if (signal.type === SignalType.TOOL_CALL && this._effectors.size > 0) {
+      await this.serveToolCall(signal);
+    }
+
     // Workflow control: a STOP cancels everything this Dendrite owns on the
     // trace. Deliver to trace observers first (so on(STOP) fires), then quiesce.
     if (signal.type === SignalType.STOP) {
@@ -2284,6 +2423,12 @@ export class Dendrite {
     // Delivery continues below so pathways/observers still see them.
     if (signal.type === SignalType.RECALLED || signal.type === SignalType.IMPRINTED) {
       this.engramClient.deliver(signal);
+    }
+
+    // Tool I/O responses: resolve the caller-side tool correlation table.
+    // Same non-consuming rule - pathways/observers still see the reply.
+    if (signal.type === SignalType.TOOL_RESULT) {
+      this.effectorClient.deliver(signal);
     }
 
     // Engram registration: a REGISTER carrying payload.role === "engram" (or
@@ -2332,6 +2477,7 @@ export class Dendrite {
     ) {
       await this.cancelOpPathways(signal.trace_id);
       this.engramClient.cancelTrace(signal.trace_id);
+      this.effectorClient.cancelTrace(signal.trace_id);
       // Saga commit point is success (FINAL) only: discard each hosted
       // Engram's journal so successful writes become permanent. On ERROR the
       // journal is kept so the caller can still stopTrace({rollback:true}) to
@@ -2505,6 +2651,113 @@ export class Dendrite {
     }
   }
 
+  // -- Effector: hosted-side handlers ----------------------------------
+
+  /**
+   * Pick the hosted Effectors that should service a TOOL_CALL.
+   * directed.id (effectorId) wins over directed.type (effectorKind). If
+   * neither matches a hosted Effector, returns [] - the call may be served by
+   * another host, or consumed by a developer onToolCall handler (the legacy
+   * tool-server pattern), which still fires either way.
+   */
+  private resolveEffectorTargets(signal: Signal): Effector[] {
+    const eid = signal.directed?.id ?? null;
+    if (eid) {
+      const ent = this._effectors.get(eid);
+      return ent ? [ent] : [];
+    }
+    const ekind = signal.directed?.type ?? null;
+    if (ekind) {
+      return (this.effectorKindIndex.get(ekind) ?? [])
+        .map((id) => this._effectors.get(id))
+        .filter((e): e is Effector => e !== undefined);
+    }
+    return [];
+  }
+
+  /**
+   * Service a TOOL_CALL against hosted Effectors.
+   *
+   * Every failure mode (a canServe miss aside) answers with a TOOL_RESULT
+   * carrying `error` rather than an ERROR signal, so a misbehaving tool never
+   * terminates the parent TASK. The reply is attributed to the Effector that
+   * answered (directed.id/type), not the host Dendrite, so observers (Prism)
+   * classify it correctly.
+   */
+  private async serveToolCall(signal: Signal): Promise<void> {
+    const targets = this.resolveEffectorTargets(signal);
+    if (!targets.length) return;
+    const tool = typeof signal.payload["tool"] === "string" ? (signal.payload["tool"] as string) : "";
+    const args = (signal.payload["args"] as Json | undefined) ?? {};
+    const callId = typeof signal.payload["call_id"] === "string" ? (signal.payload["call_id"] as string) : undefined;
+    const deadlineMs = typeof signal.payload["deadline_ms"] === "number" ? (signal.payload["deadline_ms"] as number) : undefined;
+    for (const effector of targets) {
+      let reply: Signal;
+      try {
+        if (!(await effector.canServe(tool))) continue;
+        const outcome: ToolOutcome = await effector.invoke(tool, args, {
+          ...(callId !== undefined ? { callId } : {}),
+          ...(deadlineMs !== undefined ? { deadlineMs } : {}),
+          traceId: signal.trace_id,
+        });
+        reply = toolResultSignal({
+          traceId: signal.trace_id,
+          parentId: signal.id,
+          tool: outcome.tool || tool,
+          ...(outcome.error === null ? { result: outcome.result } : {}),
+          ...(outcome.error !== null ? { error: outcome.error } : {}),
+          ...(outcome.callId !== null
+            ? { callId: outcome.callId }
+            : callId !== undefined
+              ? { callId }
+              : {}),
+          directed: { id: effector.effectorId, type: effector.effectorKind },
+        });
+      } catch (err) {
+        reply = toolResultSignal({
+          traceId: signal.trace_id,
+          parentId: signal.id,
+          tool,
+          error: `effector_exception: ${err instanceof Error ? err.message : String(err)}`,
+          ...(callId !== undefined ? { callId } : {}),
+          directed: { id: effector.effectorId, type: effector.effectorKind },
+        });
+      }
+      try {
+        await this.publish(reply);
+      } catch {
+        /* best-effort reply */
+      }
+    }
+  }
+
+  // -- Effector: registration (announce) --------------------------------
+
+  /**
+   * Announce a hosted Effector on the Synapse via REGISTER.
+   *
+   * `directed.id` = effectorId, `directed.type` = effectorKind,
+   * `directed.capabilities` = the Effector's capabilities; the
+   * `role="effector"` payload field tells receivers (Dendrite registry,
+   * Prism, doppler) to classify it distinctly from a Neuron or Engram -
+   * mirrors {@link emitEngramRegister} exactly, one level up the action side.
+   */
+  private async emitEffectorRegister(effector: Effector): Promise<void> {
+    const caps = [...(effector.capabilities ?? [])];
+    await this.publish(
+      registerSignal({
+        directed: {
+          id: effector.effectorId,
+          type: effector.effectorKind,
+          capabilities: caps,
+        },
+        capabilities: caps,
+        role: "effector",
+        ...(effector.version !== null ? { version: effector.version } : {}),
+      }),
+    );
+  }
+
   // -- Engram: registration (announce + learn) -------------------------
 
   private async emitEngramRegister(engram: Engram): Promise<void> {
@@ -2623,6 +2876,35 @@ export class Dendrite {
       ...(args.engramKind !== undefined ? { engramKind: args.engramKind } : {}),
       ...(args.mergeKey !== undefined ? { mergeKey: args.mergeKey } : {}),
       ...(args.awaitAck !== undefined ? { awaitAck: args.awaitAck } : {}),
+      ...(args.deadlineMs !== undefined ? { deadlineMs: args.deadlineMs } : {}),
+      ...(args.meta !== undefined ? { meta: args.meta } : {}),
+    });
+  }
+
+  /** Emit TOOL_CALL and await TOOL_RESULT. Trace attribution as
+   *  {@link recall}: explicit ids win, then the ambient task context, then a
+   *  freshly minted trace. */
+  async callTool(args: {
+    effectorId?: string;
+    effectorKind?: string;
+    tool: string;
+    args?: Json;
+    callId?: string;
+    deadlineMs?: number;
+    traceId?: string;
+    parentId?: string;
+    meta?: Json;
+  }): Promise<ToolOutcome> {
+    const [tid, pid] = Dendrite.resolveTrace(args.traceId, args.parentId);
+    return this.effectorClient.call({
+      tool: args.tool,
+      traceId: tid,
+      parentId: pid,
+      neuron: this.dendriteId,
+      ...(args.effectorId !== undefined ? { effectorId: args.effectorId } : {}),
+      ...(args.effectorKind !== undefined ? { effectorKind: args.effectorKind } : {}),
+      ...(args.args !== undefined ? { args: args.args } : {}),
+      ...(args.callId !== undefined ? { callId: args.callId } : {}),
       ...(args.deadlineMs !== undefined ? { deadlineMs: args.deadlineMs } : {}),
       ...(args.meta !== undefined ? { meta: args.meta } : {}),
     });

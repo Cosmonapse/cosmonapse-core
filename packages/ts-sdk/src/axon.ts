@@ -39,6 +39,17 @@ import {
   type NeuronHelpers,
 } from "./neuron.js";
 import { EngramNotBound, type EngramBinding } from "./engram.js";
+import {
+  EffectorError,
+  EffectorNotBound,
+  type EffectorBinding,
+  type ToolOutcome,
+} from "./effector.js";
+import {
+  TOOL_STANDARDS,
+  extractToolCall,
+  type NativeToolCall,
+} from "./effector-standards.js";
 import { runWithTraceContext } from "./trace-context.js";
 import { neuron, type NeuronSource } from "./neuron-factory.js";
 import type { OllamaNeuronOptions, HuggingFaceNeuronOptions } from "./neuron-http.js";
@@ -83,6 +94,13 @@ export type OutputParser = (raw: unknown) => unknown;
  */
 export type Recogniser = (raw: unknown) => unknown | Promise<unknown>;
 
+/**
+ * Deadline applied to a native tool call dispatched by the Axon when the
+ * matched EffectorBinding declares no `defaultDeadlineMs` of its own. A tool
+ * call must not hang the TASK forever.
+ */
+export const DEFAULT_TOOL_DEADLINE_MS = 30_000;
+
 export interface AxonOptions {
   neuronId: string;
   neuronFn: NeuronFn;
@@ -102,6 +120,22 @@ export interface AxonOptions {
    * declared to depend on.
    */
   engrams?: EngramBinding[];
+  /**
+   * Effector bindings the Neuron may act through. Requires `toolStandard` -
+   * without a declared dialect the Axon cannot recognise a tool call in the
+   * raw output, so the bindings would be dead wiring (construction throws).
+   */
+  effectors?: EffectorBinding[];
+  /**
+   * The *native* tool-call dialect this Axon's Neuron emits ("hermes" |
+   * "claude" | "codex"). When set, the Axon runs the dialect's parser over
+   * the raw output before the cosmo parser / recognisers; a match is
+   * translated and (with a serving binding) dispatched through the
+   * EffectorClient, the observation riding the AGENT_OUTPUT. `toolStandard`
+   * alone (no bindings) is legal: pure translation, dispatch left to the
+   * host chain.
+   */
+  toolStandard?: string;
 }
 
 /** Axon metadata accepted by the source-paired factories. */
@@ -122,6 +156,10 @@ export interface AxonExtra {
    * throws.
    */
   teachIntents?: boolean;
+  /** Effector bindings the Neuron may act through (requires `toolStandard`). */
+  effectors?: EffectorBinding[];
+  /** Native tool-call dialect the Neuron emits ("hermes" | "claude" | "codex"). */
+  toolStandard?: string;
 }
 
 const noopContextFetcher: ContextFetcher = () => [];
@@ -216,6 +254,8 @@ export class Axon {
   private readonly contextFetcher: ContextFetcher;
   private readonly outputParser: OutputParser | undefined;
   private readonly engramBindings = new Map<string, EngramBinding>();
+  private readonly effectorBindings = new Map<string, EffectorBinding>();
+  private readonly _toolStandard: string | null;
   private dendrite: Dendrite | null = null;
 
   /**
@@ -258,11 +298,80 @@ export class Axon {
       }
       this.engramBindings.set(b.name, b);
     }
+
+    // Effector bindings - the tools the Neuron may act through. THE RULE: an
+    // Axon may hold EffectorBindings only when tool calls are enabled via
+    // toolStandard, naming the native dialect its Neuron emits ("hermes" |
+    // "claude" | "codex"). Without a standard the Axon cannot recognise a
+    // call in the raw output, so the bindings would be dead wiring - fail at
+    // construction, not silently at runtime. toolStandard alone (no bindings)
+    // is legal: pure translation, dispatch left to the host chain.
+    let toolStandard: string | null = null;
+    if (opts.toolStandard !== undefined) {
+      const std = opts.toolStandard.toLowerCase();
+      if (!(std in TOOL_STANDARDS)) {
+        throw new Error(
+          `Axon '${opts.neuronId}': unknown toolStandard '${opts.toolStandard}'; ` +
+            `supported: ${Object.keys(TOOL_STANDARDS).sort().join(", ")}`,
+        );
+      }
+      toolStandard = std;
+    }
+    if (opts.effectors?.length && toolStandard === null) {
+      throw new Error(
+        `Axon '${opts.neuronId}': effectors requires toolStandard (one of ` +
+          `${Object.keys(TOOL_STANDARDS).sort().join(", ")}) so the Axon can ` +
+          "recognise the Neuron's native tool calls",
+      );
+    }
+    this._toolStandard = toolStandard;
+    for (const eb of opts.effectors ?? []) {
+      if (this.effectorBindings.has(eb.name)) {
+        throw new Error(`Axon '${opts.neuronId}': duplicate EffectorBinding name '${eb.name}'`);
+      }
+      this.effectorBindings.set(eb.name, eb);
+    }
   }
 
   /** Declared Engram bindings, keyed by name. */
   get engrams(): ReadonlyMap<string, EngramBinding> {
     return new Map(this.engramBindings);
+  }
+
+  /** Declared Effector bindings, keyed by name. */
+  get effectors(): ReadonlyMap<string, EffectorBinding> {
+    return new Map(this.effectorBindings);
+  }
+
+  /** The native tool-call dialect this Axon recognises, or null. */
+  get toolStandard(): string | null {
+    return this._toolStandard;
+  }
+
+  private resolveEffectorBinding(name: string): EffectorBinding {
+    const binding = this.effectorBindings.get(name);
+    if (!binding) {
+      throw new EffectorNotBound(
+        `Axon '${this.neuronId}': no Effector binding named '${name}'; ` +
+          `available: ${[...this.effectorBindings.keys()].sort().join(", ")}`,
+      );
+    }
+    return binding;
+  }
+
+  /** Which binding serves `tool`? (1) a binding whose `tools` lists it, (2) a
+   *  binding named after it, (3) the only binding when exactly one is
+   *  declared. Null on no match - never a guess between several. */
+  private resolveBindingForTool(tool: string): EffectorBinding | null {
+    for (const b of this.effectorBindings.values()) {
+      if (b.tools && b.tools.includes(tool)) return b;
+    }
+    const named = this.effectorBindings.get(tool);
+    if (named) return named;
+    if (this.effectorBindings.size === 1) {
+      return [...this.effectorBindings.values()][0]!;
+    }
+    return null;
   }
 
   private resolveBinding(name: string): EngramBinding {
@@ -288,6 +397,15 @@ export class Axon {
         );
       }
       return this.dendrite.engramClient;
+    };
+    const requireEffectorClient = (): import("./effector-client.js").EffectorClient => {
+      if (this.dendrite === null) {
+        throw new Error(
+          `Axon '${this.neuronId}': not attached to a Dendrite; effector ` +
+            "helpers require a hosting Dendrite",
+        );
+      }
+      return this.dendrite.effectorClient;
     };
     return {
       recall: async (name, args) => {
@@ -315,6 +433,20 @@ export class Axon {
           parentId,
           ...(args.mergeKey !== undefined ? { mergeKey: args.mergeKey } : {}),
           ...(args.awaitAck !== undefined ? { awaitAck: args.awaitAck } : {}),
+          ...(args.deadlineMs !== undefined ? { deadlineMs: args.deadlineMs } : {}),
+          ...(args.meta !== undefined ? { meta: args.meta } : {}),
+        });
+      },
+      callTool: async (name, args) => {
+        const binding = this.resolveEffectorBinding(name);
+        return requireEffectorClient().call({
+          binding,
+          tool: args.tool,
+          traceId,
+          parentId,
+          neuron: this.neuronId,
+          ...(args.args !== undefined ? { args: args.args } : {}),
+          ...(args.callId !== undefined ? { callId: args.callId } : {}),
           ...(args.deadlineMs !== undefined ? { deadlineMs: args.deadlineMs } : {}),
           ...(args.meta !== undefined ? { meta: args.meta } : {}),
         });
@@ -367,6 +499,8 @@ export class Axon {
     if (extra.version !== undefined) o.version = extra.version;
     if (extra.neuronKind !== undefined) o.neuronKind = extra.neuronKind;
     if (extra.contextFetcher) o.contextFetcher = extra.contextFetcher;
+    if (extra.effectors) o.effectors = extra.effectors;
+    if (extra.toolStandard !== undefined) o.toolStandard = extra.toolStandard;
     if (recognize) o.outputParser = source === "mcp" ? parseMcpIntents : parseLlmIntents;
     return new Axon(o);
   }
@@ -564,6 +698,7 @@ export class Axon {
     }
 
     let rawOutput: unknown;
+    let nativeCall: NativeToolCall | null = null;
     try {
       const effectiveInput = this.beforeTaskHooks.length
         ? await this.applyBeforeTask(input)
@@ -571,14 +706,24 @@ export class Axon {
       // Helpers ride as an optional third argument the Neuron may ignore  -
       // only built when bindings are declared, so a misaddressed name fails
       // loudly with EngramNotBound rather than silently no-opping.
-      const helpers = this.engramBindings.size
+      const helpers = this.engramBindings.size || this.effectorBindings.size
         ? this.buildHelpers(traceId, parentId)
         : undefined;
       rawOutput = await this.fn(effectiveInput, context, helpers);
-      // Per-source recognition, then decorator-registered recognisers. Inside
-      // the try so a recogniser failure surfaces as ERROR, not a crash.
-      if (this.outputParser) rawOutput = this.outputParser(rawOutput);
-      rawOutput = await this.applyRecognisers(rawOutput);
+      // Native tool-call recognition (toolStandard). The model spoke its
+      // trained dialect; a match takes precedence over the cosmo parser and
+      // recognisers - a tool call IS the intent, there is nothing further to
+      // recognise.
+      if (this._toolStandard !== null) {
+        nativeCall = extractToolCall(rawOutput, this._toolStandard);
+      }
+      if (nativeCall === null) {
+        // Per-source recognition, then decorator-registered recognisers.
+        // Inside the try so a recogniser failure surfaces as ERROR, not a
+        // crash.
+        if (this.outputParser) rawOutput = this.outputParser(rawOutput);
+        rawOutput = await this.applyRecognisers(rawOutput);
+      }
     } catch (err) {
       return errorSignal({
         traceId,
@@ -588,6 +733,14 @@ export class Axon {
         message: err instanceof Error ? err.message : String(err),
         recoverable: false,
       });
+    }
+
+    // Native tool call: translate-and-act. With a serving binding the Axon
+    // dispatches through the EffectorClient and the AGENT_OUTPUT carries the
+    // observation; with no bindings at all it carries the translated call for
+    // the host chain to execute (pure translation).
+    if (nativeCall !== null) {
+      return this.dispatchNativeToolCall(nativeCall, traceId, parentId);
     }
 
     // Error marker: a recogniser can request ERROR without throwing.
@@ -632,6 +785,66 @@ export class Axon {
         : { value: rawOutput };
 
     return agentOutputSignal({ traceId, parentId, directed: { id: this.neuronId }, output });
+  }
+
+  /**
+   * Act on a recognised native tool call and wrap the observation.
+   *
+   * Always returns AGENT_OUTPUT: a tool failure (timeout, tool-level error,
+   * no serving binding) rides `error` in the output payload for the
+   * Neuron/host to react to - it never terminates the TASK. With no bindings
+   * declared the translated call passes through unexecuted
+   * (`{ tool, args, call_id }`) for the host chain to run - the pre-binding
+   * harness pattern, minus the hand-written parser.
+   */
+  private async dispatchNativeToolCall(
+    call: NativeToolCall,
+    traceId: string,
+    parentId: string,
+  ): Promise<Signal> {
+    const out: Json = { tool: call.tool, args: call.args };
+    if (call.callId !== null) out["call_id"] = call.callId;
+    const wrap = (): Signal =>
+      agentOutputSignal({ traceId, parentId, directed: { id: this.neuronId }, output: out });
+
+    if (this.effectorBindings.size === 0) return wrap();
+
+    const binding = this.resolveBindingForTool(call.tool);
+    if (binding === null) {
+      out["error"] =
+        `no effector binding serves tool '${call.tool}'; bound: ` +
+        [...this.effectorBindings.keys()].sort().join(", ");
+      return wrap();
+    }
+
+    try {
+      if (this.dendrite === null) {
+        throw new Error(
+          `Axon '${this.neuronId}': not attached to a Dendrite; effector ` +
+            "dispatch requires a hosting Dendrite",
+        );
+      }
+      const outcome: ToolOutcome = await this.dendrite.effectorClient.call({
+        binding,
+        tool: call.tool,
+        args: call.args,
+        traceId,
+        parentId,
+        neuron: this.neuronId,
+        deadlineMs: binding.defaultDeadlineMs ?? DEFAULT_TOOL_DEADLINE_MS,
+        ...(call.callId !== null ? { callId: call.callId } : {}),
+      });
+      out["effector_id"] = outcome.effectorId;
+      if (outcome.error !== null) out["error"] = outcome.error;
+      else out["result"] = outcome.result;
+    } catch (err) {
+      // Tools never kill TASKs - every failure rides the output payload.
+      out["error"] =
+        err instanceof EffectorError
+          ? `${err.name}: ${err.message}`
+          : `tool_dispatch_failed: ${err instanceof Error ? err.message : String(err)}`;
+    }
+    return wrap();
   }
 }
 

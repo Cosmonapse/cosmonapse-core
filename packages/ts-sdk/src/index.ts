@@ -146,11 +146,46 @@ export {
   parseLlmIntents,
   parseMcpIntents,
   COSMO_INTENT_SYSTEM_PROMPT,
+  DEFAULT_TOOL_DEADLINE_MS,
   type AxonOptions,
   type AxonExtra,
   type OutputParser,
   type Recogniser,
 } from "./axon.js";
+
+export {
+  Effector,
+  ServedEffector,
+  EffectorHost,
+  EffectorBinding,
+  ToolOutcome,
+  EffectorError,
+  EffectorTimeout,
+  EffectorCancelled,
+  EffectorNotBound,
+  EffectorOverloaded,
+  type EffectorBindingInit,
+  type ToolOutcomeInit,
+  type InvokeOptions,
+  type ToolCallContext,
+  type ToolCallHandler,
+} from "./effector.js";
+
+export {
+  TOOL_STANDARDS,
+  extractToolCall,
+  parseHermes,
+  parseClaude,
+  parseCodex,
+  type NativeToolCall,
+  type ToolCallParser,
+} from "./effector-standards.js";
+
+export {
+  EffectorClient,
+  type EffectorPublisher,
+  type ToolCallArgs,
+} from "./effector-client.js";
 
 export {
   Dendrite,

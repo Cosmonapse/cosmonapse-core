@@ -38,6 +38,8 @@ from typing import Any
 
 from cosmonapse._hooks import LifecycleHooks, RefreshEvent
 from cosmonapse.axon import Axon
+from cosmonapse.effector.base import Effector, ToolOutcome
+from cosmonapse.effector.client import EffectorClient
 from cosmonapse.engram.base import Engram
 from cosmonapse.engram.client import EngramClient
 from cosmonapse.envelope import (
@@ -46,6 +48,7 @@ from cosmonapse.envelope import (
     Directed,
     Signal,
     SignalType,
+    ambient_trace,
     bid_signal,
     clarification_answer_signal,
     consensus_signal,
@@ -193,6 +196,13 @@ class Dendrite(LifecycleHooks):
         self._engrams: dict[str, Engram] = {}
         self._engram_kind_index: dict[str, list[str]] = {}
         self._engram_client: EngramClient = EngramClient(self)
+
+        # Attached Effectors keyed by effector_id, with an effector_kind
+        # index so a TOOL_CALL with directed.type addresses every hosted
+        # match - the action-side mirror of the Engram tables above.
+        self._effectors: dict[str, Effector] = {}
+        self._effector_kind_index: dict[str, list[str]] = {}
+        self._effector_client: EffectorClient = EffectorClient(self)
 
         # Engrams learned from REGISTER signals (possibly out-of-process).
         # Keyed by directed.id (engram_id); a kind index mirrors
@@ -381,6 +391,7 @@ class Dendrite(LifecycleHooks):
         self._engram_kind_index.setdefault(engram.engram_kind, []).append(
             engram.engram_id
         )
+        engram._dendrite = self
 
     async def detach_engram(self, engram_id: str) -> None:
         """Remove a hosted Engram. Closes its backend if the Dendrite
@@ -404,10 +415,62 @@ class Dendrite(LifecycleHooks):
         if not bucket:
             self._engram_kind_index.pop(engram.engram_kind, None)
         del self._engrams[engram_id]
+        engram._dendrite = None
 
     @property
     def engrams(self) -> dict[str, Engram]:
         return dict(self._engrams)
+
+    def attach_effector(self, effector: Effector) -> None:
+        """Mount an Effector on this Dendrite.
+
+        After attachment, the Dendrite subscribes to TOOL_CALL signals
+        addressed to ``effector.effector_id`` or matching
+        ``effector.effector_kind`` and dispatches them to the attached
+        instance, publishing the TOOL_RESULT reply. The Effector still
+        owns its backend lifecycle - the Dendrite calls ``connect()`` on
+        start and ``close()`` on stop/detach.
+
+        Multiple Effectors may share an ``effector_kind``; addressed
+        routing by ``effector_id`` still works because the receiving
+        Dendrite indexes both.
+        """
+        if effector.effector_id in self._effectors:
+            raise ValueError(
+                f"Dendrite already hosts an Effector with effector_id="
+                f"{effector.effector_id!r}"
+            )
+        self._effectors[effector.effector_id] = effector
+        self._effector_kind_index.setdefault(
+            effector.effector_kind, []
+        ).append(effector.effector_id)
+        effector._dendrite = self
+
+    async def detach_effector(self, effector_id: str) -> None:
+        """Remove a hosted Effector. Closes its backend."""
+        effector = self._effectors.get(effector_id)
+        if effector is None:
+            raise ValueError(
+                f"Dendrite has no Effector with effector_id={effector_id!r}"
+            )
+        try:
+            await effector.close()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Dendrite: Effector %s close raised on detach: %s",
+                effector_id, exc,
+            )
+        bucket = self._effector_kind_index.get(effector.effector_kind, [])
+        if effector_id in bucket:
+            bucket.remove(effector_id)
+        if not bucket:
+            self._effector_kind_index.pop(effector.effector_kind, None)
+        del self._effectors[effector_id]
+        effector._dendrite = None
+
+    @property
+    def effectors(self) -> dict[str, Effector]:
+        return dict(self._effectors)
 
     async def detach_axon(self, neuron_id: str, *,
                           reason: str | None = None) -> None:
@@ -961,11 +1024,60 @@ class Dendrite(LifecycleHooks):
                         "Dendrite: Engram %s REGISTER emit failed: %s",
                         engram.engram_id, exc,
                     )
+                # Replay @engram.host.on_<signal> registrations declared on
+                # the Engram itself - the memory-side twin of an Axon's
+                # @axon.host.on_* replay on REGISTER.
+                try:
+                    await engram._on_hosted(self)
+                except Exception as exc:  # noqa: BLE001
+                    logger.exception(
+                        "Dendrite: Engram %s host-proxy replay failed: %s",
+                        engram.engram_id, exc,
+                    )
+        # Effector subscriptions. A Dendrite hosting Effectors listens for
+        # TOOL_CALL and services it; the TOOL_RESULT reply is correlated
+        # by parent_id on the caller side, same as RECALLED/IMPRINTED.
+        if self._effectors:
+            for effector in self._effectors.values():
+                try:
+                    await effector.connect()
+                except Exception as exc:  # noqa: BLE001
+                    logger.exception(
+                        "Dendrite: Effector %s connect failed: %s",
+                        effector.effector_id, exc,
+                    )
+            await self._ensure_inbound_sub(SignalType.TOOL_CALL)
+            # Effectors are Synapse participants too: announce each hosted
+            # Effector with REGISTER (role="effector") so peers - and Prism -
+            # can learn it and classify it distinctly from a Neuron/Engram.
+            await self._ensure_inbound_sub(SignalType.REGISTER)
+            for effector in self._effectors.values():
+                try:
+                    await self._emit_effector_register(effector)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "Dendrite: Effector %s REGISTER emit failed: %s",
+                        effector.effector_id, exc,
+                    )
+                # Replay @effector.host.on_<signal> registrations declared
+                # on the Effector itself - mirrors the Engram replay above.
+                try:
+                    await effector._on_hosted(self)
+                except Exception as exc:  # noqa: BLE001
+                    logger.exception(
+                        "Dendrite: Effector %s host-proxy replay failed: %s",
+                        effector.effector_id, exc,
+                    )
+
         # Always listen for RECALLED/IMPRINTED  -  the Dendrite owns the
         # EngramClient's correlation table even when it hosts no Axons,
         # because a Cortex calls dendrite.recall/imprint directly.
         await self._ensure_inbound_sub(SignalType.RECALLED)
         await self._ensure_inbound_sub(SignalType.IMPRINTED)
+        # ... and TOOL_RESULT, for the same reason: the Dendrite owns
+        # the EffectorClient's correlation table even when it hosts no
+        # Effectors, because Axons and Cortex code call call_tool.
+        await self._ensure_inbound_sub(SignalType.TOOL_RESULT)
 
         for signal_type, handlers in self._handlers.items():
             if handlers:
@@ -1064,6 +1176,15 @@ class Dendrite(LifecycleHooks):
                     engram.engram_id, exc,
                 )
 
+        for effector in self._effectors.values():
+            try:
+                await effector.close()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "Dendrite: Effector %s close raised on stop: %s",
+                    effector.effector_id, exc,
+                )
+
         for axon in self._axons.values():
             try:
                 await axon._on_deregister_emitted()
@@ -1151,6 +1272,18 @@ class Dendrite(LifecycleHooks):
     # Outbound primitives
     # ------------------------------------------------------------------
 
+    def _inherit_parent(self, parent_id: str | None) -> str | None:
+        """Default ``parent_id`` from the ambient task context so a TASK
+        dispatched from *inside* a running task links to that task instead
+        of surfacing as an orphan trace. Mirrors how the recall / imprint /
+        tool helpers inherit ``trace_context``. An explicit ``parent_id``
+        always wins; outside any task context the ambient is ``None`` and
+        dispatch behaves exactly as before."""
+        if parent_id is not None:
+            return parent_id
+        amb = ambient_trace()
+        return amb[1] if amb is not None else None
+
     async def dispatch_task(
         self, *, neuron: str | None = None, input: dict[str, Any],
         trace_id: str | None = None, parent_id: str | None = None,
@@ -1179,6 +1312,7 @@ class Dendrite(LifecycleHooks):
                 "dispatch_task requires either neuron= (addressed) or "
                 "capabilities=[...] (capability-routed)"
             )
+        parent_id = self._inherit_parent(parent_id)
         sig = task_signal(
             trace_id=trace_id, parent_id=parent_id,
             directed=Directed(id=neuron) if neuron else None,
@@ -1288,6 +1422,7 @@ class Dendrite(LifecycleHooks):
         if finalize is None:
             finalize = scope == "terminal"
         tid = trace_id or new_trace_id()
+        parent_id = self._inherit_parent(parent_id)
 
         # Ensure we'll observe Signals on this trace before emitting
         # anything. Subscriptions are deduplicated by ``_ensure_inbound_sub``
@@ -1569,6 +1704,7 @@ class Dendrite(LifecycleHooks):
         if finalize is None:
             finalize = scope == "terminal"
         tid = trace_id or new_trace_id()
+        parent_id = self._inherit_parent(parent_id)
         await self._ensure_pathway_subs()
         # Also ensure we'll see BIDs on this trace.
         await self._ensure_inbound_sub(SignalType.BID)
@@ -1824,16 +1960,21 @@ class Dendrite(LifecycleHooks):
             except Exception as exc:  # noqa: BLE001  -  teardown must not raise
                 logger.warning("Dendrite: op-Pathway close raised: %s", exc)
 
-    async def emit_final(self, *, trace_id: str, parent_id: str, result: Any, meta: dict[str, Any] | None = None) -> Signal:
+    async def emit_final(self, *, trace_id: str, parent_id: str, result: Any,
+                         neuron: str | None = None, meta: dict[str, Any] | None = None) -> Signal:
+        """``neuron=`` attributes the FINAL to the producing Neuron instead
+        of this Dendrite - the attribution terminal-handler promotion uses,
+        so observers keep the lineage TASK -> AGENT_OUTPUT -> FINAL."""
         sig = final_signal(trace_id=trace_id, parent_id=parent_id,
-                           directed=Directed(id=self.dendrite_id), result=result, meta=meta)
+                           directed=Directed(id=neuron or self.dendrite_id), result=result, meta=meta)
         await self.emit(sig)
         return sig
 
     async def emit_error(self, *, trace_id: str, parent_id: str, code: str, message: str,
-                         recoverable: bool = False, meta: dict[str, Any] | None = None) -> Signal:
+                         recoverable: bool = False, neuron: str | None = None,
+                         meta: dict[str, Any] | None = None) -> Signal:
         sig = error_signal(trace_id=trace_id, parent_id=parent_id,
-                           directed=Directed(id=self.dendrite_id), code=code, message=message,
+                           directed=Directed(id=neuron or self.dendrite_id), code=code, message=message,
                            recoverable=recoverable, meta=meta)
         await self.emit(sig)
         return sig
@@ -2613,6 +2754,29 @@ class Dendrite(LifecycleHooks):
             role="engram",
         ))
 
+    async def _emit_effector_register(self, effector: Effector) -> None:
+        """Announce a hosted Effector on the Synapse via REGISTER.
+
+        ``directed.id`` = effector_id, ``directed.type`` = effector_kind,
+        ``directed.capabilities`` = the Effector's capabilities; the
+        ``role="effector"`` payload field tells receivers (Dendrite
+        registry, Prism, doppler) to classify it distinctly from a Neuron
+        or Engram - mirrors ``_emit_engram_register`` exactly, one level
+        down the ABC hierarchy (Neurons think, Engrams remember, Effectors
+        act).
+        """
+        caps = list(getattr(effector, "capabilities", []) or [])
+        await self._publish(register_signal(
+            directed=Directed(
+                id=effector.effector_id,
+                type=effector.effector_kind,
+                capabilities=caps,
+            ),
+            capabilities=caps,
+            version=getattr(effector, "version", None),
+            role="effector",
+        ))
+
     async def _emit_deregister(self, axon: Axon, *, reason: str | None) -> None:
         await self._publish(deregister_signal(
             directed=Directed(id=axon.neuron_id), reason=reason,
@@ -2728,6 +2892,14 @@ class Dendrite(LifecycleHooks):
             await self._on_imprint(signal)
             await self._fire_handlers(signal)
             return
+
+        # Effector servicing: route a TOOL_CALL addressed to a hosted
+        # Effector (server side) and publish TOOL_RESULT. Unlike
+        # RECALL/IMPRINT this does NOT consume the signal - TOOL_CALL is
+        # a PATHWAY_TYPES member, so trace observers, op-Pathway
+        # correlation, and @on_tool_call handlers below must still see it.
+        if signal.type is SignalType.TOOL_CALL and self._effectors:
+            await self._on_tool_call(signal)
 
         # Workflow control: a STOP cancels everything this Dendrite owns on
         # the trace. Deliver to trace observers first (so @pw.on(STOP) fires),
@@ -3085,6 +3257,95 @@ class Dendrite(LifecycleHooks):
                 )
 
     # ------------------------------------------------------------------
+    # Effector: hosted-side handlers
+    # ------------------------------------------------------------------
+
+    def _resolve_effector_targets(self, signal: Signal) -> list[Effector]:
+        """Pick the hosted Effectors that should service a TOOL_CALL.
+
+        directed.id (effector_id) wins over directed.type
+        (effector_kind). If neither matches a hosted Effector, returns
+        [] - the call may be served by another host, or consumed by a
+        developer @on_tool_call handler (the legacy tool-server
+        pattern), which still fires either way.
+        """
+        d = signal.directed
+        eid = d.id if d else None
+        if eid:
+            ent = self._effectors.get(eid)
+            return [ent] if ent is not None else []
+        ekind = d.type if d else None
+        if ekind:
+            return [
+                self._effectors[i]
+                for i in self._effector_kind_index.get(ekind, [])
+                if i in self._effectors
+            ]
+        return []
+
+    async def _on_tool_call(self, signal: Signal) -> None:
+        """Service a TOOL_CALL against hosted Effectors.
+
+        Every failure mode (a can_serve miss aside) answers with a
+        TOOL_RESULT carrying ``error`` rather than an ERROR signal, so a
+        misbehaving tool never terminates the parent TASK. The reply is
+        attributed to the Effector that answered (directed.id/type), not
+        the host Dendrite, so observers (Prism) classify it correctly.
+        """
+        targets = self._resolve_effector_targets(signal)
+        if not targets:
+            return
+        tool = signal.payload.get("tool", "")
+        args = signal.payload.get("args") or {}
+        call_id = signal.payload.get("call_id")
+        for effector in targets:
+            try:
+                if not await effector.can_serve(tool):
+                    continue
+                outcome = await effector.invoke(
+                    tool, args,
+                    call_id=call_id,
+                    deadline_ms=signal.payload.get("deadline_ms"),
+                    trace_id=signal.trace_id,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.exception(
+                    "Dendrite: Effector %s.invoke raised: %s",
+                    effector.effector_id, exc,
+                )
+                reply = tool_result_signal(
+                    trace_id=signal.trace_id,
+                    parent_id=signal.id,
+                    tool=tool,
+                    error=f"effector_exception: {exc}",
+                    call_id=call_id,
+                    directed=Directed(
+                        id=effector.effector_id,
+                        type=effector.effector_kind,
+                    ),
+                )
+            else:
+                reply = tool_result_signal(
+                    trace_id=signal.trace_id,
+                    parent_id=signal.id,
+                    tool=outcome.tool or tool,
+                    result=outcome.result,
+                    error=outcome.error,
+                    call_id=outcome.call_id or call_id,
+                    directed=Directed(
+                        id=effector.effector_id,
+                        type=effector.effector_kind,
+                    ),
+                )
+            try:
+                await self._publish(reply)
+            except Exception as exc:  # noqa: BLE001
+                logger.exception(
+                    "Dendrite: Effector %s TOOL_RESULT publish failed: %s",
+                    effector.effector_id, exc,
+                )
+
+    # ------------------------------------------------------------------
     # Engram: caller-side helpers (used by orchestrating Dendrites and
     # Cortex code; Axon helpers go through _engram_client directly).
     # ------------------------------------------------------------------
@@ -3094,6 +3355,12 @@ class Dendrite(LifecycleHooks):
         """Caller-side correlation table. Surfaced for the Axon to call
         directly without going through dendrite.recall/imprint."""
         return self._engram_client
+
+    @property
+    def effector_client(self) -> EffectorClient:
+        """Caller-side tool correlation table - the action-side twin of
+        ``engram_client``, surfaced for the Axon to call directly."""
+        return self._effector_client
 
     @staticmethod
     def _resolve_trace(
@@ -3156,6 +3423,38 @@ class Dendrite(LifecycleHooks):
             deadline_ms=deadline_ms,
             recall_mode=recall_mode,
             min_confidence=min_confidence,
+            trace_id=tid,
+            parent_id=pid,
+            neuron=self.dendrite_id,
+            meta=meta,
+        )
+
+    async def call_tool(
+        self,
+        *,
+        effector_id: str | None = None,
+        effector_kind: str | None = None,
+        tool: str,
+        args: dict[str, Any] | None = None,
+        call_id: str | None = None,
+        deadline_ms: int | None = None,
+        trace_id: str | None = None,
+        parent_id: str | None = None,
+        meta: dict[str, Any] | None = None,
+    ) -> ToolOutcome:
+        """Emit TOOL_CALL and await TOOL_RESULT.
+
+        Trace attribution follows ``_resolve_trace``: explicit ids win,
+        then the ambient task context, then a freshly minted trace.
+        """
+        tid, pid = self._resolve_trace(trace_id, parent_id)
+        return await self._effector_client.call(
+            effector_id=effector_id,
+            effector_kind=effector_kind,
+            tool=tool,
+            args=args,
+            call_id=call_id,
+            deadline_ms=deadline_ms,
             trace_id=tid,
             parent_id=pid,
             neuron=self.dendrite_id,

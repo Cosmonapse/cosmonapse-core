@@ -26,6 +26,19 @@ first run if needed. One CLI build either way.
 
 ## Quick start
 
+The fastest path is init -> scaffold -> code:
+
+```bash
+cosmo init my-app -n demo
+cd my-app
+python demo.py     # one process, in-process bus - no setup
+```
+
+`cosmo init` writes the standard skeleton every example follows - `config.py`,
+`neurons/`, `effector/`, `brain.py`, `demo.py`. Then you code: new Neuron
+modules under `neurons/`, tool families under `effector/`, wiring in
+`brain.py`. Or wire everything by hand:
+
 ```python
 import asyncio
 from cosmonapse import (

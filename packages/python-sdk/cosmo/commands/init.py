@@ -8,8 +8,10 @@ Scaffold a runnable Cosmonapse project in the **standard package skeleton**
       config.py        shared settings (env, namespace, knobs)
       neurons/         Axon modules - each exposes AXON (or make_axon)
         hello.py
+      effector/        Effector modules - each exposes EFFECTOR (Effector.serve())
+        tools.py
       brain.py         the wiring: who hosts what + dispatch helpers
-      demo.py          entry - hosts the worker, dispatches one TASK
+      demo.py          entry - hosts the worker, dispatches one TASK + one tool call
       README.md
 
     cosmo init                  # scaffold ./cosmonapse-app
@@ -18,11 +20,16 @@ Scaffold a runnable Cosmonapse project in the **standard package skeleton**
     cosmo init . --force        # scaffold into the current directory
 
 The generated project is intentionally tiny: `python demo.py` gives a
-working Axon + Dendrite round-trip in ONE process (in-process MemorySynapse)
-straight after `pip install cosmonapse`; SYNAPSE_URL swaps the transport.
-It grows without restructuring: new Axon modules go under neurons/, wiring
+working Axon + Dendrite round-trip AND a tool call in ONE process
+(in-process MemorySynapse) straight after `pip install cosmonapse`;
+SYNAPSE_URL swaps the transport. It grows without restructuring: new Axon
+modules go under neurons/, new tool families go under effector/, wiring
 changes stay in brain.py, entries stay thin - the README shows the 10-line
 worker.py to add when workers should become their own processes.
+
+Three primitives, three folders: Neurons think (neurons/), Engrams remember
+(add engram/ when you need shared memory - see the README), Effectors act
+(effector/).
 """
 
 from __future__ import annotations
@@ -79,31 +86,68 @@ AXON = Axon(
 '''
 
 
+_EFFECTOR_INIT_PY = '''"""Effector modules - each exposes an EFFECTOR (Effector.serve(), or a
+subclass of cosmonapse.effector.base.Effector for a tool family that needs
+its own connect()/close() lifecycle)."""
+'''
+
+
+_EFFECTOR_TOOLS_PY = '''"""tools - a barebones Effector: one @EFFECTOR.on_tool_call hook, zero
+protocol knowledge. Neurons think, Engrams remember, Effectors act.
+
+Cosmonapse does not build your tools - no registries, no frameworks. A
+TOOL_CALL arrives, your handler runs, its return value is emitted as the
+TOOL_RESULT. Subclass the Effector ABC instead of Effector.serve() when a
+tool family needs its own connect()/close() lifecycle (a subprocess, an
+HTTP pool, a spawned MCP server) - see cosmonapse.effector.base.Effector.
+"""
+from cosmonapse import Effector
+
+EFFECTOR = Effector.serve(
+    effector_id="tools-effector",
+    effector_kind="tools",
+)
+
+
+@EFFECTOR.on_tool_call
+async def handle(tool: str, args: dict):
+    if tool == "echo":
+        return {"echoed": args.get("text", "")}
+    return None   # unhandled -> "unhandled tool" error on TOOL_RESULT
+'''
+
+
 _BRAIN_PY = '''"""__PROJECT__ brain - the wiring: who hosts what.
 
-Modules under neurons/ declare *behaviour* (Axons + hooks); this file owns
-*deployment* (which Dendrite hosts which Axon, roles, ids). Entries stay
-thin.
+Modules under neurons/ and effector/ declare *behaviour* (Axons/Effectors +
+hooks); this file owns *deployment* (which Dendrite hosts what, roles,
+ids). Entries stay thin.
 
-Host-side behaviour can be declared right in a neuron's module with the
-deferred host decorators - no wiring here needed:
+Host-side behaviour can be declared right in a module with the deferred
+host decorators - no wiring here needed:
 
     @AXON.host.on_agent_output(neuron="hello")
     async def chain(sig): ...
+
+    @EFFECTOR.host.on_tool_result
+    async def observe(sig): ...
 """
 from cosmonapse import Dendrite
 
 from config import NAMESPACE
+from effector import tools
 from neurons import hello
 
 
 def build_worker(synapse) -> Dendrite:
-    """role="worker": hosts Axons, replies to TASKs, cannot dispatch."""
+    """role="worker": hosts the Axon + the Effector, replies to TASKs and
+    TOOL_CALLs, cannot dispatch. One Dendrite can host several of each."""
     worker = Dendrite(
         synapse=synapse, namespace=NAMESPACE,
         dendrite_id="hello-worker", role="worker",
     )
     worker.attach_axon(hello.AXON)
+    worker.attach_effector(tools.EFFECTOR)
     return worker
 
 
@@ -116,7 +160,7 @@ def build_orchestrator(synapse) -> Dendrite:
 '''
 
 
-_DEMO_PY = '''"""demo.py - dispatch one task and print the result.
+_DEMO_PY = '''"""demo.py - dispatch one task, call one tool, print both results.
 
 One process, both sides: this entry hosts the worker Dendrite AND the
 orchestrator. SYNAPSE_URL only swaps the transport:
@@ -163,6 +207,20 @@ async def main() -> None:
             # Want streaming instead? The same dispatch returns a Pathway:
             #   pw = await orch.dispatch(neuron="hello", input=input_data)
             #   async for s in pw: ...
+
+            # call_tool: emit TOOL_CALL, await TOOL_RESULT - the Effector
+            # equivalent of dispatch_and_wait. No EffectorBinding/Axon
+            # plumbing needed for a direct call like this.
+            tool_args = {"text": "Cosmonapse"}
+            print(f"calling tool  effector=tools-effector  tool=echo  args={tool_args}")
+            outcome = await orch.call_tool(
+                effector_id="tools-effector",
+                tool="echo",
+                args=tool_args,
+            )
+            if outcome.error:
+                raise RuntimeError(outcome.error)
+            print(f"tool result: {outcome.result}")
     finally:
         await synapse.close()
 
@@ -175,7 +233,8 @@ if __name__ == "__main__":
 _README_MD = '''# __PROJECT__
 
 A Cosmonapse project in the standard package skeleton: one worker hosting an
-Axon, one orchestrator that dispatches a task and prints the result.
+Axon and an Effector, one orchestrator that dispatches a task, calls a tool,
+and prints both results. Neurons think, Engrams remember, Effectors act.
 
 ## Layout
 
@@ -184,8 +243,10 @@ __PROJECT__/
   config.py        shared settings (env, namespace, knobs)
   neurons/         Axon modules - each exposes AXON (or make_axon)
     hello.py
+  effector/        Effector modules - each exposes EFFECTOR (Effector.serve())
+    tools.py
   brain.py         the wiring: who hosts what + dispatch helpers
-  demo.py          entry - hosts the worker, dispatches one TASK
+  demo.py          entry - hosts the worker, dispatches one TASK + one tool call
 ```
 
 Every cosmonapse-example follows this same layout, so anything you learn
@@ -217,6 +278,7 @@ Expected output from the demo:
 
 ```
 result: {'message': 'Hello, Cosmonapse!'}
+tool result: {'echoed': 'Cosmonapse'}
 ```
 
 ## Observe the bus
@@ -229,8 +291,13 @@ cosmo doppler --url=cosmo://127.0.0.1:7070 --namespace=__NAMESPACE__
 
 ## Grow it
 
-- New tool or model? Add a module under `neurons/` exposing `AXON`, attach
-  it in `brain.py` (one Dendrite can host several Axons).
+- New model or MCP-backed neuron? Add a module under `neurons/` exposing
+  `AXON`, attach it in `brain.py` (one Dendrite can host several Axons).
+- New tool family? Add a module under `effector/` exposing `EFFECTOR`
+  (`Effector.serve()`, or subclass `cosmonapse.effector.base.Effector` when
+  it needs its own `connect()`/`close()` lifecycle - a subprocess, an HTTP
+  pool, a spawned MCP server), attach it in `brain.py` (one Dendrite can
+  host several Effectors too).
 - Workers as their own processes? That's a thin entry over `build_worker` -
   drop this in as `worker.py`, run it against a real synapse, and delete the
   `build_worker` line from demo.py:
@@ -248,13 +315,17 @@ cosmo doppler --url=cosmo://127.0.0.1:7070 --namespace=__NAMESPACE__
 
   asyncio.run(main())
   ```
-- Host-side behaviour (chain handlers, tool servers) is declared in the
-  neuron's own module with the deferred host decorators:
-  `@AXON.host.on_agent_output(...)` / `@AXON.host.on_tool_call(...)`.
+- Host-side behaviour (chain handlers, tool observers, persistence
+  reactions) is declared right in the owning module with the deferred host
+  decorators - no hand-wiring on the Dendrite instance itself:
+  `@AXON.host.on_agent_output(...)`, `@EFFECTOR.host.on_tool_result(...)`,
+  and (once you add an Engram) `@ENGRAM.host.on_imprint_signal(...)`.
 - Serving HTTP? Add `app.py` (FastAPI lifespan + `build_*` from brain.py) -
   see cosmonapse-examples/05 and /14 for the pattern.
-- Shared memory? Add `engram/` with the backend and an
-  `EngramBinding` on the Axon - see cosmonapse-examples/06.
+- Shared memory? Add `engram/` with the backend (e.g. `InMemoryEngram`,
+  `SqliteEngram`) and either an `EngramBinding` on an Axon or plain
+  `dendrite.recall`/`dendrite.imprint` calls - see cosmonapse-examples/06
+  and /15.
 '''
 
 
@@ -262,6 +333,8 @@ _FILES = {
     "config.py": _CONFIG_PY,
     "neurons/__init__.py": _NEURONS_INIT_PY,
     "neurons/hello.py": _NEURONS_HELLO_PY,
+    "effector/__init__.py": _EFFECTOR_INIT_PY,
+    "effector/tools.py": _EFFECTOR_TOOLS_PY,
     "brain.py": _BRAIN_PY,
     "demo.py": _DEMO_PY,
     "README.md": _README_MD,
@@ -284,7 +357,7 @@ def init(name: str, namespace: str, force: bool) -> None:
     """Scaffold a standard-skeleton Cosmonapse project in ./NAME.
 
     \b
-    Creates: config.py, neurons/, brain.py, demo.py, README.md
+    Creates: config.py, neurons/, effector/, brain.py, demo.py, README.md
     \b
     Examples:
       cosmo init

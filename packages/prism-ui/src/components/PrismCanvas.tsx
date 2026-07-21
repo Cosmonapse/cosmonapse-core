@@ -174,7 +174,11 @@ export const PrismCanvas = forwardRef<PrismCanvasHandle, Props>(function PrismCa
           <NeuronNode key={ne.id} x={p.x} y={p.y} color={color} pulse={pulses.has(ne.id)}
             kind={ne.kind}
             label={ne.id.length > 18 ? ne.id.slice(0, 16) + "…" : ne.id}
-            sublabel={ne.kind === "engram" ? "engram" : (ne.capabilities[0] ?? "")}
+            sublabel={
+              ne.kind === "engram" ? "engram" :
+              ne.kind === "effector" ? "effector" :
+              (ne.capabilities[0] ?? "")
+            }
             onHover={() => onHover(ne.id)} onLeave={() => onHover(null)}
           />
         );
@@ -253,17 +257,63 @@ function SynapseNode({ x, y, pulse, label, sublabel }: {
   );
 }
 
-// ── neuron / engram node ─────────────────────────────────────────────────
-// kind="neuron"  →  circle  (axon-backed participant)
-// kind="engram"  →  diamond (Engram memory backend)
+// ── neuron / engram / effector node ──────────────────────────────────────
+// kind="neuron"    →  circle   (axon-backed participant - Neurons think)
+// kind="engram"    →  diamond  (Engram memory backend - Engrams remember)
+// kind="effector"  →  triangle (Effector tool backend - Effectors act)
 function NeuronNode({ x, y, color, pulse, kind = "neuron", label, sublabel, onHover, onLeave }: {
-  x: number; y: number; color: string; pulse: boolean; kind?: "neuron" | "engram";
+  x: number; y: number; color: string; pulse: boolean; kind?: "neuron" | "engram" | "effector";
   label?: string; sublabel?: string; onHover?: () => void; onLeave?: () => void;
 }) {
   const R = 18;
   const glowStr = pulse ? 14 : 7;
   const engramColor = "#a78bfa";
-  const nodeColor = kind === "engram" ? engramColor : color;
+  // Kept in sync with TOOL_CALL/TOOL_RESULT in theme.ts, the same way
+  // engramColor matches RECALL/RECALLED - a kind's identity color always
+  // matches the color of the traffic it dominates.
+  const effectorColor = "#f59e0b";
+  const nodeColor = kind === "engram" ? engramColor : kind === "effector" ? effectorColor : color;
+
+  if (kind === "effector") {
+    // Upward-pointing equilateral triangle, inscribed in radius `r`.
+    const tri = (r: number) => {
+      const dx = r * 0.8660254; // cos(30deg)
+      const dy = r * 0.5;       // sin(30deg)
+      return `0,${-r} ${dx},${dy} ${-dx},${dy}`;
+    };
+    return (
+      <g transform={`translate(${x},${y})`} style={{ cursor: "pointer" }} onMouseEnter={onHover} onMouseLeave={onLeave}>
+        {/* Ambient bloom */}
+        <polygon points={tri(R * 2.6)} fill={nodeColor} fillOpacity={pulse ? 0.16 : 0.06} filter="url(#blur-md)" style={{ transition: "fill-opacity 0.4s" }} />
+        {/* Pulse ripple */}
+        {pulse && (
+          <polygon points={tri(R * 1.22)} fill="none" stroke={nodeColor} strokeOpacity="0.8" strokeWidth="1.5">
+            <animateTransform attributeName="transform" type="scale" from="1" to="3.2" dur="0.9s" repeatCount="1" />
+            <animate attributeName="stroke-opacity" from="0.8" to="0" dur="0.9s" repeatCount="1" />
+          </polygon>
+        )}
+        {/* Outer ring triangle */}
+        <polygon points={tri(R * 1.55)} fill="none" stroke={nodeColor} strokeOpacity={pulse ? 0.45 : 0.2} strokeWidth="0.8"
+          style={{ transition: "stroke-opacity 0.4s" }} />
+        {/* Body */}
+        <polygon points={tri(R * 1.22)} fill="#07080c" stroke={nodeColor} strokeWidth="1.5"
+          style={{ filter: `drop-shadow(0 0 ${glowStr}px ${nodeColor})`, transition: "filter 0.4s" }} />
+        {/* Inner glow fill */}
+        <polygon points={tri(R * 0.7)} fill={nodeColor} fillOpacity="0.13" />
+        {/* Rotating inner ring (action pulse) */}
+        <polygon points={tri(R * 0.44)} fill="none" stroke={nodeColor} strokeWidth="1" strokeOpacity="0.55">
+          <animateTransform attributeName="transform" type="rotate" from="0" to="360" dur="6s" repeatCount="indefinite" />
+        </polygon>
+        {/* Nucleus */}
+        <circle cy={R * 0.14} r={R * 0.28} fill={nodeColor} fillOpacity={pulse ? 0.95 : 0.7} filter="url(#glow-soft)"
+          style={{ transition: "fill-opacity 0.3s" }}>
+          <animate attributeName="r" values={`${R * 0.22};${R * 0.34};${R * 0.22}`} dur="2.8s" repeatCount="indefinite" />
+        </circle>
+        {label && <text y={R * 1.55 + 18} textAnchor="middle" fontSize="11" fontWeight="500" fill={C.text} style={{ fontFamily: MONO }}>{label}</text>}
+        {sublabel && <text y={R * 1.55 + 32} textAnchor="middle" fontSize="9" fill={nodeColor} style={{ fontFamily: MONO }}>{sublabel}</text>}
+      </g>
+    );
+  }
 
   if (kind === "engram") {
     // Diamond (rotated square) for Engram nodes

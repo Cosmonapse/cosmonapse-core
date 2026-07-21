@@ -42,6 +42,12 @@ from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, cast
 
 from cosmonapse._hooks import LifecycleHooks, RefreshEvent
+from cosmonapse.effector.base import (
+    EffectorBinding,
+    EffectorError,
+    EffectorNotBound,
+)
+from cosmonapse.effector.standards import TOOL_STANDARDS, extract_tool_call
 from cosmonapse.engram.base import EngramBinding, EngramNotBound
 from cosmonapse.envelope import (
     Directed,
@@ -69,6 +75,11 @@ ContextFetcher = Callable[[str], Awaitable[list[Any]]]
 # plain result dict. It is the per-source recognition the Axon applies before
 # wrapping. Pure and synchronous; raising inside it yields an ERROR Signal.
 OutputParser = Callable[[dict[str, Any]], dict[str, Any]]
+
+# Deadline applied to a native tool call dispatched by the Axon when the
+# matched EffectorBinding declares no default_deadline_ms of its own. A
+# tool call must not hang the TASK forever.
+DEFAULT_TOOL_DEADLINE_MS = 30_000
 
 
 async def _noop_context_fetcher(ref: str) -> list[Any]:
@@ -147,6 +158,8 @@ class Axon(LifecycleHooks):
         neuron_kind: str = "neuron",
         context_fetcher: ContextFetcher | None = None,
         engrams: list[EngramBinding] | None = None,
+        effectors: list[EffectorBinding] | None = None,
+        tool_standard: str | None = None,
         output_parser: OutputParser | None = None,
     ) -> None:
         LifecycleHooks.__init__(self)
@@ -195,10 +208,44 @@ class Axon(LifecycleHooks):
                 )
             self._engram_bindings[b.name] = b
 
+        # Effector bindings - the tools the Neuron may act through. THE
+        # RULE: an Axon may hold EffectorBindings only when tool calls
+        # are enabled via tool_standard=, naming the native dialect its
+        # Neuron emits ("hermes" | "claude" | "codex"). Without a
+        # standard the Axon cannot recognise a call in the raw output,
+        # so the bindings would be dead wiring - fail at construction,
+        # not silently at runtime. tool_standard alone (no bindings) is
+        # legal: pure translation, dispatch left to the host chain.
+        self._tool_standard: str | None = None
+        if tool_standard is not None:
+            std = tool_standard.lower()
+            if std not in TOOL_STANDARDS:
+                raise ValueError(
+                    f"Axon {neuron_id!r}: unknown tool_standard "
+                    f"{tool_standard!r}; supported: "
+                    f"{sorted(TOOL_STANDARDS)}"
+                )
+            self._tool_standard = std
+        if effectors and self._tool_standard is None:
+            raise ValueError(
+                f"Axon {neuron_id!r}: effectors= requires tool_standard= "
+                f"(one of {sorted(TOOL_STANDARDS)}) so the Axon can "
+                f"recognise the Neuron's native tool calls"
+            )
+        self._effector_bindings: dict[str, EffectorBinding] = {}
+        for eb in (effectors or []):
+            if eb.name in self._effector_bindings:
+                raise ValueError(
+                    f"Axon {neuron_id!r}: duplicate EffectorBinding name "
+                    f"{eb.name!r}"
+                )
+            self._effector_bindings[eb.name] = eb
+
         # Whether the wrapped neuron_fn declares recall/imprint kwargs.
         # Detected once at construction; cached for hot-path use.
         self._fn_accepts_recall: bool = False
         self._fn_accepts_imprint: bool = False
+        self._fn_accepts_call_tool: bool = False
         self._fn_accepts_kwargs: bool = False
         try:
             import inspect as _inspect
@@ -208,11 +255,14 @@ class Axon(LifecycleHooks):
                     self._fn_accepts_kwargs = True
                     self._fn_accepts_recall = True
                     self._fn_accepts_imprint = True
+                    self._fn_accepts_call_tool = True
                     break
                 if _pname == "recall":
                     self._fn_accepts_recall = True
                 if _pname == "imprint":
                     self._fn_accepts_imprint = True
+                if _pname == "call_tool":
+                    self._fn_accepts_call_tool = True
         except (ValueError, TypeError):
             # Builtins / C functions have no inspectable signature. Skip
             # helper injection and fall back to the 2-arg legacy call.
@@ -236,6 +286,8 @@ class Axon(LifecycleHooks):
         neuron_kind: str = "neuron",
         context_fetcher: ContextFetcher | None = None,
         engrams: list[EngramBinding] | None = None,
+        effectors: list[EffectorBinding] | None = None,
+        tool_standard: str | None = None,
         recognize: bool = True,
         teach_intents: bool | None = None,
         **source_kwargs: Any,
@@ -297,6 +349,8 @@ class Axon(LifecycleHooks):
             neuron_kind=neuron_kind,
             context_fetcher=context_fetcher,
             engrams=engrams,
+            effectors=effectors,
+            tool_standard=tool_standard,
             output_parser=parser,
         )
 
@@ -521,6 +575,10 @@ class Axon(LifecycleHooks):
             kwargs["recall"] = self._build_recall_helper(trace_id, parent_id)
         if self._fn_accepts_imprint:
             kwargs["imprint"] = self._build_imprint_helper(trace_id, parent_id)
+        if self._fn_accepts_call_tool:
+            kwargs["call_tool"] = self._build_call_tool_helper(
+                trace_id, parent_id,
+            )
 
         try:
             if self._before_task_hooks:
@@ -531,15 +589,27 @@ class Axon(LifecycleHooks):
                 )
             else:
                 raw_output = await self._fn(input_data, context)
-            # Per-source recognition: turn the Neuron's native output (LLM
-            # text, MCP result) into the marker dict the branches below
-            # understand. Runs inside the try so a parser failure surfaces
-            # as an ERROR Signal rather than crashing the Dendrite.
-            if self._output_parser is not None:
-                raw_output = self._output_parser(raw_output)
-            # Decorator-registered recognisers (@axon.detects_clarification,
-            # ...) run after the parser and may convert output into a marker.
-            raw_output = await self._apply_recognisers(raw_output)
+            # Native tool-call recognition (tool_standard=). The model
+            # spoke its trained dialect; a match takes precedence over
+            # the cosmo parser and recognisers - a tool call IS the
+            # intent, there is nothing further to recognise.
+            native_call: dict[str, Any] | None = None
+            if self._tool_standard is not None:
+                native_call = extract_tool_call(
+                    raw_output, self._tool_standard,
+                )
+            if native_call is None:
+                # Per-source recognition: turn the Neuron's native output
+                # (LLM text, MCP result) into the marker dict the branches
+                # below understand. Runs inside the try so a parser failure
+                # surfaces as an ERROR Signal rather than crashing the
+                # Dendrite.
+                if self._output_parser is not None:
+                    raw_output = self._output_parser(raw_output)
+                # Decorator-registered recognisers
+                # (@axon.detects_clarification, ...) run after the parser
+                # and may convert output into a marker.
+                raw_output = await self._apply_recognisers(raw_output)
         except Exception as exc:
             logger.exception("Axon %s: Neuron raised", self.neuron_id)
             return error_signal(
@@ -549,6 +619,15 @@ class Axon(LifecycleHooks):
                 code="NEURON_EXCEPTION",
                 message=str(exc),
                 recoverable=False,
+            )
+
+        # Native tool call: translate-and-act. With a serving binding the
+        # Axon dispatches through the EffectorClient and the AGENT_OUTPUT
+        # carries the observation; with no bindings at all it carries the
+        # translated call for the host chain to execute (pure translation).
+        if native_call is not None:
+            return await self._dispatch_native_tool_call(
+                native_call, trace_id=trace_id, parent_id=parent_id,
             )
 
         # Error marker: a recogniser (e.g. MCP ``is_error``) can request an
@@ -677,6 +756,155 @@ class Axon(LifecycleHooks):
     @property
     def engram_bindings(self) -> dict[str, EngramBinding]:
         return dict(self._engram_bindings)
+
+    # ------------------------------------------------------------------
+    # Effector helper plumbing (called from handle_task)
+    # ------------------------------------------------------------------
+
+    def _effector_client(self) -> Any:
+        if self._dendrite is None:
+            raise RuntimeError(
+                f"Axon {self.neuron_id!r}: not attached to a Dendrite; "
+                f"effector helpers require a hosting Dendrite"
+            )
+        return self._dendrite.effector_client
+
+    def _resolve_effector_binding(self, name: str) -> EffectorBinding:
+        binding = self._effector_bindings.get(name)
+        if binding is None:
+            raise EffectorNotBound(
+                f"Axon {self.neuron_id!r}: no Effector binding named "
+                f"{name!r}; available: {sorted(self._effector_bindings)}"
+            )
+        return binding
+
+    def _resolve_binding_for_tool(self, tool: str) -> EffectorBinding | None:
+        """Which binding serves ``tool``? (1) a binding whose ``tools``
+        lists it, (2) a binding named after it, (3) the only binding when
+        exactly one is declared. None on no match - never a guess between
+        several."""
+        for b in self._effector_bindings.values():
+            if b.tools and tool in b.tools:
+                return b
+        named = self._effector_bindings.get(tool)
+        if named is not None:
+            return named
+        if len(self._effector_bindings) == 1:
+            return next(iter(self._effector_bindings.values()))
+        return None
+
+    def _build_call_tool_helper(self, trace_id: str, parent_id: str) -> Any:
+        async def _call_tool(
+            name: str,
+            *,
+            tool: str,
+            args: dict[str, Any] | None = None,
+            call_id: str | None = None,
+            deadline_ms: int | None = None,
+            meta: dict[str, Any] | None = None,
+        ) -> Any:
+            binding = self._resolve_effector_binding(name)
+            client = self._effector_client()
+            return await client.call(
+                binding=binding,
+                tool=tool,
+                args=args,
+                call_id=call_id,
+                deadline_ms=deadline_ms,
+                trace_id=trace_id,
+                parent_id=parent_id,
+                neuron=self.neuron_id,
+                meta=meta,
+            )
+        return _call_tool
+
+    async def _dispatch_native_tool_call(
+        self,
+        call: dict[str, Any],
+        *,
+        trace_id: str,
+        parent_id: str,
+    ) -> Signal:
+        """Act on a recognised native tool call and wrap the observation.
+
+        Always returns AGENT_OUTPUT: a tool failure (timeout, tool-level
+        error, no serving binding) rides ``error`` in the output payload
+        for the Neuron/host to react to - it never terminates the TASK.
+        With no bindings declared the translated call passes through
+        unexecuted (``{"tool", "args", "call_id"}``) for the host
+        chain to run - the pre-binding harness pattern, minus the
+        hand-written parser.
+        """
+        tool = call["tool"]
+        args = call.get("args") or {}
+        call_id = call.get("call_id")
+        out: dict[str, Any] = {"tool": tool, "args": args}
+        if call_id is not None:
+            out["call_id"] = call_id
+
+        if not self._effector_bindings:
+            return agent_output_signal(
+                trace_id=trace_id,
+                parent_id=parent_id,
+                directed=Directed(id=self.neuron_id),
+                output=out,
+            )
+
+        binding = self._resolve_binding_for_tool(tool)
+        if binding is None:
+            out["error"] = (
+                f"no effector binding serves tool {tool!r}; "
+                f"bound: {sorted(self._effector_bindings)}"
+            )
+            return agent_output_signal(
+                trace_id=trace_id,
+                parent_id=parent_id,
+                directed=Directed(id=self.neuron_id),
+                output=out,
+            )
+
+        try:
+            outcome = await self._effector_client().call(
+                binding=binding,
+                tool=tool,
+                args=args,
+                call_id=call_id,
+                deadline_ms=(
+                    binding.default_deadline_ms
+                    if binding.default_deadline_ms is not None
+                    else DEFAULT_TOOL_DEADLINE_MS
+                ),
+                trace_id=trace_id,
+                parent_id=parent_id,
+                neuron=self.neuron_id,
+            )
+        except EffectorError as exc:
+            out["error"] = f"{type(exc).__name__}: {exc}"
+        except Exception as exc:  # noqa: BLE001 - tools never kill TASKs
+            logger.exception(
+                "Axon %s: tool dispatch for %r raised", self.neuron_id, tool,
+            )
+            out["error"] = f"tool_dispatch_failed: {exc}"
+        else:
+            out["effector_id"] = outcome.effector_id
+            if outcome.error is not None:
+                out["error"] = outcome.error
+            else:
+                out["result"] = outcome.result
+        return agent_output_signal(
+            trace_id=trace_id,
+            parent_id=parent_id,
+            directed=Directed(id=self.neuron_id),
+            output=out,
+        )
+
+    @property
+    def effector_bindings(self) -> dict[str, EffectorBinding]:
+        return dict(self._effector_bindings)
+
+    @property
+    def tool_standard(self) -> str | None:
+        return self._tool_standard
 
 
 # ---------------------------------------------------------------------------

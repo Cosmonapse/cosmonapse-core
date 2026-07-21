@@ -6,6 +6,25 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- **`neuron=` attribution on `emit_final` / `emit_error` (python-sdk +
+  ts-sdk).** The reply emit helpers now take the same `neuron=` override
+  the cognition helpers (`emit_plan`, `emit_tool_call`, ...) always had:
+  `emit_final(..., neuron="assistant")` attributes the FINAL to the
+  producing Neuron instead of the emitting Dendrite - matching
+  terminal-handler promotion, so observers (doppler, Prism) keep the
+  lineage TASK -> AGENT_OUTPUT -> FINAL on one participant. Default
+  (omitted) is unchanged: the Dendrite's id.
+- **Raw `/v1/completions` support on the `huggingface` Neuron source
+  (python-sdk).** `Neuron(source="huggingface", use_completions_api=True,
+  stop=[...])` posts to the OpenAI-compatible `/v1/completions` path - for
+  vLLM / llama.cpp / proxy deployments that expose no chat route. The path
+  takes a rendered `prompt` string ONLY: the Neuron will not guess a
+  model's chat template - render it caller-side (ChatML, Llama, ...) and
+  pass `prompt=`; `messages` input raises. `stop=` is also forwarded on
+  the chat and TGI `/generate` paths. `use_chat_api` and
+  `use_completions_api` are mutually exclusive.
+
 ### Changed
 - npm package version aligned to `0.1.8` (`package.json` was left at
   `0.1.7` when the 0.1.8 release was tagged).
