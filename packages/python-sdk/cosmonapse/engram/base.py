@@ -24,6 +24,31 @@ This module defines:
 Engrams are *not* Neurons. They do not produce AGENT_OUTPUT. They are
 mounted on a hosting Dendrite via ``dendrite.attach_engram(engram)``.
 
+Two ways to write one. Subclass ``Engram`` and implement ``recall`` /
+``imprint`` (what every backend in this package does), or build one from
+decorators with ``Engram.serve()`` - the memory-side twin of
+``Effector.serve()``::
+
+    ENGRAM = Engram.serve(engram_id="notes", engram_kind="context")
+
+    @ENGRAM.on_recall
+    async def search(query, **kw): return [Hit(id=..., entry=...)]
+
+    @ENGRAM.on_imprint
+    async def write(op, entry, *, merge_key=None, **kw): return ...
+
+The handler RUNS the operation and its return value becomes the RECALLED
+hits / IMPRINTED receipt. Either way the Engram is attached under its own
+``engram_id``, so it REGISTERs normally and observers classify it as an
+Engram - the decorators change where the body lives, nothing else.
+
+Note the difference from ``@engram.host.on_recall_signal`` below: the host
+decorators OBSERVE the protocol (the Dendrite has already serviced the
+request by the time they run), whereas ``@on_recall`` / ``@on_imprint``
+ARE the servicing. Registering a host observer does not disable the
+built-in path, so servicing from one would emit a second RECALLED /
+IMPRINTED and, for non-idempotent ops, write twice.
+
 Host-side behaviour (the standard wiring pattern - mirrors ``Axon.host``):
   @engram.host.on_<signal>   deferred Dendrite decorator - queued at
                               module level, registered on the HOSTING
@@ -37,11 +62,14 @@ Host-side behaviour (the standard wiring pattern - mirrors ``Axon.host``):
 
 from __future__ import annotations
 
+import inspect
 import logging
+import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Iterator
+from typing import TYPE_CHECKING, Any, Callable, Iterator
 
+from cosmonapse._hooks import LifecycleHooks
 from cosmonapse.envelope import SignalType
 
 if TYPE_CHECKING:
@@ -431,3 +459,216 @@ class Engram(ABC):
         BM25 engram asked for vector search). The hosting Dendrite skips
         responding when this returns False. Default: serve everything."""
         return True
+
+    # ------------------------------------------------------------------
+    # Decorator-native construction
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def serve(
+        cls,
+        *,
+        engram_id: str,
+        engram_kind: str = "context",
+        capabilities: list[str] | None = None,
+        version: str | None = None,
+    ) -> "_ServedEngram":
+        """Build an Engram from the two protocol hooks that matter.
+
+        The memory-side twin of ``Effector.serve()``. A RECALL arrives,
+        ``@on_recall`` runs, and its return value is published as the
+        RECALLED hits; an IMPRINT arrives, ``@on_imprint`` runs, and its
+        return value becomes the IMPRINTED receipt. What happens in
+        between - an index, a vector store, an HTTP call - is your code::
+
+            ENGRAM = Engram.serve(engram_id="notes")
+
+            @ENGRAM.on_recall
+            async def search(query, *, deadline_ms=None):
+                return [Hit(id=k, entry=v) for k, v in match(query)]
+
+            @ENGRAM.on_imprint
+            async def write(op, entry, *, merge_key=None):
+                return store(op, entry, merge_key)
+
+            dendrite.attach_engram(ENGRAM)
+
+        The result is a plain Engram: it REGISTERs under its own
+        ``engram_id``, the hosting Dendrite resolves and services it
+        exactly as it does a subclass, and the reply carries the Engram's
+        own attribution. Lifecycle follows
+        :class:`cosmonapse._hooks.LifecycleHooks` - ``@on_connect`` fires
+        once when the hosting Dendrite connects it at start(),
+        ``@on_schedule(every_s=N)`` loops run until stop().
+        """
+        return _ServedEngram(
+            engram_id=engram_id,
+            engram_kind=engram_kind,
+            capabilities=capabilities,
+            version=version,
+        )
+
+
+# ---------------------------------------------------------------------------
+# Engram.serve() - the decorator-native form.
+# ---------------------------------------------------------------------------
+
+#: kwargs an @on_recall handler may request by declaring the parameter.
+_RECALL_HANDLER_KWARGS = frozenset(
+    {"filters", "context_ref", "deadline_ms", "min_confidence"}
+)
+#: kwargs an @on_imprint handler may request by declaring the parameter.
+_IMPRINT_HANDLER_KWARGS = frozenset({"merge_key", "imprint_id", "trace_id"})
+
+
+def _wanted(fn: Callable[..., Any], allowed: frozenset[str]) -> frozenset[str]:
+    """Which of ``allowed`` this handler declared (``**kwargs`` takes all)."""
+    wants: set[str] = set()
+    try:
+        for pname, p in inspect.signature(fn).parameters.items():
+            if p.kind is inspect.Parameter.VAR_KEYWORD:
+                return allowed
+            if pname in allowed:
+                wants.add(pname)
+    except (ValueError, TypeError):
+        pass  # no inspectable signature: positional-only call
+    return frozenset(wants)
+
+
+async def _call(fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+    out = fn(*args, **kwargs)
+    return await out if inspect.isawaitable(out) else out
+
+
+class _ServedEngram(Engram, LifecycleHooks):
+    """Concrete Engram whose read and write surfaces are decorators.
+
+    Built by :meth:`Engram.serve`; not instantiated directly. Handlers run
+    in registration order and the first non-None return answers, so a
+    policy gate (an ACL, a quota, a cache) can sit in front of the real
+    backend without either knowing about the other.
+    """
+
+    def __init__(
+        self,
+        *,
+        engram_id: str,
+        engram_kind: str,
+        capabilities: list[str] | None,
+        version: str | None,
+    ) -> None:
+        LifecycleHooks.__init__(self)
+        self.engram_id = engram_id
+        self.engram_kind = engram_kind
+        self.capabilities = capabilities or []
+        self.version = version
+        self._recall_handlers: list[tuple[Callable[..., Any], frozenset[str]]] = []
+        self._imprint_handlers: list[tuple[Callable[..., Any], frozenset[str]]] = []
+        self._serve_gate: Callable[..., Any] | None = None
+
+    # -- registration ----------------------------------------------------
+
+    def on_recall(self, fn: Callable[..., Any]) -> Callable[..., Any]:
+        """Register a RECALL handler; its RETURN VALUE becomes the RECALLED
+        hits. The handler receives ``query``, plus ``filters`` /
+        ``context_ref`` / ``deadline_ms`` / ``min_confidence`` if declared
+        as keyword parameters. Return a list of :class:`Hit` (or of
+        ``{"id", "entry", "score"}`` dicts), or None to fall through to the
+        next handler. Sync or async."""
+        self._recall_handlers.append((fn, _wanted(fn, _RECALL_HANDLER_KWARGS)))
+        return fn
+
+    def on_imprint(self, fn: Callable[..., Any]) -> Callable[..., Any]:
+        """Register an IMPRINT handler; its RETURN VALUE becomes the
+        IMPRINTED receipt. The handler receives ``op`` and ``entry``, plus
+        ``merge_key`` / ``imprint_id`` / ``trace_id`` if declared as
+        keyword parameters. Return an :class:`ImprintReceipt`, or the new
+        entry id as a str, or None to fall through. Sync or async."""
+        self._imprint_handlers.append((fn, _wanted(fn, _IMPRINT_HANDLER_KWARGS)))
+        return fn
+
+    def serves(self, fn: Callable[..., Any]) -> Callable[..., Any]:
+        """Register the ``can_serve(query) -> bool`` gate. Optional; the
+        default answers every query once a recall handler exists."""
+        self._serve_gate = fn
+        return fn
+
+    # -- Engram interface -------------------------------------------------
+
+    async def connect(self) -> None:
+        """Called by the hosting Dendrite at start(): starts the
+        ``@on_schedule`` loops and fires the ``@on_connect`` hooks."""
+        self._launch_schedule()
+        await self._fire_connect()
+
+    async def close(self) -> None:
+        """Called by the hosting Dendrite at stop()/detach: cancels the
+        ``@on_schedule`` loops."""
+        await self._stop_hooks()
+
+    async def can_serve(self, query: dict[str, Any]) -> bool:
+        if self._serve_gate is not None:
+            return bool(await _call(self._serve_gate, query))
+        return bool(self._recall_handlers)
+
+    async def recall(
+        self,
+        query: dict[str, Any],
+        *,
+        filters: dict[str, Any] | None = None,
+        context_ref: str | None = None,
+        deadline_ms: int | None = None,
+        min_confidence: float | None = None,
+    ) -> list[Hit]:
+        available = {
+            "filters": filters, "context_ref": context_ref,
+            "deadline_ms": deadline_ms, "min_confidence": min_confidence,
+        }
+        for fn, wants in self._recall_handlers:
+            out = await _call(fn, query, **{k: available[k] for k in wants})
+            if out is None:
+                continue                      # fall through to the next
+            return [
+                h if isinstance(h, Hit)
+                else Hit(id=str(h.get("id", "")), entry=h.get("entry") or {},
+                         score=float(h.get("score", 1.0)))
+                for h in out
+            ]
+        return []                             # a miss is not an error
+
+    async def imprint(
+        self,
+        op: str,
+        entry: dict[str, Any],
+        *,
+        merge_key: str | None = None,
+        imprint_id: str | None = None,
+        trace_id: str | None = None,
+    ) -> ImprintReceipt:
+        t0 = time.monotonic()
+        available = {
+            "merge_key": merge_key, "imprint_id": imprint_id,
+            "trace_id": trace_id,
+        }
+
+        def receipt(eid: str | None, error: str | None = None) -> ImprintReceipt:
+            return ImprintReceipt(
+                engram_id=self.engram_id, op=op, id=eid,
+                took_ms=int((time.monotonic() - t0) * 1000), error=error,
+            )
+
+        for fn, wants in self._imprint_handlers:
+            try:
+                out = await _call(fn, op, entry,
+                                  **{k: available[k] for k in wants})
+            except Exception as exc:  # noqa: BLE001 - a write failure is data
+                logger.exception(
+                    "Engram %s @on_imprint raised: %s", self.engram_id, exc,
+                )
+                return receipt(None, error=f"{type(exc).__name__}: {exc}")
+            if out is None:
+                continue                      # fall through to the next
+            if isinstance(out, ImprintReceipt):
+                return out
+            return receipt(str(out) if out is not True else None)
+        return receipt(None, error=f"unhandled imprint op {op!r}")
