@@ -345,6 +345,46 @@ def _render(template: str, *, namespace: str, project: str) -> str:
     return template.replace("__NAMESPACE__", namespace).replace("__PROJECT__", project)
 
 
+class ScaffoldExistsError(Exception):
+    """Raised by scaffold_project when the target has files and force=False."""
+
+
+def scaffold_project(
+    name: str, *, namespace: str = "demo", force: bool = False,
+) -> tuple[Path, list[str]]:
+    """Write the standard-skeleton project to ./NAME and return (target, written).
+
+    Pure, reusable core of `cosmo init` - shared by the CLI command below and
+    by the `cosmo genesis` API (cosmo/commands/_genesis.py), which needs to
+    trigger the same scaffold from a browser form instead of a terminal.
+    Raises ScaffoldExistsError instead of click.ClickException so callers
+    that aren't Click commands (e.g. an aiohttp handler) can catch it and
+    respond however fits their transport.
+    """
+    target = Path(name).resolve()
+    project = target.name
+
+    if target.exists() and any(target.iterdir()) and not force:
+        existing = [p.name for p in _FILES_present(target)]
+        if existing:
+            raise ScaffoldExistsError(
+                f"{target} already contains {', '.join(existing)}. "
+                "Re-run with force to overwrite, or choose a new directory."
+            )
+
+    target.mkdir(parents=True, exist_ok=True)
+
+    written: list[str] = []
+    for filename, template in _FILES.items():
+        dest = target / filename
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text(_render(template, namespace=namespace, project=project),
+                        encoding="utf-8")
+        written.append(filename)
+
+    return target, written
+
+
 @click.command("init")
 @click.argument("name", default="cosmonapse-app")
 @click.option("--namespace", "-n", default="demo", show_default=True,
@@ -365,27 +405,12 @@ def init(name: str, namespace: str, force: bool) -> None:
       cosmo init my-app --namespace=demo
       cosmo init . --force
     """
-    target = Path(name).resolve()
+    try:
+        target, written = scaffold_project(name, namespace=namespace, force=force)
+    except ScaffoldExistsError as e:
+        raise click.ClickException(str(e))
+
     project = target.name
-
-    if target.exists() and any(target.iterdir()) and not force:
-        existing = [p.name for p in _FILES_present(target)]
-        if existing:
-            raise click.ClickException(
-                f"{target} already contains {', '.join(existing)}. "
-                "Re-run with --force to overwrite, or choose a new directory."
-            )
-
-    target.mkdir(parents=True, exist_ok=True)
-
-    written: list[str] = []
-    for filename, template in _FILES.items():
-        dest = target / filename
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_text(_render(template, namespace=namespace, project=project),
-                        encoding="utf-8")
-        written.append(filename)
-
     click.echo(f"Scaffolded {project} in {target}")
     for filename in written:
         click.echo(f"  + {filename}")

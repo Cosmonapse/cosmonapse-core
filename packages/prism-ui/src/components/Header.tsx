@@ -1,5 +1,7 @@
 import { C, MONO } from "../theme";
+import type { SynapseTab } from "../tabs";
 import { Logo } from "./Logo";
+import { SynapseSwitcher } from "./SynapseSwitcher";
 
 export type PrismView = "brain" | "constellation" | "tree" | "list" | "metrics";
 
@@ -16,12 +18,15 @@ interface Props {
   total: number;
   paused: boolean;
   sidebarOpen: boolean;
-  /** The single monitored synapse. */
-  namespace: string;
-  url: string;
+  /** Every synapse Prism currently holds open, and which one is in front. */
+  tabs: SynapseTab[];
+  activeId: string | null;
+  statuses: Record<string, boolean>;
   view: PrismView;
   onSelectView: (v: PrismView) => void;
-  onDisconnect: () => void;
+  onSelectTab: (id: string) => void;
+  onAddTab: () => void;
+  onCloseTab: (id: string) => void;
   onTogglePause: () => void;
   onToggleSidebar: () => void;
   onClear: () => void;
@@ -46,11 +51,14 @@ export function Header({
   total,
   paused,
   sidebarOpen,
-  namespace,
-  url,
+  tabs,
+  activeId,
+  statuses,
   view,
   onSelectView,
-  onDisconnect,
+  onSelectTab,
+  onAddTab,
+  onCloseTab,
   onTogglePause,
   onToggleSidebar,
   onClear,
@@ -80,42 +88,15 @@ export function Header({
       </div>
       <span style={{ color: C.textFaint, flexShrink: 0 }}>│</span>
 
-      {/* The single monitored synapse */}
-      <div
-        title={`${shortUrl(url)} /${namespace}`}
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 7,
-          flexShrink: 0,
-          padding: "4px 10px",
-          borderRadius: 8,
-          fontFamily: MONO,
-          fontSize: 12,
-          background: "rgba(139,92,246,0.13)",
-          border: "1px solid rgba(139,92,246,0.45)",
-        }}
-      >
-        <span
-          style={{
-            width: 6,
-            height: 6,
-            borderRadius: "50%",
-            flexShrink: 0,
-            background: connected ? "#34d399" : "#f87171",
-            boxShadow: `0 0 5px ${connected ? "#34d399" : "#f87171"}`,
-          }}
-        />
-        <span style={{ color: C.accent2, whiteSpace: "nowrap" }}>{shortUrl(url)}</span>
-        <span style={{ color: C.textDim, whiteSpace: "nowrap" }}>/{namespace}</span>
-        <span
-          onClick={onDisconnect}
-          title="Disconnect / monitor another synapse"
-          style={{ color: C.textFaint, paddingLeft: 2, fontSize: 13, lineHeight: 1, cursor: "pointer" }}
-        >
-          ×
-        </span>
-      </div>
+      {/* Which synapse is in front - and every other one, one click away. */}
+      <SynapseSwitcher
+        tabs={tabs}
+        activeId={activeId}
+        statuses={statuses}
+        onSelect={onSelectTab}
+        onAdd={onAddTab}
+        onClose={onCloseTab}
+      />
 
       <span style={{ color: C.textFaint, flexShrink: 0 }}>│</span>
 
@@ -182,8 +163,4 @@ export function Header({
       </div>
     </div>
   );
-}
-
-function shortUrl(url: string): string {
-  return url.replace(/^[a-z]+:\/\//i, "");
 }

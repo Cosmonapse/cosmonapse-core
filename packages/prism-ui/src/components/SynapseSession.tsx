@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { SynapseTab } from "../tabs";
 import { MONO } from "../theme";
 import { isPrismError, type Signal } from "../types";
-import { useSignalStream, type SynapseTarget } from "../useSignalStream";
+import { useSignalStream } from "../useSignalStream";
 import { Constellation } from "./Constellation";
 import { Header, type PrismView } from "./Header";
 import { Metrics } from "./Metrics";
@@ -14,18 +15,37 @@ import { Tooltip } from "./Tooltip";
 const SIDEBAR_WIDTH = 380;
 
 interface Props {
-  target: SynapseTarget;
-  onDisconnect: () => void;
+  tab: SynapseTab;
+  /** Only the front tab renders; the rest stay mounted and keep streaming. */
+  active: boolean;
+  tabs: SynapseTab[];
+  activeId: string | null;
+  statuses: Record<string, boolean>;
+  onSelectTab: (id: string) => void;
+  onAddTab: () => void;
+  onCloseTab: (id: string) => void;
+  onStatus: (id: string, connected: boolean) => void;
 }
 
 /**
- * Everything that belongs to the monitored synapse: the signal stream plus the
+ * Everything that belongs to one monitored synapse: the signal stream plus the
  * views over it — Brain View (canvas + signal stream), Constellation
  * (execution graph per task run), Signal Tree (nested task diagram), and
- * Metrics (timing). The stream keeps flowing while
- * inactive views stay mounted, so switching tabs is instant.
+ * Metrics (timing). Each open tab mounts its own session, so a background
+ * synapse keeps its socket, its buffer and its per-view state; switching tabs
+ * is instant and loses nothing.
  */
-export function SynapseSession({ target, onDisconnect }: Props) {
+export function SynapseSession({
+  tab,
+  active,
+  tabs,
+  activeId,
+  statuses,
+  onSelectTab,
+  onAddTab,
+  onCloseTab,
+  onStatus,
+}: Props) {
   const [view, setView] = useState<PrismView>("brain");
   const [paused, setPaused] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -46,31 +66,42 @@ export function SynapseSession({ target, onDisconnect }: Props) {
     canvasRef.current?.emit(sig);
   }, []);
 
-  const { connected, signals, neurons, total, clear } = useSignalStream(target, {
+  const { connected, signals, neurons, total, clear } = useSignalStream(tab, {
     paused,
     onSignal,
   });
 
+  // Publish this tab's connection state so the switcher can show a dot per synapse.
   useEffect(() => {
+    onStatus(tab.id, connected);
+  }, [tab.id, connected, onStatus]);
+
+  useEffect(() => {
+    if (!active) return;
     const m = (e: MouseEvent) => setMouse({ x: e.clientX, y: e.clientY });
     window.addEventListener("mousemove", m);
     return () => window.removeEventListener("mousemove", m);
-  }, []);
+  }, [active]);
 
   const hoverInfo = hover ? neurons.get(hover) ?? null : null;
 
   return (
-    <>
+    // display:contents keeps the children positioned against the page, exactly
+    // as if this wrapper weren't here; display:none parks the whole session.
+    <div style={{ display: active ? "contents" : "none" }}>
       <Header
         connected={connected}
         total={total}
         paused={paused}
         sidebarOpen={sidebarOpen}
-        namespace={target.namespace}
-        url={target.url}
+        tabs={tabs}
+        activeId={activeId}
+        statuses={statuses}
         view={view}
         onSelectView={setView}
-        onDisconnect={onDisconnect}
+        onSelectTab={onSelectTab}
+        onAddTab={onAddTab}
+        onCloseTab={onCloseTab}
         onTogglePause={() => setPaused((p) => !p)}
         onToggleSidebar={() => setSidebarOpen((s) => !s)}
         onClear={() => {
@@ -85,7 +116,7 @@ export function SynapseSession({ target, onDisconnect }: Props) {
         <PrismCanvas
           ref={canvasRef}
           neurons={neurons}
-          namespace={target.namespace}
+          namespace={tab.namespace}
           sidebarOffset={sidebarOpen ? SIDEBAR_WIDTH : 0}
           onHover={setHover}
         />
@@ -113,7 +144,7 @@ export function SynapseSession({ target, onDisconnect }: Props) {
           </div>
         )}
 
-        <Tooltip neuron={hoverInfo} x={mouse.x} y={mouse.y} />
+        {active && <Tooltip neuron={hoverInfo} x={mouse.x} y={mouse.y} />}
         <Sidebar
           open={sidebarOpen}
           width={SIDEBAR_WIDTH}
@@ -127,6 +158,6 @@ export function SynapseSession({ target, onDisconnect }: Props) {
       {view === "tree" && <SignalTree signals={signals} />}
       {view === "list" && <SignalList signals={signals} />}
       {view === "metrics" && <Metrics signals={signals} />}
-    </>
+    </div>
   );
 }
