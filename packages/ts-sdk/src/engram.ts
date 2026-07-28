@@ -6,6 +6,21 @@
  * signals. Engrams are NOT Neurons: they never produce AGENT_OUTPUT. A hosting
  * Dendrite mounts one via `dendrite.attachEngram(engram)`.
  *
+ * Two ways to write one. Subclass `Engram` and implement `recall` / `imprint`
+ * (what every backend in this package does), or build one from handlers with
+ * `Engram.serve()` - the memory-side twin of `Effector.serve()`:
+ *
+ * ```ts
+ * const ENGRAM = Engram.serve({ engramId: "notes", engramKind: "context" });
+ * ENGRAM.onRecall(async (query) => [{ id, entry }]);
+ * ENGRAM.onImprint(async (op, entry, ctx) => store(op, entry, ctx.mergeKey));
+ * ```
+ *
+ * The handler RUNS the operation and its return value becomes the RECALLED
+ * hits / IMPRINTED receipt. Either way the Engram is attached under its own
+ * `engramId`, so it REGISTERs normally and observers classify it as an Engram -
+ * the handlers change where the body lives, nothing else.
+ *
  * This module is the value layer: the data types, the `Engram` contract, and
  * the default in-process `InMemoryEngram`. The SQLite / Postgres backends live
  * in `engram-sqlite.ts` / `engram-postgres.ts`; the caller-side correlation
@@ -13,6 +28,12 @@
  */
 
 import { newEngramId, type Directed, type Json } from "./envelope.js";
+import {
+  LifecycleHooks,
+  type ConnectHook,
+  type RefreshHook,
+  type ScheduleHook,
+} from "./hooks.js";
 
 export type RecallMode = "first" | "merge" | "all";
 export type ImprintOp = "add" | "append" | "merge" | "upsert" | "delete";
@@ -211,6 +232,47 @@ export abstract class Engram {
   async canServe(_query: Json): Promise<boolean> {
     return true;
   }
+
+  /**
+   * Build an Engram from the two protocol hooks that matter.
+   *
+   * The memory-side twin of {@link Effector.serve}. A RECALL arrives,
+   * the `onRecall` handler runs, and its return value is published as the
+   * RECALLED hits; an IMPRINT arrives, the `onImprint` handler runs, and its
+   * return value becomes the IMPRINTED receipt. What happens in between - an
+   * index, a vector store, an HTTP call - is your code:
+   *
+   * ```ts
+   * const ENGRAM = Engram.serve({ engramId: "notes" });
+   *
+   * ENGRAM.onRecall(async (query) =>
+   *   match(query).map(([k, v]) => ({ id: k, entry: v })));
+   *
+   * ENGRAM.onImprint(async (op, entry, ctx) => store(op, entry, ctx.mergeKey));
+   *
+   * await dendrite.attachEngram(ENGRAM);
+   * ```
+   *
+   * The result is a plain Engram: it REGISTERs under its own `engramId`, the
+   * hosting Dendrite resolves and services it exactly as it does a subclass,
+   * and the reply carries the Engram's own attribution. Lifecycle follows the
+   * shared {@link LifecycleHooks} contract - `onConnect` fires once when the
+   * hosting Dendrite connects it at start(), `onSchedule(everyMs)` loops run
+   * until stop(), `onRefresh` fires on `await engram.refresh()`.
+   */
+  static serve(opts: {
+    engramId: string;
+    engramKind?: string;
+    capabilities?: string[];
+    version?: string | null;
+  }): ServedEngram {
+    return new ServedEngram({
+      engramId: opts.engramId,
+      engramKind: opts.engramKind ?? "context",
+      capabilities: opts.capabilities ?? [],
+      version: opts.version ?? null,
+    });
+  }
 }
 
 export function receipt(
@@ -228,6 +290,215 @@ export function receipt(
     error,
     ok: error === null,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Engram.serve() - the decorator-native form
+// ---------------------------------------------------------------------------
+
+/** Context handed to an `onRecall` handler as its second argument - the TS
+ *  counterpart of the kwargs a Python handler opts into by declaring them. */
+export interface RecallContext {
+  filters: Json | null;
+  contextRef: string | null;
+  deadlineMs: number | null;
+  minConfidence: number | null;
+}
+
+/** Context handed to an `onImprint` handler as its third argument. */
+export interface ImprintContext {
+  mergeKey: string | null;
+  imprintId: string | null;
+  traceId: string | null;
+}
+
+/** A loose hit an `onRecall` handler may return in place of a full {@link Hit}. */
+export interface HitLike {
+  id?: string;
+  entry?: Json;
+  score?: number;
+}
+
+/**
+ * A RECALL handler; its RETURN VALUE BECOMES THE RECALLED hits - no manual
+ * publish. Return an array of {@link Hit} (or of `{ id, entry, score }`
+ * objects), or null/undefined to fall through to the next handler. Handlers
+ * run in registration order, so a policy gate (an ACL, a quota, a cache) can
+ * sit in front of the real backend without either knowing about the other.
+ * An empty array is an answer - a miss, not an error.
+ */
+export type RecallHandler = (
+  query: Json,
+  ctx: RecallContext,
+) => Array<Hit | HitLike> | null | undefined | Promise<Array<Hit | HitLike> | null | undefined>;
+
+/**
+ * An IMPRINT handler; its RETURN VALUE BECOMES THE IMPRINTED receipt. Return
+ * an {@link ImprintReceipt}, the new entry id as a string, `true` for "written,
+ * no id", or null/undefined to fall through to the next handler. A throw is
+ * captured as `error` on the receipt - a write failure is data, not a crash.
+ */
+export type ImprintHandler = (
+  op: ImprintOp,
+  entry: Json,
+  ctx: ImprintContext,
+) => ImprintReceipt | string | boolean | null | undefined |
+  Promise<ImprintReceipt | string | boolean | null | undefined>;
+
+/** The `canServe(query) -> boolean` gate. Optional. */
+export type ServeGate = (query: Json) => boolean | Promise<boolean>;
+
+/** Duck-type test: interfaces have no runtime identity, so recognise a
+ *  returned receipt by its shape rather than by instanceof. */
+function isImprintReceipt(v: unknown): v is ImprintReceipt {
+  return (
+    typeof v === "object" && v !== null &&
+    "engramId" in v && "op" in v && "ok" in v
+  );
+}
+
+/**
+ * Concrete Engram whose read and write surfaces are handlers - `onRecall`,
+ * whose return value is published as the RECALLED hits, and `onImprint`,
+ * whose return value becomes the IMPRINTED receipt - plus the shared
+ * LifecycleHooks trio. Built by {@link Engram.serve}; not instantiated
+ * directly.
+ */
+export class ServedEngram extends Engram {
+  engramId: string;
+  engramKind: string;
+  capabilities: string[];
+
+  /** @internal - lifecycle hooks, driven by the hosting Dendrite. */
+  readonly hooks: LifecycleHooks<ServedEngram> = new LifecycleHooks<ServedEngram>(this);
+
+  private readonly recallHandlers: RecallHandler[] = [];
+  private readonly imprintHandlers: ImprintHandler[] = [];
+  private serveGate: ServeGate | null = null;
+
+  constructor(opts: {
+    engramId: string;
+    engramKind: string;
+    capabilities: string[];
+    version: string | null;
+  }) {
+    super();
+    this.engramId = opts.engramId;
+    this.engramKind = opts.engramKind;
+    this.capabilities = opts.capabilities;
+    this.version = opts.version;
+  }
+
+  // -- registration -----------------------------------------------------
+
+  /** Register a RECALL handler - see {@link RecallHandler}. */
+  onRecall(fn: RecallHandler): RecallHandler {
+    this.recallHandlers.push(fn);
+    return fn;
+  }
+
+  /** Register an IMPRINT handler - see {@link ImprintHandler}. */
+  onImprint(fn: ImprintHandler): ImprintHandler {
+    this.imprintHandlers.push(fn);
+    return fn;
+  }
+
+  /** Register the `canServe(query)` gate. Optional; the default answers every
+   *  query once a recall handler exists. */
+  serves(fn: ServeGate): ServeGate {
+    this.serveGate = fn;
+    return fn;
+  }
+
+  /** Register a fire-once handler called when the hosting Dendrite connects
+   *  this Engram at start(). */
+  onConnect(fn: ConnectHook<ServedEngram>): ConnectHook<ServedEngram> {
+    return this.hooks.onConnect(fn);
+  }
+  /** Register a handler fired on `await engram.refresh()`. */
+  onRefresh(fn: RefreshHook<ServedEngram>): RefreshHook<ServedEngram> {
+    return this.hooks.onRefresh(fn);
+  }
+  /** Register a periodic handler that runs every `everyMs` while the host runs. */
+  onSchedule(everyMs: number, fn: ScheduleHook<ServedEngram>): ScheduleHook<ServedEngram> {
+    return this.hooks.onSchedule(everyMs, fn);
+  }
+  /** Fire the onRefresh hooks. */
+  async refresh(
+    opts: { reason?: string; extra?: Record<string, unknown> } = {},
+  ): Promise<void> {
+    await this.hooks.refresh(opts);
+  }
+
+  // -- Engram interface -------------------------------------------------
+
+  /** Called by the hosting Dendrite at start(): starts the `onSchedule`
+   *  loops and fires the `onConnect` hooks. */
+  async connect(): Promise<void> {
+    this.hooks._launchSchedule();
+    await this.hooks._fireConnect();
+  }
+
+  /** Called by the hosting Dendrite at stop()/detach: cancels the
+   *  `onSchedule` loops. */
+  async close(): Promise<void> {
+    this.hooks._stopHooks();
+  }
+
+  override async canServe(query: Json): Promise<boolean> {
+    if (this.serveGate !== null) return Boolean(await this.serveGate(query));
+    return this.recallHandlers.length > 0;
+  }
+
+  async recall(query: Json, opts: RecallOptions = {}): Promise<Hit[]> {
+    const ctx: RecallContext = {
+      filters: opts.filters ?? null,
+      contextRef: opts.contextRef ?? null,
+      deadlineMs: opts.deadlineMs ?? null,
+      minConfidence: opts.minConfidence ?? null,
+    };
+    for (const fn of this.recallHandlers) {
+      const out = await fn(query, ctx);
+      if (out === null || out === undefined) continue;   // fall through
+      return out.map((h) => ({
+        id: String(h.id ?? ""),
+        entry: (h.entry ?? {}) as Json,
+        score: typeof h.score === "number" ? h.score : 1.0,
+      }));
+    }
+    return [];                                           // a miss is not an error
+  }
+
+  async imprint(op: ImprintOp, entry: Json, opts: ImprintOptions = {}): Promise<ImprintReceipt> {
+    const t0 = Date.now();
+    const ctx: ImprintContext = {
+      mergeKey: opts.mergeKey ?? null,
+      imprintId: opts.imprintId ?? null,
+      traceId: opts.traceId ?? null,
+    };
+    for (const fn of this.imprintHandlers) {
+      let out: ImprintReceipt | string | boolean | null | undefined;
+      try {
+        out = await fn(op, entry, ctx);
+      } catch (err) {
+        // A write failure is data, not a crash.
+        return receipt(this.engramId, op, {
+          tookMs: Date.now() - t0,
+          error: err instanceof Error ? `${err.name}: ${err.message}` : String(err),
+        });
+      }
+      if (out === null || out === undefined || out === false) continue;
+      if (isImprintReceipt(out)) return out;
+      return receipt(this.engramId, op, {
+        id: out === true ? null : String(out),
+        tookMs: Date.now() - t0,
+      });
+    }
+    return receipt(this.engramId, op, {
+      tookMs: Date.now() - t0,
+      error: `unhandled imprint op '${op}': no onImprint handler answered`,
+    });
+  }
 }
 
 // ---------------------------------------------------------------------------

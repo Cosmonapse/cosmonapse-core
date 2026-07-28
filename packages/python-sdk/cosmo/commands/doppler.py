@@ -37,19 +37,17 @@ from __future__ import annotations
 import asyncio
 import json
 import signal as _signal
-from typing import Optional
 from urllib.parse import urlparse
 
 import click
 
-from cosmonapse import Signal, SignalType, discover_signal
-
-# The signal-type colour map is shared across the CLI (see _shared.py).
-from cosmo.commands._shared import _HAS_RICH, _TYPE_COLOURS
-
 # The Prism browser visualization (hero + animated view + WS bridge) lives in
 # its own module so the doppler CLI file stays small.
 from cosmo.commands._prism import run_prism as _run_prism
+
+# The signal-type colour map is shared across the CLI (see _shared.py).
+from cosmo.commands._shared import _HAS_RICH, _TYPE_COLOURS
+from cosmonapse import Signal, SignalType, discover_signal
 
 # doppler renders signals with its own payload-aware formatter, so it keeps a
 # Console + Text handle here when rich is available.
@@ -118,18 +116,17 @@ def _make_synapse(base_url: str):
     if scheme == "cosmo":
         from cosmonapse.synapse.dev import DevSynapse
         return DevSynapse(url=base_url)
-    elif scheme == "nats":
+    if scheme == "nats":
         from cosmonapse.synapse.nats import NatsSynapse
         return NatsSynapse(url=base_url)
-    elif scheme == "kafka":
+    if scheme == "kafka":
         from cosmonapse.synapse.kafka import KafkaSynapse
         broker = base_url.replace("kafka://", "")
         return KafkaSynapse(bootstrap_servers=broker)
-    else:
-        raise click.ClickException(
-            f"Unknown synapse scheme {scheme!r}. "
-            "Use cosmo://, nats://, or kafka://."
-        )
+    raise click.ClickException(
+        f"Unknown synapse scheme {scheme!r}. "
+        "Use cosmo://, nats://, or kafka://."
+    )
 
 
 def _render_signal(subject: str, sig: Signal, show_payload: bool = False) -> None:
@@ -188,14 +185,14 @@ def _render_signal(subject: str, sig: Signal, show_payload: bool = False) -> Non
 @click.option("--payload", is_flag=True,
               help="Show payload preview alongside each signal (CLI mode only).")
 def doppler(
-    url: Optional[str],
-    namespace: Optional[str],
-    synapse_arg: Optional[str],
+    url: str | None,
+    namespace: str | None,
+    synapse_arg: str | None,
     show_prism: bool,
     port: int,
     filter_types: tuple[str, ...],
-    trace: Optional[str],
-    neuron: Optional[str],
+    trace: str | None,
+    neuron: str | None,
     output_json: bool,
     payload: bool,
 ) -> None:
@@ -303,7 +300,7 @@ async def _run_cli(
 
     subject = f"cosmonapse.{namespace}.>"
     # Broadcast DISCOVER once before the wildcard subscribe so every
-    # Dendrite with attached Axons replies with a REGISTER snapshot  - 
+    # Dendrite with attached Axons replies with a REGISTER snapshot  -
     # the Doppler immediately sees the current namespace state instead
     # of waiting for the next heartbeat tick.
     try:

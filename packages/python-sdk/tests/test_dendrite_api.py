@@ -18,11 +18,11 @@ from cosmonapse import (
     DendriteProtocolError,
     Directed,
     MemorySynapse,
-    register_signal,
-    heartbeat_signal,
     final_signal,
-    new_trace_id,
+    heartbeat_signal,
     new_event_id,
+    new_trace_id,
+    register_signal,
 )
 
 
@@ -38,8 +38,8 @@ async def _make_dendrite():
 
 def test_context_fetcher_is_exported():
     # Regression: ContextFetcher used to be defined in axon.py but never exported.
-    from cosmonapse import ContextFetcher  # noqa: F401
     import cosmonapse
+    from cosmonapse import ContextFetcher  # noqa: F401
     assert "ContextFetcher" in cosmonapse.__all__
 
 

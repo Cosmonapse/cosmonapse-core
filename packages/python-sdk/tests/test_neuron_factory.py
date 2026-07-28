@@ -13,7 +13,7 @@ import asyncio
 
 import pytest
 
-from cosmonapse import Neuron, STANDARD_MCP_SERVERS
+from cosmonapse import STANDARD_MCP_SERVERS, Neuron
 
 
 def _run(coro):
@@ -79,7 +79,6 @@ def test_openai_compatible_aliases(source, endpoint):
     neuron = Neuron(source=source, model="some-model")
     # Each alias is a pre-configured _HuggingFaceNeuron-compatible callable.
     assert callable(neuron)
-    assert hasattr(neuron, "__call__")
     assert neuron.endpoint == endpoint
     assert neuron.use_chat_api is True
 

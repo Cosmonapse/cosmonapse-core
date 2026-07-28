@@ -210,21 +210,20 @@ def test_async_for_yields_signals_then_stops_on_close():
                 return {"x": 1}
 
             worker.attach_axon(Axon(neuron_id="echo", neuron_fn=echo))
-            async with worker, orch:
-                async with await orch.dispatch(neuron="echo", input={}) as pw:
-                    received = []
-                    # Iterate in a background task so we can close from outside.
-                    async def consume():
-                        async for sig in pw:
-                            received.append(sig)
-                            # Stop after the first AGENT_OUTPUT (mirrors a
-                            # workflow that breaks out once it has its result).
-                            if sig.type is SignalType.AGENT_OUTPUT:
-                                break
+            async with worker, orch, await orch.dispatch(neuron="echo", input={}) as pw:
+                received = []
+                # Iterate in a background task so we can close from outside.
+                async def consume():
+                    async for sig in pw:
+                        received.append(sig)
+                        # Stop after the first AGENT_OUTPUT (mirrors a
+                        # workflow that breaks out once it has its result).
+                        if sig.type is SignalType.AGENT_OUTPUT:
+                            break
 
-                    await asyncio.wait_for(consume(), timeout=2.0)
-                    assert len(received) >= 1
-                    assert received[-1].type is SignalType.AGENT_OUTPUT
+                await asyncio.wait_for(consume(), timeout=2.0)
+                assert len(received) >= 1
+                assert received[-1].type is SignalType.AGENT_OUTPUT
         finally:
             await synapse.close()
     _run(run())

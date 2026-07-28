@@ -47,7 +47,10 @@ from cosmonapse.envelope import Signal
 from cosmonapse.synapse.base import MessageHandler, Subscription, Synapse
 
 if TYPE_CHECKING:
-    from aiokafka import AIOKafkaConsumer, AIOKafkaProducer  # type: ignore[import-untyped]  # noqa: F401
+    from aiokafka import (  # type: ignore[import-untyped]  # noqa: F401
+        AIOKafkaConsumer,
+        AIOKafkaProducer,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -72,7 +75,7 @@ def _subject_to_topic_regex(pattern: str) -> str | None:
 
 
 class _KafkaSubscription(Subscription):
-    def __init__(self, synapse: "KafkaSynapse", consumer_task: asyncio.Task[None],
+    def __init__(self, synapse: KafkaSynapse, consumer_task: asyncio.Task[None],
                  consumer: Any) -> None:
         self._synapse = synapse
         self._task = consumer_task
@@ -194,7 +197,7 @@ class KafkaSynapse(Synapse):
 
         # No queue_group => the Doppler pattern; each such consumer gets
         # a unique group_id so it joins its own group and sees every record.
-        group_id = queue_group if queue_group else f"cosmonapse-solo-{uuid.uuid4().hex[:12]}"
+        group_id = queue_group or f"cosmonapse-solo-{uuid.uuid4().hex[:12]}"
 
         consumer = AIOKafkaConsumer(
             bootstrap_servers=servers,

@@ -49,6 +49,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
+from typing import Self
 
 from cosmonapse.envelope import Signal, SignalType
 
@@ -298,7 +299,7 @@ class Pathway:
     # Consumer shape #3: async iteration
     # ------------------------------------------------------------------
 
-    def __aiter__(self) -> "Pathway":
+    def __aiter__(self) -> Pathway:
         return self
 
     async def __anext__(self) -> Signal:
@@ -312,7 +313,7 @@ class Pathway:
     # Lifecycle
     # ------------------------------------------------------------------
 
-    async def __aenter__(self) -> "Pathway":
+    async def __aenter__(self) -> Self:
         return self
 
     async def __aexit__(self, *_: object) -> None:
@@ -348,7 +349,7 @@ class Pathway:
                 result = self._on_close(self)
                 if asyncio.iscoroutine(result):
                     await result
-            except Exception as exc:  # noqa: BLE001  -  teardown must not raise
+            except Exception as exc:
                 logger.warning(
                     "Pathway %s: on_close hook raised: %s",
                     self._trace_id, exc,
@@ -395,7 +396,7 @@ class Pathway:
                     result = handler(signal)
                     if asyncio.iscoroutine(result):
                         await result
-                except Exception as exc:  # noqa: BLE001
+                except Exception as exc:
                     logger.exception(
                         "Pathway %s: scoped-out handler for %s raised: %s",
                         self._trace_id, signal.type.value, exc,
@@ -427,7 +428,7 @@ class Pathway:
                 result = handler(signal)
                 if asyncio.iscoroutine(result):
                     await result
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 logger.exception(
                     "Pathway %s: handler for %s raised: %s",
                     self._trace_id, signal.type.value, exc,

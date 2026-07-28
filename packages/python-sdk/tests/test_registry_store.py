@@ -12,7 +12,7 @@ otherwise it is skipped.
 
 import asyncio
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -152,7 +152,7 @@ def test_touch_heartbeat_updates_existing(make_store):
         await store.connect()
         try:
             await store.upsert(NeuronRecord(neuron_id="a"))
-            ts = datetime(2026, 1, 1, tzinfo=timezone.utc)
+            ts = datetime(2026, 1, 1, tzinfo=UTC)
             await store.touch_heartbeat("a", ts)
             rec = await store.get("a")
             assert rec.last_heartbeat is not None
@@ -169,7 +169,7 @@ def test_touch_heartbeat_creates_thin_record(make_store):
         store = make_store()
         await store.connect()
         try:
-            ts = datetime(2026, 1, 1, tzinfo=timezone.utc)
+            ts = datetime(2026, 1, 1, tzinfo=UTC)
             await store.touch_heartbeat("early", ts, status="registered")
             rec = await store.get("early")
             assert rec is not None

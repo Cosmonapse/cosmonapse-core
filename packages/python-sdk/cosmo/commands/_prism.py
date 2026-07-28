@@ -37,9 +37,8 @@ from pathlib import Path
 
 import click
 
-from cosmonapse import Signal, SignalType, discover_signal
-
 from cosmo.commands._shared import _HAS_RICH
+from cosmonapse import Signal, SignalType, discover_signal
 
 if _HAS_RICH:
     from rich.console import Console
@@ -93,18 +92,17 @@ def _make_synapse(base_url: str):
     if scheme == "cosmo":
         from cosmonapse.synapse.dev import DevSynapse
         return DevSynapse(url=base_url)
-    elif scheme == "nats":
+    if scheme == "nats":
         from cosmonapse.synapse.nats import NatsSynapse
         return NatsSynapse(url=base_url)
-    elif scheme == "kafka":
+    if scheme == "kafka":
         from cosmonapse.synapse.kafka import KafkaSynapse
         broker = base_url.replace("kafka://", "")
         return KafkaSynapse(bootstrap_servers=broker)
-    else:
-        raise click.ClickException(
-            f"Unknown synapse scheme {scheme!r}. "
-            "Use cosmo://, nats://, or kafka://."
-        )
+    raise click.ClickException(
+        f"Unknown synapse scheme {scheme!r}. "
+        "Use cosmo://, nats://, or kafka://."
+    )
 
 
 def _error_envelope(code: str, message: str) -> str:

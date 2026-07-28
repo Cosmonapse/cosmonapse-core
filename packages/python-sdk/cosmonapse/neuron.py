@@ -48,12 +48,13 @@ from __future__ import annotations
 
 import os
 import warnings
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from cosmonapse._neuron_base import _BaseNeuron, _require_httpx
 from cosmonapse._neuron_mcp import STANDARD_MCP_SERVERS, _MCPNeuron
 
-__all__ = ["Neuron", "STANDARD_MCP_SERVERS"]
+__all__ = ["STANDARD_MCP_SERVERS", "Neuron"]
 
 
 # ---------------------------------------------------------------------------

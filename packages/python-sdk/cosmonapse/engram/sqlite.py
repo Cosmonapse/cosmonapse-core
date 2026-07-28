@@ -21,12 +21,11 @@ import asyncio
 import json
 import sqlite3
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from cosmonapse.engram.base import Engram, Hit, ImprintReceipt
 from cosmonapse.envelope import new_engram_id
-
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS engram_entries (
@@ -59,7 +58,7 @@ CREATE TABLE IF NOT EXISTS engram_imprint_seen (
 
 
 def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _row_to_entry_dict(row: tuple[Any, ...]) -> dict[str, Any]:
@@ -169,9 +168,11 @@ class SqliteEngram(Engram):
 
         def _read() -> list[Any]:
             sql_parts = [
-                "SELECT id, engram_kind, merge_key, content, tags, meta, "
-                "version, created_at, updated_at, deleted_at "
-                "FROM engram_entries WHERE deleted_at IS NULL"
+                (
+                    "SELECT id, engram_kind, merge_key, content, tags, meta, "
+                    "version, created_at, updated_at, deleted_at "
+                    "FROM engram_entries WHERE deleted_at IS NULL"
+                )
             ]
             params: list[Any] = []
             if merge_key is not None:
@@ -184,8 +185,7 @@ class SqliteEngram(Engram):
                 sql_parts.append("AND updated_at <= ?")
                 params.append(until)
             sql = " ".join(sql_parts) + " ORDER BY updated_at DESC"
-            rows = conn.execute(sql, params).fetchall()
-            return rows
+            return conn.execute(sql, params).fetchall()
 
         rows = await self._run(_read)
 

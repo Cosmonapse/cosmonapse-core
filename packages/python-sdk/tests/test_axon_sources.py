@@ -267,7 +267,7 @@ if __name__ == "__main__":
             fn()
             passed += 1
             print(f"PASS {name}")
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             # importorskip raises a Skipped exception under pytest; without
             # pytest those tests simply error on `import pytest` -> count skip.
             if "importorskip" in traceback.format_exc() or "Skipped" in type(exc).__name__:

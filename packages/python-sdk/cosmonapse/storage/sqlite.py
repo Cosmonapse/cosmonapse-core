@@ -15,12 +15,10 @@ from __future__ import annotations
 import asyncio
 import json
 import sqlite3
-from datetime import datetime, timezone
-
+from datetime import UTC, datetime
 from typing import Any, cast
 
 from cosmonapse.storage.base import NeuronRecord, RegistryStore
-
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS neurons (
@@ -38,7 +36,7 @@ def _parse_ts(value: str | None) -> datetime | None:
     if value is None:
         return None
     dt = datetime.fromisoformat(value)
-    return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
+    return dt if dt.tzinfo is not None else dt.replace(tzinfo=UTC)
 
 
 def _record_from_row(row: tuple[Any, ...]) -> NeuronRecord:
@@ -48,7 +46,7 @@ def _record_from_row(row: tuple[Any, ...]) -> NeuronRecord:
         version=row[2],
         status=row[3],
         last_heartbeat=_parse_ts(row[4]),
-        registered_at=_parse_ts(row[5]) or datetime.now(timezone.utc),
+        registered_at=_parse_ts(row[5]) or datetime.now(UTC),
     )
 
 
@@ -160,7 +158,7 @@ class SqliteRegistryStore(RegistryStore):
         assert self._conn is not None
         conn = self._conn
         ts_iso = ts.isoformat()
-        now_iso = datetime.now(timezone.utc).isoformat()
+        now_iso = datetime.now(UTC).isoformat()
 
         def _write() -> None:
             cur = conn.cursor()

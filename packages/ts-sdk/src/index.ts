@@ -252,7 +252,9 @@ export {
 
 export {
   Engram,
+  ServedEngram,
   InMemoryEngram,
+  receipt,
   EngramBinding,
   EngramError,
   EngramTimeout,
@@ -269,6 +271,12 @@ export {
   type ImprintOptions,
   type EngramBindingInit,
   type InMemoryEngramInit,
+  type RecallContext,
+  type ImprintContext,
+  type HitLike,
+  type RecallHandler,
+  type ImprintHandler,
+  type ServeGate,
 } from "./engram.js";
 
 export {

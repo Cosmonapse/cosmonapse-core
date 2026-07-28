@@ -317,7 +317,7 @@ class TestStandards:
         }
         # the Responses-API item shape: type=function_call, string args, id
         text = ('{"type": "function_call", "id": "call_1", "name": "read", '
-                '"arguments": "{\"path\": \"x\"}"}')
+                r'"arguments": "{\"path\": \"x\"}"}')
         assert parse_codex(text) == {
             "tool": "read", "args": {"path": "x"}, "call_id": "call_1",
         }

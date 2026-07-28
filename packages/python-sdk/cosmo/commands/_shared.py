@@ -114,8 +114,8 @@ else:
 __all__ = [
     "_HAS_RICH",
     "_TYPE_COLOURS",
-    "_print_signal",
-    "_hr",
     "_banner_line",
     "_err",
+    "_hr",
+    "_print_signal",
 ]

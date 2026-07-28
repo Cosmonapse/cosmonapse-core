@@ -69,14 +69,14 @@ core dependency so projects that don't use MCP neurons don't pull it in.
 """
 
 from __future__ import annotations
-import types
 
 import asyncio
+import types
 from typing import Any
 
 from cosmonapse._neuron_base import _BaseNeuron
 
-# Launch specs for standard, separately-published MCP servers. We wrap them  - 
+# Launch specs for standard, separately-published MCP servers. We wrap them  -
 # we do not ship them. Anything supplied in the constructor `args` is appended
 # to the preset args (e.g. allowed directories for filesystem, repo for git).
 STANDARD_MCP_SERVERS: dict[str, dict[str, Any]] = {
@@ -125,12 +125,13 @@ _CONTROL_KEYS = {"tool", "arguments", "args", "__list_tools__"}
 def _require_mcp() -> types.ModuleType:
     try:
         import mcp  # type: ignore[import-not-found]
-        return mcp  # type: ignore[no-any-return]
     except ImportError:
         raise ImportError(
             "The 'mcp' package is required for MCP-server Neuron wrappers.\n"
             "Install it with:  pip install mcp"
         ) from None
+    else:
+        return mcp  # type: ignore[no-any-return]
 
 
 def _resolve_launch(
@@ -296,30 +297,32 @@ class _MCPNeuron(_BaseNeuron):
             cwd=self.cwd,
         )
         try:
-            async with stdio_client(params) as (read, write):
-                async with ClientSession(read, write) as session:
-                    await session.initialize()
-                    if not started.done():
-                        started.set_result(None)
-                    assert self._req_q is not None
-                    while True:
-                        item = await self._req_q.get()
-                        if item is None:  # shutdown sentinel
-                            break
-                        fut, kind, payload = item
-                        try:
-                            if kind == "list":
-                                res = await session.list_tools()
-                            else:
-                                res = await session.call_tool(
-                                    payload["tool"], payload["arguments"]
-                                )
-                            if not fut.done():
-                                fut.set_result(res)
-                        except Exception as exc:  # noqa: BLE001
-                            if not fut.done():
-                                fut.set_exception(exc)
-        except Exception as exc:  # noqa: BLE001  -  startup / transport failure
+            async with (
+                stdio_client(params) as (read, write),
+                ClientSession(read, write) as session,
+            ):
+                await session.initialize()
+                if not started.done():
+                    started.set_result(None)
+                assert self._req_q is not None
+                while True:
+                    item = await self._req_q.get()
+                    if item is None:  # shutdown sentinel
+                        break
+                    fut, kind, payload = item
+                    try:
+                        if kind == "list":
+                            res = await session.list_tools()
+                        else:
+                            res = await session.call_tool(
+                                payload["tool"], payload["arguments"]
+                            )
+                        if not fut.done():
+                            fut.set_result(res)
+                    except Exception as exc:
+                        if not fut.done():
+                            fut.set_exception(exc)
+        except Exception as exc:
             if not started.done():
                 started.set_exception(exc)
             else:
@@ -359,7 +362,7 @@ class _MCPNeuron(_BaseNeuron):
             await asyncio.wait_for(asyncio.shield(worker), timeout=10)
         except (asyncio.TimeoutError, asyncio.CancelledError):
             worker.cancel()
-        except Exception:  # noqa: BLE001
+        except Exception:
             pass
         finally:
             self._worker = None

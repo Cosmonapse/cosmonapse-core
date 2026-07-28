@@ -17,13 +17,11 @@ import asyncio
 import json
 import os
 import signal as _signal
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import click
-
-from cosmonapse import Signal
 
 # Signal pretty-printing helpers live in one place now (see _shared.py).
 from cosmo.commands._shared import (
@@ -33,6 +31,7 @@ from cosmo.commands._shared import (
     _hr,
     _print_signal,
 )
+from cosmonapse import Signal
 
 # `synapse view` renders a rich Table of its own; keep a Console + Table handle
 # here when rich is available. Everything else comes from _shared.
@@ -72,7 +71,7 @@ def _register_state(url: str, namespace: str, transport: str, pid: int) -> None:
     state.setdefault(url, {})[namespace] = {
         "transport": transport,
         "pid": pid,
-        "started_at": datetime.now(timezone.utc).isoformat(),
+        "started_at": datetime.now(UTC).isoformat(),
     }
     _save_state(state)
 

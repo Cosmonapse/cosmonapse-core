@@ -369,7 +369,7 @@ def init(name: str, namespace: str, force: bool) -> None:
     project = target.name
 
     if target.exists() and any(target.iterdir()) and not force:
-        existing = [p.name for p in _FILES_present(target)]
+        existing = [p.name for p in _files_present(target)]
         if existing:
             raise click.ClickException(
                 f"{target} already contains {', '.join(existing)}. "
@@ -400,6 +400,6 @@ def init(name: str, namespace: str, force: bool) -> None:
     click.echo("  SYNAPSE_URL=cosmo://127.0.0.1:7070 python demo.py")
 
 
-def _FILES_present(target: Path) -> list[Path]:
+def _files_present(target: Path) -> list[Path]:
     """Return any scaffold files that already exist in the target directory."""
     return [target / f for f in _FILES if (target / f).exists()]

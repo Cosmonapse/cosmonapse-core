@@ -9,7 +9,6 @@ Covers the cleanup fixes:
 import asyncio
 import warnings
 
-
 from cosmonapse import DevSynapse, DevSynapseServer, MemorySynapse, task_signal
 
 

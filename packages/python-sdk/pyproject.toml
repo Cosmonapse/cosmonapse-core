@@ -35,7 +35,10 @@ postgres = ["asyncpg>=0.29"]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
-    "ruff>=0.4",
+    # Pinned exactly: ruff's default rule set changes between releases, so an
+    # unpinned range makes `ruff check` non-reproducible across dev machines
+    # and CI. Bump deliberately, not implicitly.
+    "ruff==0.16.0",
     "mypy>=1.9",
     # so the test suite can exercise the optional code paths
     "aiokafka>=0.10",
@@ -101,6 +104,73 @@ asyncio_mode = "auto"
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+
+# An explicit `select` is required: recent ruff versions enable ~400 rules by
+# default, so relying on the default turns every ruff upgrade into a wall of
+# new "errors". The set below is the one this codebase is actually written
+# against (see the `# noqa:` directives throughout).
+[tool.ruff.lint]
+select = [
+    "F",      # pyflakes  -  real bugs: undefined names, unused imports
+    "E", "W", # pycodestyle
+    "I",      # isort
+    "N",      # pep8-naming
+    "UP",     # pyupgrade
+    "B",      # flake8-bugbear
+    "C4",     # comprehensions
+    "SIM",    # flake8-simplify
+    "RET",    # flake8-return
+    "PIE",
+    "ISC",    # implicit string concat
+    "FURB",   # refurb
+    "PYI",    # stub/protocol correctness
+    "ASYNC",  # async correctness
+    "S",      # bandit
+    "BLE",    # blind except
+    "TRY",    # tryceratops
+    "EXE",
+    "ARG",    # unused arguments
+    "RUF",
+]
+ignore = [
+    "E501",    # line length: long URLs/SQL/log strings are not worth wrapping
+    "TRY003",  # long messages inside raise: these errors are user-facing
+    "TRY401",  # redundant exception in logging.exception: we want the value
+    "BLE001",  # blind except: deliberate  -  a handler must never kill the loop
+    "ARG001",  # unused function argument: protocol/callback signatures are fixed
+    "ARG002",  # ...same, for methods
+    "ARG003",
+    "ARG005",
+    "RUF059",  # unused unpacked variable
+    "SIM105",  # contextlib.suppress: an explicit try/except reads better here
+    "B904",    # raise ... from: not enforced
+    "S110",    # try-except-pass: deliberate best-effort cleanup paths
+    "S112",    # try-except-continue: ditto
+    "N818",    # exception naming: renaming public error classes would break API
+    "EXE002",  # shebang/exec-bit: false positive on Windows & OneDrive checkouts
+    # Internal invariants ("assert self._pool is not None") that document
+    # state rather than validate input. NOTE: these are stripped under
+    # `python -O`; converting the storage-layer ones to explicit raises is a
+    # worthwhile follow-up.
+    "S101",
+    # SignalType is `(str, Enum)` on purpose  -  switching to StrEnum would
+    # change `str(SignalType.X)` and break wire compatibility.
+    "UP042",
+    # `asyncio.TimeoutError` is an alias of the builtin only on py3.11+. The
+    # rewrite is a no-op on supported versions but silently changes which
+    # exception is caught on 3.10, so the explicit form is kept.
+    "UP041",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests assert, poke at dunders, and busy-wait on purpose.
+"tests/**" = ["S101", "B018", "ASYNC110", "C408", "N806"]
+# Win32 API constants are conventionally SCREAMING_CASE.
+"cosmo/_install.py" = ["N806"]
+# The recall() query is assembled from fixed column names plus $N placeholders
+# emitted by the local _p() helper, which binds every caller-supplied value
+# through asyncpg. Not an injection vector.
+"cosmonapse/engram/postgres.py" = ["S608"]
 
 [tool.mypy]
 strict = true

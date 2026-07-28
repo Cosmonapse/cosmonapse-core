@@ -103,7 +103,7 @@ def _validate_signal(index: int, raw: dict[str, Any]) -> ValidationResult:
     if ts_val is not None:
         try:
             from datetime import datetime
-            datetime.fromisoformat(str(ts_val).replace("Z", "+00:00"))
+            datetime.fromisoformat(str(ts_val))
         except (ValueError, TypeError):
             result.error(f"'ts' is not a valid ISO-8601 datetime: {ts_val!r}")
 

@@ -53,13 +53,13 @@ class EffectorClient:
     Pathway's job.
     """
 
-    def __init__(self, dendrite: "Dendrite") -> None:
+    def __init__(self, dendrite: Dendrite) -> None:
         self._dendrite = dendrite
 
     async def call(
         self,
         *,
-        binding: "EffectorBinding | None" = None,
+        binding: EffectorBinding | None = None,
         effector_id: str | None = None,
         effector_kind: str | None = None,
         tool: str,

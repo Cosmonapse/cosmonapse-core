@@ -63,7 +63,7 @@ class EngramClient:
     Correlation, deadlines, and cancellation are the Pathway's job.
     """
 
-    def __init__(self, dendrite: "Dendrite") -> None:
+    def __init__(self, dendrite: Dendrite) -> None:
         self._dendrite = dendrite
 
     # ------------------------------------------------------------------
@@ -73,7 +73,7 @@ class EngramClient:
     async def recall(
         self,
         *,
-        binding: "EngramBinding | None" = None,
+        binding: EngramBinding | None = None,
         engram_id: str | None = None,
         engram_kind: str | None = None,
         query: dict[str, Any],
@@ -132,7 +132,7 @@ class EngramClient:
     async def imprint(
         self,
         *,
-        binding: "EngramBinding | None" = None,
+        binding: EngramBinding | None = None,
         engram_id: str | None = None,
         engram_kind: str | None = None,
         op: str,
@@ -283,9 +283,9 @@ def _hits_from_payload(raw_hits: list[dict[str, Any]]) -> list[Hit]:
 
 # Sentinel for "no binding lookup performed"
 def lookup_binding(
-    bindings: dict[str, "EngramBinding"],
+    bindings: dict[str, EngramBinding],
     name: str,
-) -> "EngramBinding":
+) -> EngramBinding:
     """Strict lookup. Raises EngramNotBound when the name is unknown so a
     Neuron cannot silently hit an Engram its Axon was not wired to."""
     try:

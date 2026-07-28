@@ -55,8 +55,9 @@ import inspect
 import logging
 import time
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any
 
 from cosmonapse._hooks import LifecycleHooks
 from cosmonapse.envelope import SignalType
@@ -97,7 +98,7 @@ class _EffectorHostProxy:
     #: Dendrite ``on_*`` methods with a non-standard registration shape.
     _UNSUPPORTED: frozenset[str] = frozenset({"on_discover", "on_trace"})
 
-    def __init__(self, effector: "Effector") -> None:
+    def __init__(self, effector: Effector) -> None:
         self._effector = effector
 
     @staticmethod
@@ -166,7 +167,7 @@ class EffectorBinding:
     default_deadline_ms: int | None = None
     tools: tuple[str, ...] | None = None
 
-    def to_directed(self) -> "Any":
+    def to_directed(self) -> Any:
         """Build a :class:`cosmonapse.envelope.Directed` addressing this Effector."""
         from cosmonapse.envelope import Directed
         return Directed(id=self.directed_id, type=self.directed_type)
@@ -260,25 +261,25 @@ class Effector(ABC):
     # Class-level defaults - this ABC has no ``__init__`` (concrete
     # backends, including ``_ServedEffector``, set their own attributes on
     # construction); ``host`` lazily creates the instance list.
-    _host_regs: "list[tuple[str, Any, dict[str, Any], Any]] | None" = None
+    _host_regs: list[tuple[str, Any, dict[str, Any], Any]] | None = None
     _host_regs_applied: bool = False
 
     # The hosting Dendrite, set by ``Dendrite.attach_effector`` / cleared by
     # ``detach_effector`` - the action-side analogue of ``Axon._dendrite`` /
     # ``Axon.dendrite`` and ``Engram._dendrite`` / ``Engram.dendrite``.
-    _dendrite: "Dendrite | None" = None
+    _dendrite: Dendrite | None = None
 
     @property
-    def dendrite(self) -> "Dendrite | None":
+    def dendrite(self) -> Dendrite | None:
         """The hosting Dendrite, once attached - see ``_dendrite`` above."""
         return self._dendrite
 
     @property
-    def host(self) -> "_EffectorHostProxy":
+    def host(self) -> _EffectorHostProxy:
         """Deferred Dendrite decorators - see :class:`_EffectorHostProxy`."""
         return _EffectorHostProxy(self)
 
-    async def _on_hosted(self, dendrite: "Dendrite") -> None:
+    async def _on_hosted(self, dendrite: Dendrite) -> None:
         """Called by the hosting Dendrite right after it connects this
         Effector (``start()``, after ``connect()``/TOOL_CALL subscription).
         Replays ``@effector.host.on_*`` registrations onto ``dendrite`` and
@@ -287,7 +288,7 @@ class Effector(ABC):
         ``Engram._on_hosted``."""
         if self._host_regs and not self._host_regs_applied:
             self._host_regs_applied = True
-            for name, st, filters, fn in self._host_regs:
+            for name, _st, filters, fn in self._host_regs:
                 getattr(dendrite, name)(fn, **filters)
             await dendrite.ensure_subscribed(
                 *{st for _, st, _, _ in self._host_regs})
@@ -344,7 +345,7 @@ class Effector(ABC):
         effector_id: str,
         effector_kind: str = "effector",
         version: str | None = None,
-    ) -> "_ServedEffector":
+    ) -> _ServedEffector:
         """Build an Effector from the one protocol hook that matters.
 
         Cosmonapse does not build your tools - no registries, no
@@ -471,7 +472,7 @@ class _ServedEffector(Effector, LifecycleHooks):
                 result = fn(tool, args, **kwargs)
                 if inspect.isawaitable(result):
                     result = await result
-            except Exception as exc:  # noqa: BLE001 - tools never kill TASKs
+            except Exception as exc:
                 return ToolOutcome(
                     tool=tool, call_id=call_id,
                     error=f"{type(exc).__name__}: {exc}",

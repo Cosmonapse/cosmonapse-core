@@ -27,7 +27,7 @@ import asyncio
 import copy
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from cosmonapse.engram.base import Engram, Hit, ImprintReceipt
@@ -41,8 +41,8 @@ class _Entry:
     tags: list[str] = field(default_factory=list)
     merge_key: str | None = None
     version: int = 1
-    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
-    updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     extra: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -68,10 +68,10 @@ def _parse_dt(value: Any) -> datetime | None:
         return value
     if isinstance(value, str):
         try:
-            dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            dt = datetime.fromisoformat(value)
         except ValueError:
             return None
-        return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+        return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
     return None
 
 
@@ -281,7 +281,7 @@ class InMemoryEngram(Engram):
                     merge_key=old.merge_key,
                     version=old.version + 1,
                     created_at=old.created_at,
-                    updated_at=datetime.now(timezone.utc),
+                    updated_at=datetime.now(UTC),
                     extra=merged_extra or {},
                 )
                 self._store(new, replace=True)

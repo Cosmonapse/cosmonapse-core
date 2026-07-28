@@ -66,8 +66,9 @@ import inspect
 import logging
 import time
 from abc import ABC, abstractmethod
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Callable, Iterator
+from typing import TYPE_CHECKING, Any
 
 from cosmonapse._hooks import LifecycleHooks
 from cosmonapse.envelope import SignalType
@@ -106,7 +107,7 @@ class _EngramHostProxy:
     #: Dendrite ``on_*`` methods with a non-standard registration shape.
     _UNSUPPORTED: frozenset[str] = frozenset({"on_discover", "on_trace"})
 
-    def __init__(self, engram: "Engram") -> None:
+    def __init__(self, engram: Engram) -> None:
         self._engram = engram
 
     @staticmethod
@@ -169,7 +170,7 @@ class EngramBinding:
     default_deadline_ms: int | None = None
     default_recall_mode: str = "first"
 
-    def to_directed(self) -> "Any":
+    def to_directed(self) -> Any:
         """Build a :class:`cosmonapse.envelope.Directed` addressing this Engram."""
         from cosmonapse.envelope import Directed
         return Directed(id=self.directed_id, type=self.directed_type)
@@ -297,7 +298,7 @@ class Engram(ABC):
     # ``None``/``False`` defaults (no ``__init__`` on this ABC - concrete
     # backends set their own attributes on construction, same reasoning as
     # ``_saga_journal`` below); ``host`` lazily creates the instance list.
-    _host_regs: "list[tuple[str, Any, dict[str, Any], Any]] | None" = None
+    _host_regs: list[tuple[str, Any, dict[str, Any], Any]] | None = None
     _host_regs_applied: bool = False
 
     # The hosting Dendrite, set by ``Dendrite.attach_engram`` / cleared by
@@ -305,19 +306,19 @@ class Engram(ABC):
     # ``Axon.dendrite``. Lets an ``@engram.host.on_*`` handler reach the
     # Dendrite it was replayed onto (e.g. to ``dispatch_task`` / call a
     # tool) without a hand-wired module-level reference.
-    _dendrite: "Dendrite | None" = None
+    _dendrite: Dendrite | None = None
 
     @property
-    def dendrite(self) -> "Dendrite | None":
+    def dendrite(self) -> Dendrite | None:
         """The hosting Dendrite, once attached - see ``_dendrite`` above."""
         return self._dendrite
 
     @property
-    def host(self) -> "_EngramHostProxy":
+    def host(self) -> _EngramHostProxy:
         """Deferred Dendrite decorators - see :class:`_EngramHostProxy`."""
         return _EngramHostProxy(self)
 
-    async def _on_hosted(self, dendrite: "Dendrite") -> None:
+    async def _on_hosted(self, dendrite: Dendrite) -> None:
         """Called by the hosting Dendrite right after it connects this
         Engram (``start()``, after ``connect()``/REGISTER). Replays
         ``@engram.host.on_*`` registrations onto ``dendrite`` and ensures
@@ -325,7 +326,7 @@ class Engram(ABC):
         Engram-side twin of ``Axon._on_register_emitted``."""
         if self._host_regs and not self._host_regs_applied:
             self._host_regs_applied = True
-            for name, st, filters, fn in self._host_regs:
+            for name, _st, filters, fn in self._host_regs:
                 getattr(dendrite, name)(fn, **filters)
             await dendrite.ensure_subscribed(
                 *{st for _, st, _, _ in self._host_regs})
@@ -396,7 +397,7 @@ class Engram(ABC):
 
     # Per-trace inverse-op journal. ``None`` (the immutable class default) until
     # the first journaled write; each instance then binds its own dict.
-    _saga_journal: "dict[str, list[dict[str, Any]]] | None" = None
+    _saga_journal: dict[str, list[dict[str, Any]]] | None = None
 
     def _saga_record(
         self,
@@ -435,7 +436,7 @@ class Engram(ABC):
                     merge_key=inv.get("merge_key"), trace_id=None,
                 )
                 applied += 1
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 logger.exception(
                     "Engram %s: compensation step %r failed: %s",
                     getattr(self, "engram_id", "?"), inv.get("op"), exc,
@@ -472,7 +473,7 @@ class Engram(ABC):
         engram_kind: str = "context",
         capabilities: list[str] | None = None,
         version: str | None = None,
-    ) -> "_ServedEngram":
+    ) -> _ServedEngram:
         """Build an Engram from the two protocol hooks that matter.
 
         The memory-side twin of ``Effector.serve()``. A RECALL arrives,
@@ -661,7 +662,7 @@ class _ServedEngram(Engram, LifecycleHooks):
             try:
                 out = await _call(fn, op, entry,
                                   **{k: available[k] for k in wants})
-            except Exception as exc:  # noqa: BLE001 - a write failure is data
+            except Exception as exc:
                 logger.exception(
                     "Engram %s @on_imprint raised: %s", self.engram_id, exc,
                 )

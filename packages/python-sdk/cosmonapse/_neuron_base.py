@@ -27,13 +27,14 @@ from typing import Any
 def _require_httpx() -> types.ModuleType:
     """Import httpx lazily so it stays a soft dependency."""
     try:
-        import httpx  # type: ignore[import-not-found]  # noqa: F401
-        return httpx  # type: ignore[no-any-return]
+        import httpx  # type: ignore[import-not-found]
     except ImportError:
         raise ImportError(
             "httpx is required for Neuron provider wrappers.\n"
             "Install it with:  pip install httpx"
         ) from None
+    else:
+        return httpx  # type: ignore[no-any-return]
 
 
 class _BaseNeuron:
@@ -127,4 +128,4 @@ class _BaseNeuron:
         Sources that hold no resources (the HTTP-app and LLM wrappers when
         used per-call) can leave this as a no-op.
         """
-        return None
+        return

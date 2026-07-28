@@ -23,7 +23,7 @@ from __future__ import annotations
 import json
 import logging
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from cosmonapse.engram.base import Engram, Hit, ImprintReceipt
@@ -70,7 +70,7 @@ def _ensure_dt(value: Any) -> str | None:
     if value is None:
         return None
     if isinstance(value, datetime):
-        return value.astimezone(timezone.utc).isoformat()
+        return value.astimezone(UTC).isoformat()
     return str(value)
 
 
@@ -210,6 +210,9 @@ class PostgresEngram(Engram):
             # Cheap substring over JSONB-serialised content.
             clauses.append(f"content::text ILIKE {_p('%' + text + '%')}")
 
+        # Not an injection vector: every caller-supplied value goes through
+        # _p(), which appends to `params` and emits a $N placeholder for
+        # asyncpg to bind. Only fixed column names are interpolated.
         sql = (
             "SELECT id, engram_kind, merge_key, content, tags, meta, "
             "version, created_at, updated_at, deleted_at "
@@ -254,46 +257,30 @@ class PostgresEngram(Engram):
         resulting_version: int | None = None
         error: str | None = None
 
-        async with self._pool.acquire() as conn:
-            async with conn.transaction():
-                if imprint_id is not None:
-                    seen = await conn.fetchrow(
-                        "SELECT entry_id FROM cosmonapse_engram_imprint_seen "
-                        "WHERE imprint_id = $1",
-                        imprint_id,
+        async with self._pool.acquire() as conn, conn.transaction():
+            if imprint_id is not None:
+                seen = await conn.fetchrow(
+                    "SELECT entry_id FROM cosmonapse_engram_imprint_seen "
+                    "WHERE imprint_id = $1",
+                    imprint_id,
+                )
+                if seen is not None:
+                    seen_id = seen["entry_id"]
+                    ver_row = await conn.fetchrow(
+                        "SELECT version FROM cosmonapse_engram_entries "
+                        "WHERE id = $1",
+                        seen_id,
                     )
-                    if seen is not None:
-                        seen_id = seen["entry_id"]
-                        ver_row = await conn.fetchrow(
-                            "SELECT version FROM cosmonapse_engram_entries "
-                            "WHERE id = $1",
-                            seen_id,
-                        )
-                        return ImprintReceipt(
-                            engram_id=self.engram_id, op=op,
-                            id=seen_id,
-                            version=ver_row["version"] if ver_row else None,
-                            took_ms=int((time.monotonic() - t0) * 1000),
-                        )
+                    return ImprintReceipt(
+                        engram_id=self.engram_id, op=op,
+                        id=seen_id,
+                        version=ver_row["version"] if ver_row else None,
+                        took_ms=int((time.monotonic() - t0) * 1000),
+                    )
 
-                if op == "add":
-                    eid = entry.get("id") or new_engram_id()
-                    try:
-                        await conn.execute(
-                            "INSERT INTO cosmonapse_engram_entries "
-                            "(id, engram_kind, merge_key, content, tags, meta) "
-                            "VALUES ($1,$2,$3,$4::jsonb,$5,$6::jsonb)",
-                            eid, self.engram_kind, merge_key,
-                            json.dumps(entry.get("content")),
-                            list(entry.get("tags") or []),
-                            json.dumps(entry.get("meta") or {}),
-                        )
-                        resulting_id, resulting_version = eid, 1
-                    except Exception as exc:  # noqa: BLE001
-                        error = f"add: {exc}"
-
-                elif op == "append":
-                    eid = new_engram_id()
+            if op == "add":
+                eid = entry.get("id") or new_engram_id()
+                try:
                     await conn.execute(
                         "INSERT INTO cosmonapse_engram_entries "
                         "(id, engram_kind, merge_key, content, tags, meta) "
@@ -304,115 +291,130 @@ class PostgresEngram(Engram):
                         json.dumps(entry.get("meta") or {}),
                     )
                     resulting_id, resulting_version = eid, 1
+                except Exception as exc:
+                    error = f"add: {exc}"
 
-                elif op == "upsert":
-                    if merge_key is None:
-                        error = "upsert requires merge_key"
+            elif op == "append":
+                eid = new_engram_id()
+                await conn.execute(
+                    "INSERT INTO cosmonapse_engram_entries "
+                    "(id, engram_kind, merge_key, content, tags, meta) "
+                    "VALUES ($1,$2,$3,$4::jsonb,$5,$6::jsonb)",
+                    eid, self.engram_kind, merge_key,
+                    json.dumps(entry.get("content")),
+                    list(entry.get("tags") or []),
+                    json.dumps(entry.get("meta") or {}),
+                )
+                resulting_id, resulting_version = eid, 1
+
+            elif op == "upsert":
+                if merge_key is None:
+                    error = "upsert requires merge_key"
+                else:
+                    existing = await conn.fetchrow(
+                        "SELECT id, version FROM cosmonapse_engram_entries "
+                        "WHERE merge_key = $1 AND deleted_at IS NULL "
+                        "ORDER BY updated_at DESC LIMIT 1",
+                        merge_key,
+                    )
+                    if existing is None:
+                        eid = entry.get("id") or new_engram_id()
+                        await conn.execute(
+                            "INSERT INTO cosmonapse_engram_entries "
+                            "(id, engram_kind, merge_key, content, tags, meta) "
+                            "VALUES ($1,$2,$3,$4::jsonb,$5,$6::jsonb)",
+                            eid, self.engram_kind, merge_key,
+                            json.dumps(entry.get("content")),
+                            list(entry.get("tags") or []),
+                            json.dumps(entry.get("meta") or {}),
+                        )
+                        resulting_id, resulting_version = eid, 1
                     else:
-                        existing = await conn.fetchrow(
-                            "SELECT id, version FROM cosmonapse_engram_entries "
-                            "WHERE merge_key = $1 AND deleted_at IS NULL "
-                            "ORDER BY updated_at DESC LIMIT 1",
-                            merge_key,
-                        )
-                        if existing is None:
-                            eid = entry.get("id") or new_engram_id()
-                            await conn.execute(
-                                "INSERT INTO cosmonapse_engram_entries "
-                                "(id, engram_kind, merge_key, content, tags, meta) "
-                                "VALUES ($1,$2,$3,$4::jsonb,$5,$6::jsonb)",
-                                eid, self.engram_kind, merge_key,
-                                json.dumps(entry.get("content")),
-                                list(entry.get("tags") or []),
-                                json.dumps(entry.get("meta") or {}),
-                            )
-                            resulting_id, resulting_version = eid, 1
-                        else:
-                            eid = existing["id"]
-                            new_version = existing["version"] + 1
-                            await conn.execute(
-                                "UPDATE cosmonapse_engram_entries SET "
-                                "content=$1::jsonb, tags=$2, meta=$3::jsonb, "
-                                "version=$4, updated_at=now() WHERE id=$5",
-                                json.dumps(entry.get("content")),
-                                list(entry.get("tags") or []),
-                                json.dumps(entry.get("meta") or {}),
-                                new_version, eid,
-                            )
-                            resulting_id, resulting_version = eid, new_version
-
-                elif op == "merge":
-                    if merge_key is None:
-                        error = "merge requires merge_key"
-                    else:
-                        existing = await conn.fetchrow(
-                            "SELECT id, content, tags, meta, version "
-                            "FROM cosmonapse_engram_entries "
-                            "WHERE merge_key = $1 AND deleted_at IS NULL "
-                            "ORDER BY updated_at DESC LIMIT 1",
-                            merge_key,
-                        )
-                        if existing is None:
-                            error = f"no entry for merge_key={merge_key!r}"
-                        else:
-                            from cosmonapse.engram.memory import _deep_merge as _dm
-                            old_content = existing["content"]
-                            if isinstance(old_content, str):
-                                old_content = json.loads(old_content)
-                            old_meta = existing["meta"] or {}
-                            if isinstance(old_meta, str):
-                                old_meta = json.loads(old_meta)
-                            new_content = _dm(old_content, entry.get("content"))
-                            new_tags = list({
-                                *(existing["tags"] or []),
-                                *(entry.get("tags") or []),
-                            })
-                            new_meta = _dm(old_meta, entry.get("meta")) or {}
-                            new_version = existing["version"] + 1
-                            await conn.execute(
-                                "UPDATE cosmonapse_engram_entries SET "
-                                "content=$1::jsonb, tags=$2, meta=$3::jsonb, "
-                                "version=$4, updated_at=now() WHERE id=$5",
-                                json.dumps(new_content),
-                                new_tags,
-                                json.dumps(new_meta),
-                                new_version, existing["id"],
-                            )
-                            resulting_id = existing["id"]
-                            resulting_version = new_version
-
-                elif op == "delete":
-                    target_id = entry.get("id")
-                    if target_id is None and merge_key is not None:
-                        row = await conn.fetchrow(
-                            "SELECT id FROM cosmonapse_engram_entries "
-                            "WHERE merge_key = $1 AND deleted_at IS NULL "
-                            "ORDER BY updated_at DESC LIMIT 1",
-                            merge_key,
-                        )
-                        if row is not None:
-                            target_id = row["id"]
-                    if target_id is not None:
+                        eid = existing["id"]
+                        new_version = existing["version"] + 1
                         await conn.execute(
                             "UPDATE cosmonapse_engram_entries SET "
-                            "deleted_at = now() WHERE id = $1",
-                            target_id,
+                            "content=$1::jsonb, tags=$2, meta=$3::jsonb, "
+                            "version=$4, updated_at=now() WHERE id=$5",
+                            json.dumps(entry.get("content")),
+                            list(entry.get("tags") or []),
+                            json.dumps(entry.get("meta") or {}),
+                            new_version, eid,
                         )
-                        resulting_id = target_id
-                else:
-                    error = f"unknown op {op!r}"
+                        resulting_id, resulting_version = eid, new_version
 
-                if (
-                    imprint_id is not None
-                    and resulting_id is not None
-                    and error is None
-                ):
-                    await conn.execute(
-                        "INSERT INTO cosmonapse_engram_imprint_seen "
-                        "(imprint_id, entry_id) VALUES ($1, $2) "
-                        "ON CONFLICT (imprint_id) DO NOTHING",
-                        imprint_id, resulting_id,
+            elif op == "merge":
+                if merge_key is None:
+                    error = "merge requires merge_key"
+                else:
+                    existing = await conn.fetchrow(
+                        "SELECT id, content, tags, meta, version "
+                        "FROM cosmonapse_engram_entries "
+                        "WHERE merge_key = $1 AND deleted_at IS NULL "
+                        "ORDER BY updated_at DESC LIMIT 1",
+                        merge_key,
                     )
+                    if existing is None:
+                        error = f"no entry for merge_key={merge_key!r}"
+                    else:
+                        from cosmonapse.engram.memory import _deep_merge as _dm
+                        old_content = existing["content"]
+                        if isinstance(old_content, str):
+                            old_content = json.loads(old_content)
+                        old_meta = existing["meta"] or {}
+                        if isinstance(old_meta, str):
+                            old_meta = json.loads(old_meta)
+                        new_content = _dm(old_content, entry.get("content"))
+                        new_tags = list({
+                            *(existing["tags"] or []),
+                            *(entry.get("tags") or []),
+                        })
+                        new_meta = _dm(old_meta, entry.get("meta")) or {}
+                        new_version = existing["version"] + 1
+                        await conn.execute(
+                            "UPDATE cosmonapse_engram_entries SET "
+                            "content=$1::jsonb, tags=$2, meta=$3::jsonb, "
+                            "version=$4, updated_at=now() WHERE id=$5",
+                            json.dumps(new_content),
+                            new_tags,
+                            json.dumps(new_meta),
+                            new_version, existing["id"],
+                        )
+                        resulting_id = existing["id"]
+                        resulting_version = new_version
+
+            elif op == "delete":
+                target_id = entry.get("id")
+                if target_id is None and merge_key is not None:
+                    row = await conn.fetchrow(
+                        "SELECT id FROM cosmonapse_engram_entries "
+                        "WHERE merge_key = $1 AND deleted_at IS NULL "
+                        "ORDER BY updated_at DESC LIMIT 1",
+                        merge_key,
+                    )
+                    if row is not None:
+                        target_id = row["id"]
+                if target_id is not None:
+                    await conn.execute(
+                        "UPDATE cosmonapse_engram_entries SET "
+                        "deleted_at = now() WHERE id = $1",
+                        target_id,
+                    )
+                    resulting_id = target_id
+            else:
+                error = f"unknown op {op!r}"
+
+            if (
+                imprint_id is not None
+                and resulting_id is not None
+                and error is None
+            ):
+                await conn.execute(
+                    "INSERT INTO cosmonapse_engram_imprint_seen "
+                    "(imprint_id, entry_id) VALUES ($1, $2) "
+                    "ON CONFLICT (imprint_id) DO NOTHING",
+                    imprint_id, resulting_id,
+                )
 
         return ImprintReceipt(
             engram_id=self.engram_id,

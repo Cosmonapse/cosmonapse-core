@@ -33,8 +33,8 @@ import logging
 import random
 import warnings
 from collections.abc import Awaitable, Callable
-from datetime import datetime, timezone
-from typing import Any
+from datetime import UTC, datetime
+from typing import Any, Self
 
 from cosmonapse._hooks import LifecycleHooks, RefreshEvent
 from cosmonapse.axon import Axon
@@ -355,7 +355,7 @@ class Dendrite(LifecycleHooks):
         if self._routed_task_sub is not None:
             try:
                 await self._routed_task_sub.unsubscribe()
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 logger.warning(
                     "Dendrite failed to unsubscribe routed TASK during "
                     "refresh: %s", exc,
@@ -374,7 +374,7 @@ class Dendrite(LifecycleHooks):
         After attachment, the Dendrite subscribes to RECALL/IMPRINT
         signals addressed to ``engram.engram_id`` or matching
         ``engram.engram_kind`` and dispatches them to the attached
-        instance. The Engram still owns its backend lifecycle  - 
+        instance. The Engram still owns its backend lifecycle  -
         ``connect()`` is called on Dendrite.start() and ``close()`` on
         Dendrite.stop().
 
@@ -404,7 +404,7 @@ class Dendrite(LifecycleHooks):
         if self._running:
             try:
                 await engram.close()
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 logger.warning(
                     "Dendrite: Engram %s close raised on detach: %s",
                     engram_id, exc,
@@ -455,7 +455,7 @@ class Dendrite(LifecycleHooks):
             )
         try:
             await effector.close()
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.warning(
                 "Dendrite: Effector %s close raised on detach: %s",
                 effector_id, exc,
@@ -903,7 +903,22 @@ class Dendrite(LifecycleHooks):
     def on_discover(self, fn: SignalHandler) -> SignalHandler:
         self._discover_handlers.append(fn)
         if self._running and SignalType.DISCOVER not in self._inbound_subs:
-            asyncio.create_task(self._ensure_inbound_sub(SignalType.DISCOVER))
+            # Track it: an untracked task may be garbage-collected before it
+            # completes, and its exception would never surface. Mirrors the
+            # bookkeeping in _on().
+            task = asyncio.create_task(
+                self._ensure_inbound_sub(SignalType.DISCOVER)
+            )
+            self._pending_sub_tasks.add(task)
+
+            def _done(t: asyncio.Task[None]) -> None:
+                self._pending_sub_tasks.discard(t)
+                if not t.cancelled() and t.exception() is not None:
+                    logger.error(
+                        "Dendrite: late subscription for %s failed: %s",
+                        SignalType.DISCOVER.value, t.exception(),
+                    )
+            task.add_done_callback(_done)
         return fn
 
     # -- Deprecated short aliases ----------------------------------------
@@ -1000,7 +1015,7 @@ class Dendrite(LifecycleHooks):
             for engram in self._engrams.values():
                 try:
                     await engram.connect()
-                except Exception as exc:  # noqa: BLE001
+                except Exception as exc:
                     logger.exception(
                         "Dendrite: Engram %s connect failed: %s",
                         engram.engram_id, exc,
@@ -1019,7 +1034,7 @@ class Dendrite(LifecycleHooks):
             for engram in self._engrams.values():
                 try:
                     await self._emit_engram_register(engram)
-                except Exception as exc:  # noqa: BLE001
+                except Exception as exc:
                     logger.warning(
                         "Dendrite: Engram %s REGISTER emit failed: %s",
                         engram.engram_id, exc,
@@ -1029,7 +1044,7 @@ class Dendrite(LifecycleHooks):
                 # @axon.host.on_* replay on REGISTER.
                 try:
                     await engram._on_hosted(self)
-                except Exception as exc:  # noqa: BLE001
+                except Exception as exc:
                     logger.exception(
                         "Dendrite: Engram %s host-proxy replay failed: %s",
                         engram.engram_id, exc,
@@ -1041,7 +1056,7 @@ class Dendrite(LifecycleHooks):
             for effector in self._effectors.values():
                 try:
                     await effector.connect()
-                except Exception as exc:  # noqa: BLE001
+                except Exception as exc:
                     logger.exception(
                         "Dendrite: Effector %s connect failed: %s",
                         effector.effector_id, exc,
@@ -1054,7 +1069,7 @@ class Dendrite(LifecycleHooks):
             for effector in self._effectors.values():
                 try:
                     await self._emit_effector_register(effector)
-                except Exception as exc:  # noqa: BLE001
+                except Exception as exc:
                     logger.warning(
                         "Dendrite: Effector %s REGISTER emit failed: %s",
                         effector.effector_id, exc,
@@ -1063,7 +1078,7 @@ class Dendrite(LifecycleHooks):
                 # on the Effector itself - mirrors the Engram replay above.
                 try:
                     await effector._on_hosted(self)
-                except Exception as exc:  # noqa: BLE001
+                except Exception as exc:
                     logger.exception(
                         "Dendrite: Effector %s host-proxy replay failed: %s",
                         effector.effector_id, exc,
@@ -1129,7 +1144,7 @@ class Dendrite(LifecycleHooks):
         for op_pathway in list(self._op_pathways.values()):
             try:
                 await op_pathway.close()
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 logger.warning("Op-Pathway close raised: %s", exc)
         self._op_pathways.clear()
 
@@ -1170,7 +1185,7 @@ class Dendrite(LifecycleHooks):
         for engram in self._engrams.values():
             try:
                 await engram.close()
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 logger.warning(
                     "Dendrite: Engram %s close raised on stop: %s",
                     engram.engram_id, exc,
@@ -1179,7 +1194,7 @@ class Dendrite(LifecycleHooks):
         for effector in self._effectors.values():
             try:
                 await effector.close()
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 logger.warning(
                     "Dendrite: Effector %s close raised on stop: %s",
                     effector.effector_id, exc,
@@ -1202,11 +1217,11 @@ class Dendrite(LifecycleHooks):
         logger.info("Dendrite %s stopped (namespace=%r)",
                     self.dendrite_id, self._namespace)
 
-    async def __aenter__(self) -> "Dendrite":
+    async def __aenter__(self) -> Self:
         await self.start()
         return self
 
-    async def __aexit__(self, *_: Any) -> None:
+    async def __aexit__(self, *_: object) -> None:
         await self.stop()
 
     # ------------------------------------------------------------------
@@ -1256,14 +1271,14 @@ class Dendrite(LifecycleHooks):
     def _filter_fresh(
         records: list[NeuronRecord], max_age_s: float,
     ) -> list[NeuronRecord]:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         fresh: list[NeuronRecord] = []
         for rec in records:
             seen = rec.last_heartbeat or rec.registered_at
             if seen is None:
                 continue
             if seen.tzinfo is None:
-                seen = seen.replace(tzinfo=timezone.utc)
+                seen = seen.replace(tzinfo=UTC)
             if (now - seen).total_seconds() <= max_age_s:
                 fresh.append(rec)
         return fresh
@@ -1537,7 +1552,7 @@ class Dendrite(LifecycleHooks):
                 trace_id=trace_id, rollback=retry.rollback_on_retry,
                 reason=retry.reason,
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.warning(
                 "run_with_retry: preemptive STOP of %s failed: %s",
                 trace_id, exc,
@@ -1604,12 +1619,12 @@ class Dendrite(LifecycleHooks):
             if retry.on_retry is not None:
                 try:
                     retry.on_retry(attempt, outcome)
-                except Exception:  # noqa: BLE001
+                except Exception:
                     logger.exception("run_with_retry: on_retry hook raised")
 
             try:
                 delay = float(retry.backoff(attempt) or 0.0)
-            except Exception:  # noqa: BLE001
+            except Exception:
                 delay = 0.0
             if delay > 0:
                 await asyncio.sleep(delay)
@@ -1880,7 +1895,7 @@ class Dendrite(LifecycleHooks):
                     cost=0.0, confidence=1.0,
                     meta={"auto_bid": True},
                 )
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 logger.warning(
                     "Dendrite: auto-bid failed for %s: %s",
                     axon.neuron_id, exc,
@@ -1957,7 +1972,7 @@ class Dendrite(LifecycleHooks):
         for pw in [p for p in self._op_pathways.values() if p.trace_id == trace_id]:
             try:
                 await pw.close()
-            except Exception as exc:  # noqa: BLE001  -  teardown must not raise
+            except Exception as exc:
                 logger.warning("Dendrite: op-Pathway close raised: %s", exc)
 
     async def emit_final(self, *, trace_id: str, parent_id: str, result: Any,
@@ -2540,7 +2555,7 @@ class Dendrite(LifecycleHooks):
                     directed=Directed(id=target),
                     result=reply.payload.get("output", {}),
                 ))
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 logger.exception(
                     "Dendrite: terminal-handler FINAL publish failed "
                     "for %s: %s", target, exc,
@@ -2550,10 +2565,10 @@ class Dendrite(LifecycleHooks):
     # Workflow control: STOP / STOPPED
     # ------------------------------------------------------------------
 
-    def _register_trace_task(self, trace_id: str, task: "asyncio.Task[Any]") -> None:
+    def _register_trace_task(self, trace_id: str, task: asyncio.Task[Any]) -> None:
         self._trace_tasks.setdefault(trace_id, set()).add(task)
 
-    def _unregister_trace_task(self, trace_id: str, task: "asyncio.Task[Any]") -> None:
+    def _unregister_trace_task(self, trace_id: str, task: asyncio.Task[Any]) -> None:
         tasks = self._trace_tasks.get(trace_id)
         if tasks is not None:
             tasks.discard(task)
@@ -2585,7 +2600,7 @@ class Dendrite(LifecycleHooks):
         #    any awaiting recall/imprint - same path FINAL/ERROR already use).
         try:
             await self._cancel_op_pathways(trace_id)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.warning(
                 "Dendrite: STOP op-pathway cancel failed for %s: %s",
                 trace_id, exc,
@@ -2601,7 +2616,7 @@ class Dendrite(LifecycleHooks):
                         did_work = True
                 else:
                     await engram.commit(trace_id)
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 logger.exception(
                     "Dendrite: Engram %s STOP handling failed: %s",
                     engram.engram_id, exc,
@@ -2613,7 +2628,7 @@ class Dendrite(LifecycleHooks):
             did_work = True
             try:
                 await pw.close()
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 logger.warning(
                     "Dendrite: STOP pathway close failed for %s: %s",
                     trace_id, exc,
@@ -2628,7 +2643,7 @@ class Dendrite(LifecycleHooks):
                     node=self._namespace, rolled_back=rollback,
                     cancelled=cancelled, compensated=compensated,
                 ))
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 logger.exception(
                     "Dendrite: STOPPED publish failed for %s: %s", trace_id, exc,
                 )
@@ -2703,7 +2718,7 @@ class Dendrite(LifecycleHooks):
         payload = signal.payload or {}
         target = payload.get("neuron")
         caps_filter = payload.get("capabilities")
-        await asyncio.sleep(random.uniform(0, 0.1))
+        await asyncio.sleep(random.uniform(0, 0.1))  # noqa: S311  - scheduling jitter, not crypto
         caps_set: set[str] | None = (
             set(caps_filter) if caps_filter else None
         )
@@ -2801,7 +2816,7 @@ class Dendrite(LifecycleHooks):
                 capabilities=list(axon.capabilities),
                 version=axon.version,
                 status=status,
-                last_heartbeat=datetime.now(timezone.utc),
+                last_heartbeat=datetime.now(UTC),
             ))
         except Exception as exc:
             logger.warning("Dendrite: failed to mirror %s into store: %s",
@@ -2815,7 +2830,7 @@ class Dendrite(LifecycleHooks):
                 return
             if not self._running:
                 return
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             for axon in self._axons.values():
                 try:
                     if self._reregister_on_heartbeat:
@@ -2839,7 +2854,7 @@ class Dendrite(LifecycleHooks):
             if self._registry_store is not None and self._stale_after_s > 0:
                 try:
                     await self._sweep_stale_neurons(now)
-                except Exception as exc:  # noqa: BLE001
+                except Exception as exc:
                     logger.warning(
                         "Dendrite: stale-neuron sweep failed: %s", exc,
                     )
@@ -2859,7 +2874,7 @@ class Dendrite(LifecycleHooks):
             if seen is None:
                 continue
             if seen.tzinfo is None:
-                seen = seen.replace(tzinfo=timezone.utc)
+                seen = seen.replace(tzinfo=UTC)
             if (now - seen).total_seconds() > self._stale_after_s:
                 try:
                     await store.mark_deregistered(rec.neuron_id)
@@ -2870,7 +2885,7 @@ class Dendrite(LifecycleHooks):
                     await self._fire_refresh(RefreshEvent(
                         reason="stale", neuron_id=rec.neuron_id,
                     ))
-                except Exception as exc:  # noqa: BLE001
+                except Exception as exc:
                     logger.warning(
                         "Dendrite: mark_deregistered(%s) failed in sweep: "
                         "%s", rec.neuron_id, exc,
@@ -2910,7 +2925,7 @@ class Dendrite(LifecycleHooks):
                 if pw is not None:
                     try:
                         await pw._deliver(signal)
-                    except Exception as exc:  # noqa: BLE001
+                    except Exception as exc:
                         logger.exception(
                             "Dendrite: STOP pathway deliver failed: %s", exc,
                         )
@@ -2929,7 +2944,7 @@ class Dendrite(LifecycleHooks):
             if op_pw is not None:
                 try:
                     await op_pw._deliver(signal)
-                except Exception as exc:  # noqa: BLE001
+                except Exception as exc:
                     logger.exception(
                         "Dendrite: op-Pathway delivery failed for %s: %s",
                         signal.type.value, exc,
@@ -2954,7 +2969,7 @@ class Dendrite(LifecycleHooks):
         if signal.type in (SignalType.FINAL, SignalType.ERROR) and signal.trace_id:
             try:
                 await self._cancel_op_pathways(signal.trace_id)
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 logger.warning(
                     "Dendrite: op-Pathway cancel failed for %s: %s",
                     signal.trace_id, exc,
@@ -2968,7 +2983,7 @@ class Dendrite(LifecycleHooks):
                 for engram in list(self._engrams.values()):
                     try:
                         await engram.commit(signal.trace_id)
-                    except Exception as exc:  # noqa: BLE001
+                    except Exception as exc:
                         logger.warning(
                             "Dendrite: Engram %s commit on FINAL failed: %s",
                             engram.engram_id, exc,
@@ -3095,13 +3110,17 @@ class Dendrite(LifecycleHooks):
                         engram_kind: str | None = None) -> bool:
         """True when an Engram with this id/kind is reachable - hosted
         in-process or learned from a peer's REGISTER."""
-        if engram_id:
-            if engram_id in self._engrams or engram_id in self._engram_registrations:
-                return True
-        if engram_kind:
-            if engram_kind in self._engram_kind_index or engram_kind in self._engram_reg_kind_index:
-                return True
-        return False
+        if engram_id and (
+            engram_id in self._engrams or engram_id in self._engram_registrations
+        ):
+            return True
+        return bool(
+            engram_kind
+            and (
+                engram_kind in self._engram_kind_index
+                or engram_kind in self._engram_reg_kind_index
+            )
+        )
 
     async def _update_registry(self, signal: Signal) -> None:
         if self._registry_store is None:
@@ -3180,7 +3199,7 @@ class Dendrite(LifecycleHooks):
                     deadline_ms=deadline_ms,
                     min_confidence=min_confidence,
                 )
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 logger.exception(
                     "Dendrite: Engram %s.recall raised: %s",
                     engram.engram_id, exc,
@@ -3201,7 +3220,7 @@ class Dendrite(LifecycleHooks):
             )
             try:
                 await self._publish(reply)
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 logger.exception(
                     "Dendrite: Engram %s RECALLED publish failed: %s",
                     engram.engram_id, exc,
@@ -3220,7 +3239,7 @@ class Dendrite(LifecycleHooks):
                     op, entry, merge_key=merge_key, imprint_id=signal.id,
                     trace_id=signal.trace_id,
                 )
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 logger.exception(
                     "Dendrite: Engram %s.imprint raised: %s",
                     engram.engram_id, exc,
@@ -3250,7 +3269,7 @@ class Dendrite(LifecycleHooks):
                 )
             try:
                 await self._publish(reply)
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 logger.exception(
                     "Dendrite: Engram %s IMPRINTED publish failed: %s",
                     engram.engram_id, exc,
@@ -3308,7 +3327,7 @@ class Dendrite(LifecycleHooks):
                     deadline_ms=signal.payload.get("deadline_ms"),
                     trace_id=signal.trace_id,
                 )
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 logger.exception(
                     "Dendrite: Effector %s.invoke raised: %s",
                     effector.effector_id, exc,
@@ -3339,7 +3358,7 @@ class Dendrite(LifecycleHooks):
                 )
             try:
                 await self._publish(reply)
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 logger.exception(
                     "Dendrite: Effector %s TOOL_RESULT publish failed: %s",
                     effector.effector_id, exc,
@@ -3365,7 +3384,7 @@ class Dendrite(LifecycleHooks):
     @staticmethod
     def _resolve_trace(
         trace_id: str | None, parent_id: str | None
-    ) -> "tuple[str, str]":
+    ) -> tuple[str, str]:
         """Resolve (trace_id, parent_id) for a caller-side engram op.
 
         Explicit ids always win. With no explicit trace_id, the ambient
