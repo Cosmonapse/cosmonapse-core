@@ -1,5 +1,27 @@
 import { C, MONO, colorFor } from "../theme";
-import type { NeuronView } from "../types";
+import { receptorLabel } from "../types";
+import type { NeuronView, ParticipantKind } from "../types";
+
+/** The kind badge's tint. Written as a lookup rather than a chain of
+ *  ternaries so adding a fifth primitive is a one-line change, not a
+ *  re-reading of three parallel conditionals. */
+const badgeTint = (kind: ParticipantKind) => {
+  const rgb =
+    kind === "engram" ? "--engram-rgb" :
+    kind === "effector" ? "--effector-rgb" :
+    kind === "receptor" ? "--receptor-rgb" :
+    "--accent2-rgb";
+  const fg =
+    kind === "engram" ? C.accentText :
+    kind === "effector" ? C.effector :
+    kind === "receptor" ? C.receptor :
+    C.accent2Text;
+  return {
+    color: fg,
+    background: `rgba(var(${rgb}), 0.12)`,
+    border: `1px solid rgba(var(${rgb}), 0.3)`,
+  };
+};
 
 interface Props {
   neuron: NeuronView | null;
@@ -16,13 +38,13 @@ export function Tooltip({ neuron, x, y }: Props) {
         left: x + 18,
         top: y + 18,
         zIndex: 10,
-        background: "rgba(15,17,26,0.96)",
+        background: "var(--bg-panel)",
         border: "1px solid " + C.borderStrong,
         borderRadius: 10,
         padding: "12px 14px",
         minWidth: 240,
         maxWidth: 320,
-        boxShadow: "0 30px 80px -20px rgba(0,0,0,0.6)",
+        boxShadow: "0 30px 80px -20px rgba(var(--shadow-rgb), 0.6)",
         WebkitBackdropFilter: "blur(20px)",
         backdropFilter: "blur(20px)",
         pointerEvents: "none",
@@ -31,29 +53,27 @@ export function Tooltip({ neuron, x, y }: Props) {
       <div
         style={{
           fontFamily: MONO,
-          fontSize: 12.5,
-          color: "#c4b5fd",
+          fontSize: 14.5,
+          color: C.accentText,
           fontWeight: 600,
           marginBottom: 6,
           wordBreak: "break-all",
         }}
       >
-        {neuron.id}
+        {receptorLabel(neuron.id)}
       </div>
       <div
         style={{
           display: "inline-block",
           fontFamily: MONO,
-          fontSize: 10,
+          fontSize: 13,
           fontWeight: 600,
           letterSpacing: 0.4,
           textTransform: "uppercase",
           padding: "2px 7px",
           borderRadius: 4,
           marginBottom: 8,
-          color: neuron.kind === "engram" ? "#c4b5fd" : "#67e8f9",
-          background: neuron.kind === "engram" ? "rgba(167,139,250,0.12)" : "rgba(34,211,238,0.08)",
-          border: "1px solid " + (neuron.kind === "engram" ? "rgba(167,139,250,0.3)" : "rgba(34,211,238,0.2)"),
+          ...badgeTint(neuron.kind),
         }}
       >
         {neuron.kind}
@@ -64,13 +84,13 @@ export function Tooltip({ neuron, x, y }: Props) {
             <span
               key={c}
               style={{
-                fontSize: 10.5,
+                fontSize: 13,
                 fontFamily: MONO,
                 padding: "2px 7px",
                 borderRadius: 4,
-                background: "rgba(34,211,238,0.08)",
-                color: "#67e8f9",
-                border: "1px solid rgba(34,211,238,0.2)",
+                background: "rgba(var(--accent2-rgb), 0.08)",
+                color: C.accent2Text,
+                border: "1px solid rgba(var(--accent2-rgb), 0.2)",
               }}
             >
               {c}
@@ -83,28 +103,28 @@ export function Tooltip({ neuron, x, y }: Props) {
           display: "grid",
           gridTemplateColumns: "auto 1fr",
           gap: "4px 12px",
-          fontSize: 11.5,
-          color: C.textDim,
+          fontSize: 14,
+          color: C.textDim, fontWeight: 600,
           fontFamily: MONO,
         }}
       >
-        <span style={{ color: C.textFaint }}>signals</span>
+        <span style={{ color: C.textFaint, fontWeight: 600, }}>signals</span>
         <span>{neuron.count}</span>
         {neuron.lastType && (
           <>
-            <span style={{ color: C.textFaint }}>last</span>
+            <span style={{ color: C.textFaint, fontWeight: 600, }}>last</span>
             <span style={{ color: colorFor(neuron.lastType) }}>{neuron.lastType}</span>
           </>
         )}
         {neuron.lastTs && (
           <>
-            <span style={{ color: C.textFaint }}>at</span>
+            <span style={{ color: C.textFaint, fontWeight: 600, }}>at</span>
             <span>{new Date(neuron.lastTs).toLocaleTimeString()}</span>
           </>
         )}
         {neuron.version && (
           <>
-            <span style={{ color: C.textFaint }}>version</span>
+            <span style={{ color: C.textFaint, fontWeight: 600, }}>version</span>
             <span>{neuron.version}</span>
           </>
         )}

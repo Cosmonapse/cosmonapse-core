@@ -10,8 +10,10 @@ Scaffold a runnable Cosmonapse project in the **standard package skeleton**
         hello.py
       effector/        Effector modules - each exposes EFFECTOR (Effector.serve())
         tools.py
+      receptors/       Receptor modules - each exposes RECEPTOR (unbound)
+        terminal.py
       brain.py         the wiring: who hosts what + dispatch helpers
-      demo.py          entry - hosts the worker, dispatches one TASK + one tool call
+      brain.py         the only entry - `python brain.py` runs the system
       README.md
 
     cosmo init                  # scaffold ./cosmonapse-app
@@ -19,17 +21,18 @@ Scaffold a runnable Cosmonapse project in the **standard package skeleton**
     cosmo init my-app -n demo   # choose the namespace
     cosmo init . --force        # scaffold into the current directory
 
-The generated project is intentionally tiny: `python demo.py` gives a
+The generated project is intentionally tiny: `python brain.py` gives a
 working Axon + Dendrite round-trip AND a tool call in ONE process
 (in-process MemorySynapse) straight after `pip install cosmonapse`;
 SYNAPSE_URL swaps the transport. It grows without restructuring: new Axon
-modules go under neurons/, new tool families go under effector/, wiring
-changes stay in brain.py, entries stay thin - the README shows the 10-line
-worker.py to add when workers should become their own processes.
+modules go under neurons/, new tool families go under effector/, new
+interfaces go under receptors/, wiring changes stay in brain.py, entries
+stay thin - the README shows the 10-line worker.py to add when workers
+should become their own processes.
 
-Three primitives, three folders: Neurons think (neurons/), Engrams remember
+Four primitives, four folders: Neurons think (neurons/), Engrams remember
 (add engram/ when you need shared memory - see the README), Effectors act
-(effector/).
+(effector/), Receptors listen (receptors/).
 """
 
 from __future__ import annotations
@@ -46,7 +49,7 @@ import click
 _CONFIG_PY = '''"""Shared settings for the __PROJECT__ package."""
 import os
 
-# Unset -> demo.py runs on an in-process MemorySynapse (no broker, no
+# Unset -> brain.py runs on an in-process MemorySynapse (no broker, no
 # setup). Set it (e.g. cosmo://127.0.0.1:7070) to run over a real synapse
 # instead - same topology, different transport.
 SYNAPSE_URL = os.environ.get("SYNAPSE_URL", "")
@@ -117,11 +120,96 @@ async def handle(tool: str, args: dict):
 '''
 
 
-_BRAIN_PY = '''"""__PROJECT__ brain - the wiring: who hosts what.
+_RECEPTORS_INIT_PY = '''"""Receptor modules - each exposes a RECEPTOR built WITHOUT a dendrite.
 
-Modules under neurons/ and effector/ declare *behaviour* (Axons/Effectors +
-hooks); this file owns *deployment* (which Dendrite hosts what, roles,
-ids). Entries stay thin.
+A Receptor is an interface: it turns a CLI command, an HTTP request or a
+chat turn into a TASK and hands the trace back as one of the three dispatch
+shapes (send / wait / stream). Neurons think, Engrams remember, Effectors
+act, Receptors listen.
+
+Modules here declare *what the interface looks like*; brain.py binds them to
+an orchestrator Dendrite (`RECEPTOR.bind(orch)`), the same split every other
+folder follows. Building them unbound is what lets `uvicorn app:app` import
+the module before there is an event loop to connect a Synapse on.
+
+    CliReceptor    a command becomes a TASK          (core install)
+    ApiReceptor    one endpoint, all three shapes    (pip install 'cosmonapse[receptor]')
+    ChatReceptor   one turn, one dispatch, + voice   (pip install 'cosmonapse[receptor]')
+"""
+'''
+
+
+_RECEPTORS_TERMINAL_PY = '''"""terminal - a CliReceptor: a typed command becomes a TASK.
+
+A command function *returns the TASK input* - that is the whole contract.
+The argparse tree and the REPL are derived from its signature:
+
+    no default        -> positional  (a str one takes the rest of the line)
+    default           -> --flag, typed from the annotation
+    bool default      -> --flag (store_true)
+
+`local=True` marks a command answered right here that never dispatches.
+
+Built with no dendrite= on purpose; brain.py binds it. Either `neuron=` or
+`capabilities=` picks the target, and both are optional here too - pass one
+per call instead if a single interface fronts several Neurons.
+"""
+import asyncio
+
+from cosmonapse import CliReceptor
+
+RECEPTOR = CliReceptor(
+    neuron="hello",                # addressed; or capabilities=["greet"]
+    prog="__PROJECT__",
+    description="Talk to the __PROJECT__ brain from a terminal.",
+    timeout_s=30.0,
+)
+
+
+@RECEPTOR.command(help="greet someone")
+def greet(name: str = "world"):
+    return {"name": name}          # <- the TASK input
+
+
+@RECEPTOR.command("ping", local=True, help="which neurons are registered?")
+async def ping():
+    """local=True: answered right here, nothing crosses the wire.
+
+    REGISTER travels over the bus like everything else, so the registry is
+    eventually consistent - in a just-started process it may still be
+    filling. Poll briefly rather than reporting an empty bus. (Dispatch
+    itself does not need this: an addressed TASK is filtered by the hosting
+    Dendrite, so it never consults the registry.)
+    """
+    for _ in range(20):
+        found = await RECEPTOR.dendrite.find_neurons()
+        if found:
+            return {"neurons": [n.neuron_id for n in found]}
+        await asyncio.sleep(0.05)
+    return {"neurons": []}
+
+
+@RECEPTOR.on_result
+def render(sig):
+    """Terminal Signal -> what the terminal prints."""
+    return sig.payload["output"]["message"]
+'''
+
+
+_BRAIN_PY = '''"""__PROJECT__ brain - the system. `python brain.py` runs it.
+
+    python brain.py                     # interactive REPL (:ping, :help, :quit)
+    python brain.py greet --name Ada    # one-shot   -> dispatch_and_wait
+    python brain.py --stream greet      # one-shot   -> dispatch_and_subscribe
+    python brain.py --send greet        # one-shot   -> dispatch_task
+
+Modules under neurons/, effector/ and receptors/ declare *behaviour*
+(Axons / Effectors / Receptors + hooks); this file owns *deployment* (which
+Dendrite hosts what, roles, ids, and which interfaces are exposed).
+
+There is no separate demo.py or cli.py: an interface is a component now, so
+starting the brain starts its interfaces. Anything after `python brain.py`
+belongs to the terminal Receptor - brain.py takes no flags of its own.
 
 Host-side behaviour can be declared right in a module with the deferred
 host decorators - no wiring here needed:
@@ -132,11 +220,15 @@ host decorators - no wiring here needed:
     @EFFECTOR.host.on_tool_result
     async def observe(sig): ...
 """
-from cosmonapse import Dendrite
+import asyncio
 
-from config import NAMESPACE
+from cosmonapse import (Dendrite, MemoryRegistryStore, MemorySynapse,
+                        connect_synapse)
+
+from config import NAMESPACE, SYNAPSE_URL
 from effector import tools
 from neurons import hello
+from receptors import terminal
 
 
 def build_worker(synapse) -> Dendrite:
@@ -151,82 +243,51 @@ def build_worker(synapse) -> Dendrite:
     return worker
 
 
-def build_orchestrator(synapse) -> Dendrite:
-    """The dispatching side - dispatch_and_wait / Pathways live here."""
-    return Dendrite(
+def build_edge(synapse) -> Dendrite:
+    """The dispatching side, plus every interface mounted on it.
+
+    attach_receptor is the fourth attach point - Axons think, Effectors
+    act, Engrams remember, Receptors listen. Receptors are built unbound
+    in receptors/ (behaviour) and mounted here (deployment), the same
+    split every other folder follows.
+
+    Mount an ApiReceptor or ChatReceptor the same way and run() serves
+    them too; ones sharing a port merge onto a single app. Mount nothing
+    and run() blocks as a headless worker node - still reachable with
+    `cosmo dispatch`.
+
+    registry_store: what makes find_neurons() work (the terminal `ping`).
+    """
+    edge = Dendrite(
         synapse=synapse, namespace=NAMESPACE,
         dendrite_id="orchestrator", heartbeat_s=0,
+        registry_store=MemoryRegistryStore(),
     )
-'''
+    edge.attach_receptor(terminal.RECEPTOR)
+    return edge
 
 
-_DEMO_PY = '''"""demo.py - dispatch one task, call one tool, print both results.
-
-One process, both sides: this entry hosts the worker Dendrite AND the
-orchestrator. SYNAPSE_URL only swaps the transport:
-
-    python demo.py                                   # in-process MemorySynapse
-    SYNAPSE_URL=cosmo://127.0.0.1:7070 python demo.py   # a running synapse
-"""
-import asyncio
-
-from cosmonapse import MemorySynapse, SignalType, connect_synapse
-
-from brain import build_orchestrator, build_worker
-from config import SYNAPSE_URL
-
-
-async def main() -> None:
+async def main() -> int:
+    """Start the whole system: the bus, both Dendrites, and the interfaces."""
     if SYNAPSE_URL:
         synapse = await connect_synapse(SYNAPSE_URL)
     else:
-        synapse = MemorySynapse()        # in-process bus - no broker, no setup
+        synapse = MemorySynapse()      # in-process bus - no broker, no setup
         await synapse.connect()
     try:
-        worker = build_worker(synapse)
-        orch = build_orchestrator(synapse)
-        async with worker, orch:
-            input_data = {"name": "Cosmonapse"}
-            print(f"dispatching TASK  neuron=hello  input={input_data}")
-
-            # dispatch_and_wait: emit the TASK, await the reply, done.
-            # scope="terminal" waits for workflow conclusion - the worker
-            # finalizes its output automatically (terminal-handler
-            # finalize), so this resolves with a FINAL carrying the result.
-            sig = await orch.dispatch_and_wait(
-                neuron="hello",
-                input=input_data,
-                scope="terminal",
-                timeout_s=5.0,
-            )
-
-            if sig.type is SignalType.ERROR:
-                raise RuntimeError(sig.payload.get("message", "error"))
-            print(f"result: {sig.payload.get('result', {})}")
-
-            # Want streaming instead? The same dispatch returns a Pathway:
-            #   pw = await orch.dispatch(neuron="hello", input=input_data)
-            #   async for s in pw: ...
-
-            # call_tool: emit TOOL_CALL, await TOOL_RESULT - the Effector
-            # equivalent of dispatch_and_wait. No EffectorBinding/Axon
-            # plumbing needed for a direct call like this.
-            tool_args = {"text": "Cosmonapse"}
-            print(f"calling tool  effector=tools-effector  tool=echo  args={tool_args}")
-            outcome = await orch.call_tool(
-                effector_id="tools-effector",
-                tool="echo",
-                args=tool_args,
-            )
-            if outcome.error:
-                raise RuntimeError(outcome.error)
-            print(f"tool result: {outcome.result}")
+        async with build_worker(synapse), build_edge(synapse) as edge:
+            # Every mounted Receptor, concurrently. The first to finish
+            # cancels the rest, so :quit in the terminal ends the process.
+            return await edge.run()
     finally:
         await synapse.close()
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        raise SystemExit(asyncio.run(main()))
+    except KeyboardInterrupt:
+        raise SystemExit(130)
 '''
 
 
@@ -234,7 +295,8 @@ _README_MD = '''# __PROJECT__
 
 A Cosmonapse project in the standard package skeleton: one worker hosting an
 Axon and an Effector, one orchestrator that dispatches a task, calls a tool,
-and prints both results. Neurons think, Engrams remember, Effectors act.
+and prints both results, and a terminal Receptor over the same brain.
+Neurons think, Engrams remember, Effectors act, Receptors listen.
 
 ## Layout
 
@@ -245,8 +307,9 @@ __PROJECT__/
     hello.py
   effector/        Effector modules - each exposes EFFECTOR (Effector.serve())
     tools.py
-  brain.py         the wiring: who hosts what + dispatch helpers
-  demo.py          entry - hosts the worker, dispatches one TASK + one tool call
+  receptors/       Receptor modules - each exposes RECEPTOR (built unbound)
+    terminal.py
+  brain.py         the only entry - who hosts what, and `python brain.py`
 ```
 
 Every cosmonapse-example follows this same layout, so anything you learn
@@ -260,25 +323,50 @@ pip install cosmonapse
 
 ## Run
 
-One process, no setup - demo.py boots an in-process MemorySynapse and hosts
-both sides:
+One process, no setup - brain.py boots an in-process MemorySynapse, hosts
+both sides, and runs whatever interfaces are mounted on the edge Dendrite:
 
 ```bash
-python demo.py
+python brain.py                     # the terminal Receptor's REPL
+python brain.py greet --name Ada    # one-shot
 ```
+
+Anything after `python brain.py` belongs to the terminal Receptor; brain.py
+takes no flags of its own.
 
 To run over a real synapse instead (same topology, different transport):
 
 ```bash
 cosmo synapse start memory --namespace=__NAMESPACE__
-SYNAPSE_URL=cosmo://127.0.0.1:7070 python demo.py
+SYNAPSE_URL=cosmo://127.0.0.1:7070 python brain.py
 ```
 
-Expected output from the demo:
+Expected output:
 
 ```
 result: {'message': 'Hello, Cosmonapse!'}
 tool result: {'echoed': 'Cosmonapse'}
+```
+
+## Talk to it
+
+The same brain behind a terminal interface - no argparse, no REPL loop, no
+timeout handling written by hand:
+
+```bash
+python brain.py greet --name Cosmonapse   # -> Hello, Cosmonapse!
+python brain.py --stream greet            # every Signal on the trace
+python brain.py --send greet              # fire-and-forget, prints the trace_id
+python brain.py ping                      # local command, nothing dispatched
+python brain.py                           # REPL: :ping, :help, :quit
+```
+
+Mount nothing on the edge Dendrite and `python brain.py` blocks as a
+headless worker node - still reachable from another terminal:
+
+```bash
+cosmo dispatch --url=cosmo://127.0.0.1:7070 -n __NAMESPACE__ \\
+    --neuron hello --input '{"name": "Ada"}'
 ```
 
 ## Observe the bus
@@ -300,7 +388,7 @@ cosmo doppler --url=cosmo://127.0.0.1:7070 --namespace=__NAMESPACE__
   host several Effectors too).
 - Workers as their own processes? That's a thin entry over `build_worker` -
   drop this in as `worker.py`, run it against a real synapse, and delete the
-  `build_worker` line from demo.py:
+  `build_worker` line from brain.py's `main()`:
 
   ```python
   import asyncio
@@ -320,8 +408,31 @@ cosmo doppler --url=cosmo://127.0.0.1:7070 --namespace=__NAMESPACE__
   decorators - no hand-wiring on the Dendrite instance itself:
   `@AXON.host.on_agent_output(...)`, `@EFFECTOR.host.on_tool_result(...)`,
   and (once you add an Engram) `@ENGRAM.host.on_imprint_signal(...)`.
-- Serving HTTP? Add `app.py` (FastAPI lifespan + `build_*` from brain.py) -
-  see cosmonapse-examples/05 and /14 for the pattern.
+- Serving HTTP or a chat window? Add another module under `receptors/`
+  exposing `RECEPTOR`, and mount it in `build_edge` exactly like the
+  terminal one. Both need `pip install 'cosmonapse[receptor]'`:
+
+  ```python
+  # receptors/http.py
+  from cosmonapse import ApiReceptor
+  RECEPTOR = ApiReceptor(neuron="hello", path="/run", input_key="name")
+
+  # receptors/chat.py       - voice is the browser's Web Speech API, client side
+  from cosmonapse import ChatReceptor
+  RECEPTOR = ChatReceptor(neuron="hello", input_key="name", voice=True)
+  ```
+
+  ```python
+  # brain.py
+  edge.attach_receptor(http.RECEPTOR)     # POST /run
+  edge.attach_receptor(chat.RECEPTOR)     # GET  /      (same app, same port)
+  ```
+
+  `python brain.py` then serves both on one port - HTTP Receptors sharing a
+  (host, port) are merged into a single app. Give one a different `port=`
+  to split them into separate servers.
+
+  See cosmonapse-examples/17-receptors (and its RECIPES.md) for the full set.
 - Shared memory? Add `engram/` with the backend (e.g. `InMemoryEngram`,
   `SqliteEngram`) and either an `EngramBinding` on an Axon or plain
   `dendrite.recall`/`dendrite.imprint` calls - see cosmonapse-examples/06
@@ -335,8 +446,9 @@ _FILES = {
     "neurons/hello.py": _NEURONS_HELLO_PY,
     "effector/__init__.py": _EFFECTOR_INIT_PY,
     "effector/tools.py": _EFFECTOR_TOOLS_PY,
+    "receptors/__init__.py": _RECEPTORS_INIT_PY,
+    "receptors/terminal.py": _RECEPTORS_TERMINAL_PY,
     "brain.py": _BRAIN_PY,
-    "demo.py": _DEMO_PY,
     "README.md": _README_MD,
 }
 
@@ -397,7 +509,7 @@ def init(name: str, namespace: str, force: bool) -> None:
     """Scaffold a standard-skeleton Cosmonapse project in ./NAME.
 
     \b
-    Creates: config.py, neurons/, effector/, brain.py, demo.py, README.md
+    Creates: config.py, neurons/, effector/, receptors/, brain.py, README.md
     \b
     Examples:
       cosmo init
@@ -418,11 +530,12 @@ def init(name: str, namespace: str, force: bool) -> None:
     click.echo("Next steps:")
     if target != Path.cwd():
         click.echo(f"  cd {name}")
-    click.echo("  python demo.py     # one process, in-process bus - no setup")
+    click.echo("  python brain.py                  # REPL - one process, no setup")
+    click.echo("  python brain.py greet --name Ada  # one-shot")
     click.echo()
     click.echo("Same code over a real synapse:")
     click.echo(f"  cosmo synapse start memory --namespace={namespace}")
-    click.echo("  SYNAPSE_URL=cosmo://127.0.0.1:7070 python demo.py")
+    click.echo("  SYNAPSE_URL=cosmo://127.0.0.1:7070 python brain.py")
 
 
 def _FILES_present(target: Path) -> list[Path]:

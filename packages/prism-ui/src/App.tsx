@@ -10,8 +10,13 @@ import {
   type TabState,
 } from "./tabs";
 import type { SynapseTarget } from "./useSignalStream";
+import { useThemeMode } from "./theme";
 
 export function App() {
+  // Subscribing at the root is what makes a theme flip repaint the whole
+  // tree, so every literal `C.x` read  -  including SVG fill= attributes,
+  // which cannot resolve var()  -  picks up the new palette.
+  useThemeMode();
   // Prism holds one session per open synapse. They all stay mounted and
   // streaming; `activeId` only decides which one is on screen.
   const [state, setState] = useState<TabState>(initialTabState);
@@ -99,7 +104,7 @@ export function App() {
             position: "fixed",
             inset: 0,
             zIndex: 60,
-            background: "rgba(7,8,12,0.86)",
+            background: "var(--bg-overlay)",
             backdropFilter: "blur(8px)",
             WebkitBackdropFilter: "blur(8px)",
           }}

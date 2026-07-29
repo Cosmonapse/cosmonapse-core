@@ -84,22 +84,22 @@ export function SignalList({ signals }: Props) {
               width: 12,
               flexShrink: 0,
               textAlign: "center",
-              color: C.textFaint,
-              fontSize: 9,
+              color: C.textFaint, fontWeight: 600,
+              fontSize: 12,
               cursor: hasKids ? "pointer" : "default",
             }}
           >
             {hasKids ? (kidsOpen ? "▼" : "▶") : "·"}
           </span>
           <span style={{ width: 8, height: 8, borderRadius: "50%", background: c, boxShadow: `0 0 5px ${c}`, flexShrink: 0 }} />
-          <span style={{ color: c, fontFamily: MONO, fontSize: 11.5, fontWeight: 600, minWidth: 104, flexShrink: 0 }}>
+          <span style={{ color: c, fontFamily: MONO, fontSize: 14, fontWeight: 600, minWidth: 104, flexShrink: 0 }}>
             {s.type}
           </span>
           <span
             style={{
-              color: C.textDim,
+              color: C.textDim, fontWeight: 600,
               fontFamily: MONO,
-              fontSize: 11,
+              fontSize: 13.5,
               whiteSpace: "nowrap",
               overflow: "hidden",
               textOverflow: "ellipsis",
@@ -109,17 +109,17 @@ export function SignalList({ signals }: Props) {
           >
             {s.directed?.id || "—"}
           </span>
-          <span style={{ color: C.textFaint, fontFamily: MONO, fontSize: 10.5, flexShrink: 0 }}>{safeTime(s.ts)}</span>
+          <span style={{ color: C.textFaint, fontWeight: 600, fontFamily: MONO, fontSize: 13, flexShrink: 0 }}>{safeTime(s.ts)}</span>
           <span
             onClick={() => toggle(setFull, fKey)}
             style={{
               color: isFull ? C.accent2 : C.textFaint,
               fontFamily: MONO,
-              fontSize: 10,
+              fontSize: 13,
               flexShrink: 0,
               cursor: "pointer",
               textDecoration: "underline",
-              textDecorationColor: "rgba(255,255,255,0.2)",
+              textDecorationColor: "rgba(var(--fg-rgb), 0.2)",
               textUnderlineOffset: 2,
             }}
           >
@@ -167,12 +167,12 @@ export function SignalList({ signals }: Props) {
             userSelect: "none",
           }}
         >
-          <span style={{ color: C.textFaint, fontSize: 10, width: 10, flexShrink: 0 }}>{open ? "▼" : "▶"}</span>
+          <span style={{ color: C.textFaint, fontWeight: 600, fontSize: 13, width: 10, flexShrink: 0 }}>{open ? "▼" : "▶"}</span>
           <Tag color={colorFor("TASK")}>{task.depth > 0 ? "subtask" : "task"}</Tag>
           <span
             style={{
               fontFamily: MONO,
-              fontSize: 12.5,
+              fontSize: 14.5,
               color: C.text,
               whiteSpace: "nowrap",
               overflow: "hidden",
@@ -188,7 +188,7 @@ export function SignalList({ signals }: Props) {
           {task.children.length > 0 && (
             <Badge>{task.children.length} child{task.children.length === 1 ? "" : "ren"}</Badge>
           )}
-          <span style={{ fontFamily: MONO, fontSize: 10.5, color: statusColor, flexShrink: 0 }}>● {status}</span>
+          <span style={{ fontFamily: MONO, fontSize: 13, color: statusColor, flexShrink: 0 }}>● {status}</span>
         </div>
 
         {open && (
@@ -217,12 +217,12 @@ export function SignalList({ signals }: Props) {
         bottom: 0,
         overflowY: "auto",
         padding: "24px 32px 48px",
-        background: "rgba(7,8,12,0.6)",
+        background: "var(--bg-view)",
       }}
     >
       <div style={{ maxWidth: 1000, margin: "0 auto" }}>
         {grouped.roots.length === 0 && (
-          <div style={{ textAlign: "center", color: C.textFaint, fontSize: 13, padding: 64 }}>
+          <div style={{ textAlign: "center", color: C.textFaint, fontWeight: 600, fontSize: 15, padding: 64 }}>
             Waiting for tasks…
           </div>
         )}
@@ -230,7 +230,7 @@ export function SignalList({ signals }: Props) {
 
         {grouped.lifecycle.length > 0 && (
           <div style={{ marginTop: 20, opacity: 0.7 }}>
-            <div style={{ fontFamily: MONO, fontSize: 11, color: C.textFaint, letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 6 }}>
+            <div style={{ fontFamily: MONO, fontSize: 13.5, color: C.textFaint, fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 6 }}>
               lifecycle · {grouped.lifecycle.length}
             </div>
           </div>
@@ -245,7 +245,7 @@ function Tag({ color, children }: { color: string; children: React.ReactNode }) 
     <span
       style={{
         fontFamily: MONO,
-        fontSize: 9.5,
+        fontSize: 12.5,
         color,
         border: `1px solid ${color}40`,
         background: `${color}12`,
@@ -266,9 +266,9 @@ function Badge({ children }: { children: React.ReactNode }) {
     <span
       style={{
         fontFamily: MONO,
-        fontSize: 10.5,
-        color: C.textDim,
-        background: "rgba(255,255,255,0.04)",
+        fontSize: 13,
+        color: C.textDim, fontWeight: 600,
+        background: "rgba(var(--fg-rgb), 0.04)",
         border: "1px solid " + C.border,
         borderRadius: 5,
         padding: "1px 7px",
@@ -284,11 +284,11 @@ function Badge({ children }: { children: React.ReactNode }) {
 const preStyle: React.CSSProperties = {
   margin: "4px 0 6px 20px",
   padding: 10,
-  background: "rgba(0,0,0,0.35)",
-  border: "1px solid " + C.border,
+  background: "var(--bg-well)",
+  border: "1px solid var(--border)",
   borderRadius: 8,
-  color: C.textDim,
-  fontSize: 10.5,
+  color: "var(--text-dim)",
+  fontSize: 13,
   fontFamily: MONO,
   whiteSpace: "pre-wrap",
   wordBreak: "break-all",

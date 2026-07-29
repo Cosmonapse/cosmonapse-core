@@ -13,19 +13,23 @@ import { C, MONO } from "../theme";
 import type { Signal } from "../types";
 
 // Kind identity colors — kept in sync with PrismCanvas / theme TYPE_COLOR.
-const KIND_COLOR: Record<GraphNode["kind"], string> = {
+// Read through a call, not a frozen object: these feed SVG presentation
+// attributes, which cannot resolve var(), so they must re-read the live
+// palette on every render.
+const kindColor = (): Record<GraphNode["kind"], string> => ({
   neuron: C.accent2,
-  engram: "#a78bfa",
-  effector: "#f59e0b",
-};
+  engram: C.engram,
+  effector: C.effector,
+  receptor: C.receptor,
+});
 
-const CHANNEL_COLOR: Record<EdgeChannel, string> = {
-  task: "#22d3ee",
-  tool: "#f59e0b",
-  recall: "#a78bfa",
-  imprint: "#c084fc",
-  output: "#10b981",
-};
+const channelColor = (): Record<EdgeChannel, string> => ({
+  task: C.synapse,
+  tool: C.effector,
+  recall: C.engram,
+  imprint: C.imprint,
+  output: C.ok,
+});
 
 const PANEL_WIDTH = 320;
 
@@ -54,10 +58,10 @@ export function Constellation({ signals }: Props) {
   const setup = run ? report.setups.find((g) => g.key === run.setupKey) ?? null : null;
 
   return (
-    <div style={{ position: "absolute", top: 64, left: 0, right: 0, bottom: 0, display: "flex", background: "rgba(7,8,12,0.6)" }}>
+    <div style={{ position: "absolute", top: 64, left: 0, right: 0, bottom: 0, display: "flex", background: "var(--bg-view)" }}>
       {/* ── setup / run list ── */}
-      <div style={{ width: PANEL_WIDTH, flexShrink: 0, borderRight: "1px solid " + C.border, background: "rgba(0,0,0,0.2)", display: "flex", flexDirection: "column" }}>
-        <div style={{ padding: "12px 14px", fontFamily: MONO, fontSize: 10.5, color: C.accent, letterSpacing: "0.14em", textTransform: "uppercase", borderBottom: "1px solid " + C.border, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+      <div style={{ width: PANEL_WIDTH, flexShrink: 0, borderRight: "1px solid " + C.border, background: "var(--bg-rail)", display: "flex", flexDirection: "column" }}>
+        <div style={{ padding: "12px 14px", fontFamily: MONO, fontSize: 13, color: C.accent, letterSpacing: "0.14em", textTransform: "uppercase", borderBottom: "1px solid " + C.border, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <span>Setups · Runs</span>
           <span
             title="Structural consistency across all setups that ran more than once — pair-weighted mean Jaccard similarity of run graphs."
@@ -68,7 +72,7 @@ export function Constellation({ signals }: Props) {
         </div>
         <div style={{ overflowY: "auto", flex: 1 }}>
           {report.setups.length === 0 && (
-            <div style={{ padding: 24, textAlign: "center", color: C.textFaint, fontSize: 12.5, fontFamily: MONO }}>
+            <div style={{ padding: 24, textAlign: "center", color: C.textFaint, fontWeight: 600, fontSize: 14.5, fontFamily: MONO }}>
               Waiting for tasks…
             </div>
           )}
@@ -89,7 +93,7 @@ export function Constellation({ signals }: Props) {
             <Legend comparable={(setup?.runs.length ?? 0) > 1} />
           </>
         ) : (
-          <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: C.textFaint, fontFamily: MONO, fontSize: 13 }}>
+          <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: C.textFaint, fontWeight: 600, fontFamily: MONO, fontSize: 15 }}>
             Dispatch a task to see its constellation.
           </div>
         )}
@@ -104,7 +108,7 @@ function SetupRow({ group, selected, onSelect }: { group: SetupGroup; selected: 
   return (
     <div style={{ borderBottom: "1px solid " + C.border }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "9px 14px 5px" }}>
-        <span title={group.label} style={{ flex: 1, minWidth: 0, fontFamily: MONO, fontSize: 11.5, color: C.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+        <span title={group.label} style={{ flex: 1, minWidth: 0, fontFamily: MONO, fontSize: 14, color: C.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
           {group.label}
         </span>
         <span
@@ -113,14 +117,14 @@ function SetupRow({ group, selected, onSelect }: { group: SetupGroup; selected: 
               ? "Single run — consistency needs at least two runs of the same setup."
               : `Mean pairwise Jaccard similarity of the ${group.runs.length} run graphs.`
           }
-          style={{ flexShrink: 0, fontFamily: MONO, fontSize: 10, color: cc, background: cc + "14", border: `1px solid ${cc}40`, borderRadius: 6, padding: "1px 7px", cursor: "help" }}
+          style={{ flexShrink: 0, fontFamily: MONO, fontSize: 13, color: cc, background: cc + "14", border: `1px solid ${cc}40`, borderRadius: 6, padding: "1px 7px", cursor: "help" }}
         >
           {group.consistency == null ? `${group.runs.length} run` : fmtPct(group.consistency)}
         </span>
       </div>
       {group.runs.map((r) => {
         const on = r.trace === selected;
-        const statusColor = r.error ? "#f87171" : r.final ? "#10b981" : C.textFaint;
+        const statusColor = r.error ? C.danger : r.final ? C.ok : C.textFaint;
         return (
           <div
             key={r.trace}
@@ -131,15 +135,15 @@ function SetupRow({ group, selected, onSelect }: { group: SetupGroup; selected: 
               gap: 8,
               padding: "6px 14px 6px 22px",
               cursor: "pointer",
-              background: on ? "rgba(34,211,238,0.08)" : "transparent",
+              background: on ? "rgba(var(--accent2-rgb), 0.08)" : "transparent",
               borderLeft: `3px solid ${on ? C.accent2 : "transparent"}`,
             }}
           >
             <span style={{ width: 6, height: 6, borderRadius: "50%", background: statusColor, boxShadow: `0 0 4px ${statusColor}`, flexShrink: 0 }} />
-            <span style={{ fontFamily: MONO, fontSize: 10.5, color: on ? C.accent2 : C.textDim }}>
+            <span style={{ fontFamily: MONO, fontSize: 13, color: on ? C.accent2 : C.textDim }}>
               {new Date(r.start).toISOString().slice(11, 19)}
             </span>
-            <span style={{ fontFamily: MONO, fontSize: 10, color: C.textFaint, marginLeft: "auto" }}>
+            <span style={{ fontFamily: MONO, fontSize: 13, color: C.textFaint, fontWeight: 600, marginLeft: "auto" }}>
               {r.nodes.length}n · {r.edges.length}e · {fmtMs(r.end - r.start)}
             </span>
           </div>
@@ -151,18 +155,18 @@ function SetupRow({ group, selected, onSelect }: { group: SetupGroup; selected: 
 
 function RunHeader({ run, setup }: { run: RunGraph; setup: SetupGroup | null }) {
   const status = run.error ? "error" : run.final ? "final" : "open";
-  const statusColor = run.error ? "#f87171" : run.final ? "#10b981" : C.textFaint;
+  const statusColor = run.error ? C.danger : run.final ? C.ok : C.textFaint;
   const siblings = setup ? setup.runs.length : 1;
   return (
     <div style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 12, padding: "9px 18px", borderBottom: "1px solid " + C.border }}>
       <span style={{ width: 7, height: 7, borderRadius: "50%", background: statusColor, boxShadow: `0 0 5px ${statusColor}`, flexShrink: 0 }} />
-      <span title={run.label} style={{ minWidth: 0, fontFamily: MONO, fontSize: 12, color: C.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+      <span title={run.label} style={{ minWidth: 0, fontFamily: MONO, fontSize: 14.5, color: C.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
         {run.label}
       </span>
-      <span style={{ flexShrink: 0, fontFamily: MONO, fontSize: 10.5, color: C.textFaint }}>
+      <span style={{ flexShrink: 0, fontFamily: MONO, fontSize: 13, color: C.textFaint, fontWeight: 600, }}>
         {status} · {fmtMs(run.end - run.start)}
       </span>
-      <span style={{ marginLeft: "auto", flexShrink: 0, fontFamily: MONO, fontSize: 10.5, color: setup?.consistency == null ? C.textFaint : consistencyColor(setup.consistency) }}>
+      <span style={{ marginLeft: "auto", flexShrink: 0, fontFamily: MONO, fontSize: 13, color: setup?.consistency == null ? C.textFaint : consistencyColor(setup.consistency) }}>
         {setup?.consistency == null
           ? siblings > 1
             ? ""
@@ -223,8 +227,9 @@ function layout(run: RunGraph): { placed: Map<string, Placed>; width: number; he
     a.push(n);
     cols.set(d, a);
   }
-  // stable vertical order: neurons first, then engrams, then effectors, then id
-  const kindOrder: Record<GraphNode["kind"], number> = { neuron: 0, engram: 1, effector: 2 };
+  // stable vertical order: receptors, then neurons, engrams, effectors, then id
+  // Receptors lead: they are where a run enters the system.
+  const kindOrder: Record<GraphNode["kind"], number> = { receptor: 0, neuron: 1, engram: 2, effector: 3 };
   for (const a of cols.values()) a.sort((x, y) => kindOrder[x.kind] - kindOrder[y.kind] || x.id.localeCompare(y.id));
 
   const maxDepth = cols.size ? Math.max(...cols.keys()) : 0;
@@ -257,7 +262,7 @@ function GraphSvg({ run, comparable }: { run: RunGraph; comparable: boolean }) {
   return (
     <svg width={width} height={height} style={{ display: "block", margin: "0 auto", minWidth: "60%" }}>
       <defs>
-        {Object.entries(CHANNEL_COLOR).map(([ch, color]) => (
+        {Object.entries(channelColor()).map(([ch, color]) => (
           <marker key={ch} id={`arrow-${ch}`} viewBox="0 0 8 8" refX={7} refY={4} markerWidth={7} markerHeight={7} orient="auto-start-reverse">
             <path d="M0,0 L8,4 L0,8 z" fill={color} />
           </marker>
@@ -269,7 +274,7 @@ function GraphSvg({ run, comparable }: { run: RunGraph; comparable: boolean }) {
           const a = placed.get(e.from);
           const b = placed.get(e.to);
           if (!a || !b) return null;
-          const color = CHANNEL_COLOR[e.channel];
+          const color = channelColor()[e.channel];
           const dashed = comparable && e.freq < 1;
           const key = `${e.from}|${e.to}|${e.channel}`;
           const title = `${e.from} → ${e.to} · ${e.channel} · ${e.count} request${e.count === 1 ? "" : "s"}${e.replies ? `, ${e.replies} result${e.replies === 1 ? "" : "s"}` : ""}${comparable ? ` · in ${Math.round(e.freq * 100)}% of runs` : ""}`;
@@ -289,7 +294,7 @@ function GraphSvg({ run, comparable }: { run: RunGraph; comparable: boolean }) {
                 >
                   <title>{title}</title>
                 </path>
-                <text x={a.x} y={a.y - R - 40} textAnchor="middle" style={{ fontFamily: MONO, fontSize: 9.5, fill: color, opacity: 0.9 }}>
+                <text x={a.x} y={a.y - R - 40} textAnchor="middle" style={{ fontFamily: MONO, fontSize: 12.5, fill: color, opacity: 0.9 }}>
                   {e.count > 1 ? `${e.count}×` : ""}
                 </text>
               </g>
@@ -334,7 +339,7 @@ function GraphSvg({ run, comparable }: { run: RunGraph; comparable: boolean }) {
                 x={(x1 + 2 * cx + x2) / 4}
                 y={(y1 + 2 * cy + y2) / 4 - 5}
                 textAnchor="middle"
-                style={{ fontFamily: MONO, fontSize: 9.5, fill: color, opacity: 0.9 }}
+                style={{ fontFamily: MONO, fontSize: 12.5, fill: color, opacity: 0.9 }}
               >
                 {e.count > 1 ? `${e.count}×` : ""}
               </text>
@@ -354,7 +359,7 @@ function GraphSvg({ run, comparable }: { run: RunGraph; comparable: boolean }) {
                     x={(x2 + 2 * rx + x1) / 4}
                     y={(y2 + 2 * ry + y1) / 4 + 11}
                     textAnchor="middle"
-                    style={{ fontFamily: MONO, fontSize: 9, fill: color, opacity: 0.6 }}
+                    style={{ fontFamily: MONO, fontSize: 12, fill: color, opacity: 0.6 }}
                   >
                     {e.replies}↩
                   </text>
@@ -366,7 +371,7 @@ function GraphSvg({ run, comparable }: { run: RunGraph; comparable: boolean }) {
       )}
 
       {[...placed.values()].map((n) => {
-        const color = KIND_COLOR[n.kind];
+        const color = kindColor()[n.kind];
         const short = n.id.length > 22 ? n.id.slice(0, 21) + "…" : n.id;
         return (
           <g key={n.id}>
@@ -377,14 +382,14 @@ function GraphSvg({ run, comparable }: { run: RunGraph; comparable: boolean }) {
               cy={n.y}
               r={R}
               fill={C.bgCard}
-              stroke={n.errors ? "#f87171" : color}
+              stroke={n.errors ? C.danger : color}
               strokeWidth={1.6}
             />
             <circle cx={n.x} cy={n.y} r={5.5} fill={color} />
-            <text x={n.x} y={n.y + R + 16} textAnchor="middle" style={{ fontFamily: MONO, fontSize: 10.5, fill: C.text }}>
+            <text x={n.x} y={n.y + R + 16} textAnchor="middle" style={{ fontFamily: MONO, fontSize: 13, fill: C.text }}>
               {short}
             </text>
-            <text x={n.x} y={n.y + R + 29} textAnchor="middle" style={{ fontFamily: MONO, fontSize: 8.5, fill: color, letterSpacing: "0.08em" }}>
+            <text x={n.x} y={n.y + R + 29} textAnchor="middle" style={{ fontFamily: MONO, fontSize: 11.5, fill: color, letterSpacing: "0.08em" }}>
               {n.kind.toUpperCase()}
             </text>
           </g>
@@ -396,7 +401,7 @@ function GraphSvg({ run, comparable }: { run: RunGraph; comparable: boolean }) {
 
 function Legend({ comparable }: { comparable: boolean }) {
   const item = (color: string, label: string, dashed?: boolean) => (
-    <span key={label} style={{ display: "flex", alignItems: "center", gap: 5, fontFamily: MONO, fontSize: 10, color: C.textFaint }}>
+    <span key={label} style={{ display: "flex", alignItems: "center", gap: 5, fontFamily: MONO, fontSize: 13, color: C.textFaint, fontWeight: 600, }}>
       {dashed ? (
         <svg width={16} height={6}><line x1={0} y1={3} x2={16} y2={3} stroke={color} strokeWidth={1.6} strokeDasharray="4 3" /></svg>
       ) : (
@@ -407,22 +412,23 @@ function Legend({ comparable }: { comparable: boolean }) {
   );
   return (
     <div style={{ flexShrink: 0, display: "flex", gap: 16, flexWrap: "wrap", padding: "9px 18px", borderTop: "1px solid " + C.border }}>
-      {item(KIND_COLOR.neuron, "neuron")}
-      {item(KIND_COLOR.engram, "engram")}
-      {item(KIND_COLOR.effector, "effector")}
-      <span style={{ color: C.textFaint }}>│</span>
-      {item(CHANNEL_COLOR.task, "task")}
-      {item(CHANNEL_COLOR.tool, "tool")}
-      {item(CHANNEL_COLOR.recall, "recall")}
-      {item(CHANNEL_COLOR.imprint, "imprint")}
-      {item(CHANNEL_COLOR.output, "final")}
-      <span key="reply" style={{ display: "flex", alignItems: "center", gap: 5, fontFamily: MONO, fontSize: 10, color: C.textFaint }}>
+      {item(kindColor().receptor, "receptor")}
+      {item(kindColor().neuron, "neuron")}
+      {item(kindColor().engram, "engram")}
+      {item(kindColor().effector, "effector")}
+      <span style={{ color: C.textFaint, fontWeight: 600, }}>│</span>
+      {item(channelColor().task, "task")}
+      {item(channelColor().tool, "tool")}
+      {item(channelColor().recall, "recall")}
+      {item(channelColor().imprint, "imprint")}
+      {item(channelColor().output, "final")}
+      <span key="reply" style={{ display: "flex", alignItems: "center", gap: 5, fontFamily: MONO, fontSize: 13, color: C.textFaint, fontWeight: 600, }}>
         <svg width={16} height={6}><line x1={16} y1={3} x2={2} y2={3} stroke={C.textDim} strokeWidth={1} /><path d="M6,0 L0,3 L6,6 z" fill={C.textDim} /></svg>
         result / reply
       </span>
       {comparable && (
         <>
-          <span style={{ color: C.textFaint }}>│</span>
+          <span style={{ color: C.textFaint, fontWeight: 600, }}>│</span>
           {item(C.textDim, "not in every run", true)}
         </>
       )}

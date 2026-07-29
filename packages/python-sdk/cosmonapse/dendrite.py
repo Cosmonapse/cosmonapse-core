@@ -201,6 +201,11 @@ class Dendrite(LifecycleHooks):
         # index so a TOOL_CALL with directed.type addresses every hosted
         # match - the action-side mirror of the Engram tables above.
         self._effectors: dict[str, Effector] = {}
+        # Receptors mounted on this Dendrite (orchestrator-role only).
+        # Unlike Axons/Effectors/Engrams these are caller-side - they
+        # originate TASKs and service nothing - so there is no
+        # subscription and no index, just the list run() will run.
+        self._receptors: list[Any] = []
         self._effector_kind_index: dict[str, list[str]] = {}
         self._effector_client: EffectorClient = EffectorClient(self)
 
@@ -467,6 +472,68 @@ class Dendrite(LifecycleHooks):
             self._effector_kind_index.pop(effector.effector_kind, None)
         del self._effectors[effector_id]
         effector._dendrite = None
+
+    # ------------------------------------------------------------------
+    # Receptors  -  the interface layer
+    # ------------------------------------------------------------------
+
+    def attach_receptor(self, receptor: Any) -> Any:
+        """Mount a Receptor on this Dendrite. Returns it, for chaining.
+
+        The fourth attach point: Axons think, Effectors act, Engrams
+        remember, Receptors listen. Attaching binds the Receptor to this
+        Dendrite (the same thing ``receptor.bind(self)`` does) and adds it
+        to the set ``run()`` will run.
+
+        Unlike the other three this adds no subscription - a Receptor is
+        caller-side. It originates TASKs and services no signal type, so
+        there is nothing for the Dendrite to listen for on its behalf.
+
+        Only orchestrator-role Dendrites may mount one, and the check
+        happens here rather than at first dispatch: a Receptor on a worker
+        is a wiring mistake, and failing at attach beats failing at the
+        first request.
+        """
+        self._require_orchestrator("attach_receptor")
+        if receptor in self._receptors:
+            raise ValueError(
+                f"Dendrite already hosts this Receptor "
+                f"({receptor.receptor_id!r})"
+            )
+        receptor.bind(self)
+        self._receptors.append(receptor)
+        return receptor
+
+    def detach_receptor(self, receptor: Any) -> None:
+        """Unmount a Receptor. It keeps its binding; it just stops being run."""
+        try:
+            self._receptors.remove(receptor)
+        except ValueError:
+            raise ValueError(
+                f"Dendrite does not host Receptor {receptor.receptor_id!r}"
+            ) from None
+
+    @property
+    def receptors(self) -> list[Any]:
+        """The Receptors mounted on this Dendrite, in attach order."""
+        return list(self._receptors)
+
+    async def run(self) -> int:
+        """Run every mounted Receptor concurrently. Returns an exit code.
+
+        This is what makes a brain runnable: build the Dendrites, attach
+        the interfaces, ``await edge.run()``. HTTP Receptors sharing a
+        (host, port) are merged onto one app; the first Receptor to finish
+        cancels the rest, so a foreground CLI exiting on ``:quit`` brings
+        the process down. With nothing attached this blocks forever - a
+        headless worker node, still reachable via ``cosmo dispatch``.
+
+        ``run`` and not ``serve``: ``Effector.serve()`` / ``Engram.serve()``
+        are constructors, so the verb already means something else.
+        """
+        from cosmonapse.receptor.runner import run_receptors
+
+        return await run_receptors(*self._receptors)
 
     @property
     def effectors(self) -> dict[str, Effector]:
@@ -2703,7 +2770,14 @@ class Dendrite(LifecycleHooks):
         payload = signal.payload or {}
         target = payload.get("neuron")
         caps_filter = payload.get("capabilities")
+        # Jitter so a namespace full of Dendrites does not answer a DISCOVER
+        # in lockstep. The Dendrite can be stopped inside that window (a
+        # short-lived process that starts, dispatches once and exits), and a
+        # stopped Dendrite must not publish - the Synapse it would publish
+        # on is typically already closed.
         await asyncio.sleep(random.uniform(0, 0.1))
+        if not self._running:
+            return
         caps_set: set[str] | None = (
             set(caps_filter) if caps_filter else None
         )

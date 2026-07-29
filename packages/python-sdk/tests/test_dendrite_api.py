@@ -164,3 +164,28 @@ def test_detach_axon_unknown_raises_keyerror():
         finally:
             await synapse.close()
     _run(run())
+
+
+def test_discover_response_is_skipped_after_stop():
+    """Regression: respond_to_discover jitters up to 100ms before emitting
+    REGISTER. A short-lived process can stop inside that window, and the
+    publish then hit an already-closed Synapse and logged a warning."""
+    from cosmonapse import Axon, discover_signal
+
+    async def neuron(payload, context=None):
+        return {"ok": True}
+
+    async def run():
+        synapse = MemorySynapse()
+        await synapse.connect()
+        d = Dendrite(synapse=synapse, namespace="t", role="worker")
+        d.attach_axon(Axon(neuron_id="n", neuron_fn=neuron, capabilities=["c"]))
+        await d.start()
+        sig = discover_signal(neuron="n")
+        task = asyncio.create_task(d.respond_to_discover(sig))
+        await d.stop()
+        await synapse.close()
+        await task          # must return quietly, not raise or warn
+        assert task.done() and task.exception() is None
+
+    _run(run())

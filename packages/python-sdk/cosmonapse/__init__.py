@@ -19,6 +19,15 @@ Layers
                 argument; everything else is opt-in.
   Synapse       Message bus adapter (memory / dev / NATS / Kafka).
                 Caller-owned; built and closed externally.
+  Receptor      Interface layer. The edge where the outside world
+                touches the fabric - a CLI command, an HTTP request, a
+                chat turn - turned into a TASK and handed back as one
+                of the three dispatch shapes (send / wait / stream).
+                ``CliReceptor`` / ``ApiReceptor`` / ``ChatReceptor``.
+                Emits nothing new on the wire. Mounted with
+                ``dendrite.attach_receptor(rx)`` and run with
+                ``await dendrite.run()`` - which is what makes a
+                brain.py runnable.
 
 Cortex
 ------
@@ -164,6 +173,15 @@ from cosmonapse.effector import (
     EffectorTimeout,
     ToolOutcome,
 )
+from cosmonapse.receptor import (
+    CliReceptor,
+    run_receptors,
+    DispatchMode,
+    Receptor,
+    ReceptorError,
+    ReceptorTimeout,
+    ReceptorUnbound,
+)
 from cosmonapse.engram import (
     Engram,
     EngramBinding,
@@ -296,4 +314,27 @@ __all__ = [
     "InMemoryEngram",
     "SqliteEngram",
     "PostgresEngram",
+    # Receptor
+    "Receptor",
+    "CliReceptor",
+    "ApiReceptor",
+    "ChatReceptor",
+    "DispatchMode",
+    "ReceptorError",
+    "ReceptorTimeout",
+    "ReceptorUnbound",
+    "run_receptors",
 ]
+
+# The FastAPI-backed Receptors are resolved on first attribute access so
+# `import cosmonapse` never imports FastAPI (an optional extra:
+# `pip install 'cosmonapse[receptor]'`).
+_LAZY_RECEPTORS = {"ApiReceptor", "ChatReceptor"}
+
+
+def __getattr__(name: str):
+    if name in _LAZY_RECEPTORS:
+        from importlib import import_module
+
+        return getattr(import_module("cosmonapse.receptor"), name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

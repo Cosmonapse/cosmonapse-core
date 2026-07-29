@@ -11,7 +11,7 @@ cosmo answer      Interactively answer CLARIFICATION / PERMISSION requests
 cosmo schema      Export the Signal envelope JSON Schema
 cosmo doppler     Attach a Doppler to the Synapse, stream Signals to stdout
 cosmo validate    Validate that Signals on the Synapse conform to the envelope spec
-cosmo genesis     Open Genesis - name a brain, pick a folder, scaffold it, see the canvas
+cosmo genesis     Open Genesis - name a brain, scaffold it, grow it on a canvas
 cosmo completion  Print a shell-completion script (bash / zsh / fish)
 """
 

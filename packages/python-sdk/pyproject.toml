@@ -32,6 +32,9 @@ nats = ["nats-py>=2.3"]
 kafka = ["aiokafka>=0.10"]
 # Storage backends
 postgres = ["asyncpg>=0.29"]
+# Receptor interface layer - ApiReceptor / ChatReceptor serve over FastAPI.
+# CliReceptor needs nothing beyond the core install.
+receptor = ["fastapi>=0.110", "uvicorn>=0.29"]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
@@ -40,6 +43,9 @@ dev = [
     # so the test suite can exercise the optional code paths
     "aiokafka>=0.10",
     "asyncpg>=0.29",
+    # so the Receptor HTTP backends are exercised by the suite
+    "fastapi>=0.110",
+    "httpx>=0.27",
 ]
 
 # Installing this distribution (`pip install cosmonapse`, or `-e .` for dev)

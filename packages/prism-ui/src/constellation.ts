@@ -2,11 +2,12 @@
 // score how consistently a setup reproduces that graph across runs.
 //
 // A run is one top-level task subtree (rootBundles in metrics.ts). Its graph
-// has one node per participant that took part (neuron / engram / effector) and
-// one typed edge per interaction channel. The synapse is transport, not a
+// has one node per participant that took part (receptor / neuron / engram /
+// effector) and one typed edge per interaction channel. The synapse is transport, not a
 // participant: when A tool-calls B the envelope crosses the synapse, but the
 // edge is A → B. Channels:
-//   task     — TASK delegation (dispatching neuron → child neuron)
+//   task     — TASK delegation (dispatching neuron → child neuron), and the
+//              entry edge (receptor → the neuron it handed the root task to)
 //   tool     — TOOL_CALL → effector          (replies: TOOL_RESULT)
 //   recall   — RECALL → engram               (replies: RECALLED)
 //   imprint  — IMPRINT → engram              (replies: IMPRINTED)
@@ -26,8 +27,9 @@
 // deliberately ignored (structure, not load).
 
 import { rootBundles } from "./metrics";
+import { C } from "./theme";
 import { ts } from "./grouping";
-import { participantKind, type ParticipantKind, type Signal } from "./types";
+import { participantKind, receptorRef, type ParticipantKind, type Signal } from "./types";
 
 export type NodeKind = ParticipantKind;
 
@@ -96,6 +98,10 @@ export const edgeSig = (e: { from: string; to: string; channel: string }): strin
 function kindMap(signals: Signal[]): Map<string, ParticipantKind> {
   const kinds = new Map<string, ParticipantKind>();
   for (const s of signals) {
+    // Receptors are never addressed, so they are classified by the meta key
+    // that names their author rather than by any directed.id.
+    const rxid = receptorRef(s);
+    if (rxid) kinds.set(rxid, "receptor");
     const id = s.directed?.id;
     if (!id) continue;
     const k = participantKind(s);
@@ -189,6 +195,16 @@ function buildRunGraph(
     if (s.type === "FINAL") final = true;
     if (s.type === "ERROR") error = true;
 
+    // Authorship first: a Receptor takes part in the run without ever being
+    // addressed, so its activity has to be counted before the directed.id
+    // guard that every other participant is found by.
+    const rxid = receptorRef(s);
+    if (rxid) {
+      const rn = node(rxid);
+      rn.activity++;
+      if (s.type === "ERROR") rn.errors++;
+    }
+
     const id = s.directed?.id;
     if (!id) continue;
     const n = node(id);
@@ -199,8 +215,13 @@ function buildRunGraph(
 
     switch (s.type) {
       case "TASK": {
+        // A Receptor-raised task does have a source: the edge it arrived
+        // through. Drawing it makes the entry point part of the run's
+        // structural signature, so "same work, different door" reads as the
+        // structural difference it is.
+        if (rxid) edge(rxid, id, "task").count++;
         // Delegation edge only when a parent neuron dispatched this task; a
-        // root task simply starts at its target neuron.
+        // root task otherwise simply starts at its target neuron.
         if (s.parent_id) {
           const parent = byId.get(s.parent_id);
           const pt = parent?.trace_id;
@@ -336,8 +357,8 @@ export function computeConsistency(signals: Signal[]): ConsistencyReport {
 
 /** Color ramp for consistency badges. */
 export function consistencyColor(x: number | null): string {
-  if (x == null) return "#5b6275";
-  if (x >= 0.9) return "#34d399";
-  if (x >= 0.6) return "#fbbf24";
-  return "#f87171";
+  if (x == null) return C.textFaint;
+  if (x >= 0.9) return C.okSoft;
+  if (x >= 0.6) return C.warn;
+  return C.danger;
 }

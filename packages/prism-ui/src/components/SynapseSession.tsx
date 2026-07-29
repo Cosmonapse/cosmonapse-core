@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { SynapseTab } from "../tabs";
-import { MONO } from "../theme";
+import { C, MONO } from "../theme";
 import { isPrismError, type Signal } from "../types";
 import { useSignalStream } from "../useSignalStream";
 import { Constellation } from "./Constellation";
@@ -129,12 +129,12 @@ export function SynapseSession({
               left: "50%",
               transform: "translateX(-50%)",
               zIndex: 8,
-              background: "rgba(248,113,113,0.12)",
-              border: "1px solid rgba(248,113,113,0.4)",
-              color: "#fecaca",
+              background: "rgba(var(--danger-rgb), 0.12)",
+              border: "1px solid rgba(var(--danger-rgb), 0.4)",
+              color: C.dangerText,
               borderRadius: 10,
               padding: "9px 16px",
-              fontSize: 12.5,
+              fontSize: 14.5,
               fontFamily: MONO,
               backdropFilter: "blur(12px)",
               WebkitBackdropFilter: "blur(12px)",

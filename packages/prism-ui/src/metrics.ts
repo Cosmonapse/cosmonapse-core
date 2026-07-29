@@ -10,7 +10,7 @@
 // back to nearest-earlier unmatched request on the same trace.
 
 import { groupSignals, taskHint, ts, type TaskGroup } from "./grouping";
-import { participantKind, type Signal } from "./types";
+import { participantKind, receptorRef, type Signal } from "./types";
 
 export interface TaskTiming {
   trace: string;
@@ -26,6 +26,9 @@ export interface PairTiming {
   label: string;
   trace: string;
   durationMs: number;
+  /** Timestamp (ms) of the request side of the pair - used to place the pair
+   *  on a time axis for trend charts. */
+  t: number;
 }
 
 export interface DurStat {
@@ -100,6 +103,7 @@ function pairRequests(
         label: target || (req.trace_id || "").slice(4, 12),
         trace: req.trace_id,
         durationMs: Math.max(0, ts(s) - ts(req)),
+        t: ts(req),
       });
     }
   }
@@ -406,9 +410,7 @@ export interface ParticipantMetric {
 }
 export function computeParticipants(signals: Signal[]): ParticipantMetric[] {
   const map = new Map<string, ParticipantMetric>();
-  for (const s of signals) {
-    const id = s.directed?.id;
-    if (!id) continue;
+  const touch = (id: string, s: Signal): ParticipantMetric => {
     let p = map.get(id);
     if (!p) {
       p = { id, kind: "—", total: 0, tasks: 0, outputs: 0, errors: 0, errorRate: 0, lastSeen: s.ts, capabilities: [] };
@@ -416,6 +418,26 @@ export function computeParticipants(signals: Signal[]): ParticipantMetric[] {
     }
     p.total++;
     if (new Date(s.ts).getTime() > new Date(p.lastSeen).getTime()) p.lastSeen = s.ts;
+    return p;
+  };
+  for (const s of signals) {
+    // Receptors are credited by authorship (meta.receptor), everyone else by
+    // address (directed.id). A Receptor-dispatched TASK therefore lands on two
+    // rows - the edge that raised it and the neuron that was handed it - which
+    // is the honest accounting: both took part.
+    const rxid = receptorRef(s);
+    if (rxid) {
+      const rp = touch(rxid, s);
+      rp.kind = "receptor";
+      // "tasks" for a Receptor means tasks it introduced, not tasks handed to
+      // it; nothing is ever directed at a Receptor.
+      if (s.type === "TASK") rp.tasks++;
+      else if (s.type === "ERROR") rp.errors++;
+    }
+
+    const id = s.directed?.id;
+    if (!id) continue;
+    const p = touch(id, s);
     if (s.type === "TASK") p.tasks++;
     else if (s.type === "AGENT_OUTPUT" || s.type === "FINAL") p.outputs++;
     else if (s.type === "ERROR") p.errors++;
@@ -482,4 +504,151 @@ export function computeMarket(signals: Signal[]): MarketMetrics {
 /** ms → compact percent for rates. */
 export function fmtPct(x: number): string {
   return `${Math.round(x * 100)}%`;
+}
+
+// ── time-series helpers for the metrics graphs ──────────────────────────────
+// Everything below buckets signals/pairs into a fixed number of equal-width
+// time windows spanning the buffer, for line/bar trend charts. Buckets with
+// no samples report `null` for an average so charts can show a gap instead
+// of a misleading zero.
+
+function avgOrNull(xs: number[]): number | null {
+  return xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null;
+}
+
+function bucketLabel(t: number): string {
+  const d = new Date(t);
+  return isNaN(d.getTime()) ? "" : d.toISOString().slice(11, 19);
+}
+
+/** Shared bucketing plan: n equal windows covering [min, max] of allTs. */
+function bucketPlan(allTs: number[], n: number): { min: number; size: number; idx: (t: number) => number } | null {
+  if (allTs.length === 0) return null;
+  const min = Math.min(...allTs);
+  const max = Math.max(...allTs);
+  const span = Math.max(1, max - min);
+  const size = span / n;
+  const idx = (t: number) => Math.max(0, Math.min(n - 1, Math.floor((t - min) / size)));
+  return { min, size, idx };
+}
+
+// ── task volume + outcome over time ─────────────────────────────────────────
+export interface VolumePoint {
+  t: number;
+  label: string;
+  completed: number;
+  failed: number;
+  inFlight: number;
+}
+export function computeVolumeSeries(signals: Signal[], n = 20): VolumePoint[] {
+  const bundles = rootBundles(signals);
+  const starts = bundles.map((b) => (b.root.taskSig ? ts(b.root.taskSig) : (b.sigs.length ? Math.min(...b.sigs.map(ts)) : NaN)));
+  const plan = bucketPlan(starts.filter((t) => isFinite(t)), n);
+  if (!plan) return [];
+  const points: VolumePoint[] = Array.from({ length: n }, (_, i) => ({
+    t: plan.min + i * plan.size,
+    label: bucketLabel(plan.min + i * plan.size),
+    completed: 0,
+    failed: 0,
+    inFlight: 0,
+  }));
+  bundles.forEach((b, i) => {
+    const start = starts[i];
+    if (!isFinite(start)) return;
+    const p = points[plan.idx(start)];
+    const hasFinal = b.sigs.some((s) => s.type === "FINAL");
+    const hasError = b.sigs.some((s) => s.type === "ERROR");
+    if (hasFinal) p.completed++;
+    else if (hasError) p.failed++;
+    else p.inFlight++;
+  });
+  return points;
+}
+
+// ── latency trend over time (task / tool / recall) ──────────────────────────
+export interface LatencyPoint {
+  t: number;
+  label: string;
+  taskAvgMs: number | null;
+  toolAvgMs: number | null;
+  recallAvgMs: number | null;
+}
+export function computeLatencyTrend(signals: Signal[], n = 20): LatencyPoint[] {
+  const bundles = rootBundles(signals);
+  const taskPts = bundles
+    .map((b) => {
+      const start = b.root.taskSig ? ts(b.root.taskSig) : NaN;
+      const end = b.sigs.length ? Math.max(...b.sigs.map(ts)) : NaN;
+      return { t: start, d: Math.max(0, end - start) };
+    })
+    .filter((p) => isFinite(p.t) && isFinite(p.d));
+  const tools = pairRequests(signals, "TOOL_CALL", "TOOL_RESULT");
+  const recalls = pairRequests(signals, "RECALL", "RECALLED");
+
+  const allTs = [...taskPts.map((p) => p.t), ...tools.map((p) => p.t), ...recalls.map((p) => p.t)];
+  const plan = bucketPlan(allTs, n);
+  if (!plan) return [];
+
+  const taskB: number[][] = Array.from({ length: n }, () => []);
+  const toolB: number[][] = Array.from({ length: n }, () => []);
+  const recallB: number[][] = Array.from({ length: n }, () => []);
+  taskPts.forEach((p) => taskB[plan.idx(p.t)].push(p.d));
+  tools.forEach((p) => toolB[plan.idx(p.t)].push(p.durationMs));
+  recalls.forEach((p) => recallB[plan.idx(p.t)].push(p.durationMs));
+
+  return Array.from({ length: n }, (_, i) => ({
+    t: plan.min + i * plan.size,
+    label: bucketLabel(plan.min + i * plan.size),
+    taskAvgMs: avgOrNull(taskB[i]),
+    toolAvgMs: avgOrNull(toolB[i]),
+    recallAvgMs: avgOrNull(recallB[i]),
+  }));
+}
+
+// ── human-in-the-loop round-trip trend over time ────────────────────────────
+export interface HitlPoint {
+  t: number;
+  label: string;
+  clarifyAvgMs: number | null;
+  permAvgMs: number | null;
+}
+export function computeHitlTrend(signals: Signal[], n = 20): HitlPoint[] {
+  const clar = pairRequests(signals, "CLARIFICATION", "CLARIFICATION_ANSWER");
+  const perm = pairRequests(signals, "PERMISSION", "PERMISSION_DECISION");
+  const plan = bucketPlan([...clar.map((p) => p.t), ...perm.map((p) => p.t)], n);
+  if (!plan) return [];
+
+  const clarB: number[][] = Array.from({ length: n }, () => []);
+  const permB: number[][] = Array.from({ length: n }, () => []);
+  clar.forEach((p) => clarB[plan.idx(p.t)].push(p.durationMs));
+  perm.forEach((p) => permB[plan.idx(p.t)].push(p.durationMs));
+
+  return Array.from({ length: n }, (_, i) => ({
+    t: plan.min + i * plan.size,
+    label: bucketLabel(plan.min + i * plan.size),
+    clarifyAvgMs: avgOrNull(clarB[i]),
+    permAvgMs: avgOrNull(permB[i]),
+  }));
+}
+
+// ── generic latency-distribution histogram ──────────────────────────────────
+export interface HistBin {
+  label: string;
+  count: number;
+}
+export function histogram(values: number[], bins = 10): HistBin[] {
+  if (values.length === 0) return [];
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const span = Math.max(1, max - min);
+  const size = span / bins;
+  const counts = new Array(bins).fill(0);
+  for (const v of values) {
+    const i = Math.max(0, Math.min(bins - 1, Math.floor((v - min) / size)));
+    counts[i]++;
+  }
+  return counts.map((count, i) => ({
+    label: `${fmtMs(min + i * size)}–${fmtMs(min + (i + 1) * size)}`,
+    count,
+  }));
 }

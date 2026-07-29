@@ -1,17 +1,30 @@
 import { useState } from "react";
-import { StartForm } from "./components/StartForm";
-import { GenesisCanvas } from "./components/GenesisCanvas";
+import { StartScreen } from "./components/StartScreen";
+import { Workspace } from "./components/Workspace";
+import { rememberProject } from "./recents";
 import type { InitResult } from "./types";
+import { useThemeMode } from "./theme";
 
 export function App() {
-  const [scaffoldPath, setScaffoldPath] = useState<string | null>(null);
+  // Subscribing at the root is what makes a theme flip repaint the whole
+  // tree, so every literal `C.x` read  -  including SVG stroke= attributes,
+  // which cannot resolve var()  -  picks up the new palette.
+  useThemeMode();
+  const [projectPath, setProjectPath] = useState<string | null>(null);
+
+  function open(path: string, name: string) {
+    rememberProject({ path, name });
+    setProjectPath(path);
+  }
 
   function handleScaffolded(result: InitResult) {
-    setScaffoldPath(result.target);
+    // The scaffolder returns the project directory it created, whose last
+    // segment is the brain's name.
+    open(result.target, result.target.split(/[\\/]/).filter(Boolean).pop() ?? result.target);
   }
 
-  if (scaffoldPath) {
-    return <GenesisCanvas initialPath={scaffoldPath} onBack={() => setScaffoldPath(null)} />;
+  if (projectPath) {
+    return <Workspace projectPath={projectPath} onBack={() => setProjectPath(null)} />;
   }
-  return <StartForm onScaffolded={handleScaffolded} />;
+  return <StartScreen onScaffolded={handleScaffolded} onOpen={open} />;
 }
