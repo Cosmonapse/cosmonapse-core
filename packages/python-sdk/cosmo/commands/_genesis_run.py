@@ -64,8 +64,9 @@ import contextlib
 import os
 import sys
 import time
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from cosmo.commands import _genesis_synapse as _gs
 
@@ -131,7 +132,7 @@ class Brain:
         for fn in list(self.listeners):
             try:
                 fn(chunk)
-            except Exception:  # noqa: BLE001
+            except Exception:
                 # A wedged client must never stall the pump or the child.
                 self.listeners.discard(fn)
 
@@ -151,7 +152,7 @@ class Brain:
                 self._emit(data.decode("utf-8", errors="replace"))
         except asyncio.CancelledError:
             raise
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             self._emit(f"\n[genesis] stopped reading output: {exc}\n")
         finally:
             code = self.proc.returncode
@@ -222,7 +223,7 @@ class Brain:
             self.proc.terminate()
         try:
             await asyncio.wait_for(self.proc.wait(), timeout=_TERM_GRACE_S)
-        except (asyncio.TimeoutError, Exception):  # noqa: BLE001
+        except (asyncio.TimeoutError, Exception):
             with contextlib.suppress(ProcessLookupError, Exception):
                 self.proc.kill()
             with contextlib.suppress(Exception):

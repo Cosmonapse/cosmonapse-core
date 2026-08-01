@@ -370,7 +370,7 @@ class Receptor(ABC):
             # An unbound Dendrite is a wiring mistake, not a runtime
             # failure - it must not be swallowed by an on_failure hook.
             raise
-        except Exception as exc:  # noqa: BLE001 - the hook decides
+        except Exception as exc:
             # Everything else, ReceptorError from a terminal ERROR Signal
             # included, goes through fail(), which re-raises when no
             # on_failure hook is registered.
@@ -541,7 +541,7 @@ def _guarded(hook: SignalHook) -> SignalHook:
     async def wrapper(sig: Signal) -> None:
         try:
             await _maybe_await(hook(sig))
-        except Exception:  # noqa: BLE001
+        except Exception:
             logger.exception("receptor on_signal hook failed for %s", sig.type)
     return wrapper
 

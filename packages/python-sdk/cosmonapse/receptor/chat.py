@@ -206,24 +206,24 @@ class ChatReceptor(ApiReceptor):
     @property
     def router(self):
         """Chat endpoint + the served page, on top of ApiReceptor's routes."""
-        from fastapi import APIRouter  # noqa: PLC0415
-        from fastapi.responses import HTMLResponse, StreamingResponse  # noqa: PLC0415
+        from fastapi import APIRouter
+        from fastapi.responses import HTMLResponse, StreamingResponse
 
         router = APIRouter()
 
         @router.get("/", response_class=HTMLResponse)
-        async def page():  # noqa: ANN202
+        async def page():
             return self.html()
 
         @router.post(self.path)
-        async def chat(body: dict | None = None):  # noqa: ANN202
+        async def chat(body: dict | None = None):
             body = dict(body or {})
             message = str(body.pop("message", "") or "").strip()
             session = str(body.pop("session", "default") or "default")
             mode = str(body.pop("mode", self.default_mode))
             timeout_s = body.pop("timeout_s", self._timeout_s)
             if not message:
-                from fastapi import HTTPException  # noqa: PLC0415
+                from fastapi import HTTPException
                 raise HTTPException(422, "body needs a non-empty 'message'")
             if mode == "stream":
                 return StreamingResponse(
@@ -238,7 +238,7 @@ class ChatReceptor(ApiReceptor):
                                        "session": session},
                                       context_ref=session)
                 return {"accepted": True, "trace_id": sig.trace_id}
-            from fastapi import HTTPException  # noqa: PLC0415
+            from fastapi import HTTPException
             try:
                 reply = await self.turn(message, session=session,
                                         timeout_s=timeout_s)
@@ -249,12 +249,12 @@ class ChatReceptor(ApiReceptor):
             return {"reply": reply, "session": session}
 
         @router.post(self.path + "/reset")
-        async def reset(body: dict | None = None):  # noqa: ANN202
+        async def reset(body: dict | None = None):
             self.reset((body or {}).get("session"))
             return {"ok": True}
 
         @router.get(self.path + "/{trace_id}")
-        async def observe(trace_id: str):  # noqa: ANN202
+        async def observe(trace_id: str):
             return StreamingResponse(
                 self.observe_stream(trace_id),
                 media_type="text/event-stream",

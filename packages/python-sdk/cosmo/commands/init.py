@@ -622,7 +622,7 @@ def scaffold_project(
     project = target.name
 
     if target.exists() and any(target.iterdir()) and not force:
-        existing = [p.name for p in _FILES_present(target)]
+        existing = [p.name for p in _files_present(target)]
         if existing:
             raise ScaffoldExistsError(
                 f"{target} already contains {', '.join(existing)}. "

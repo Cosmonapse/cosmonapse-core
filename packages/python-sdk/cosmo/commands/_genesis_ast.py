@@ -1052,7 +1052,7 @@ def set_axon_source(text: str, *, source: str, form: str = "") -> str:
     not from_source keywords), and refuse outright when the call carries
     ``**kwargs`` whose contents can't be attributed either way.
     """
-    from cosmo.commands import _genesis_protocols as _gp   # lazy: one-way
+    from cosmo.commands import _genesis_protocols as _gp  # lazy: one-way
 
     if source not in AXON_SOURCES:
         raise EditError(f"unknown neuron source {source!r}")

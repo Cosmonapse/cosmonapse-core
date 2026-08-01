@@ -56,7 +56,7 @@ _FASTAPI_HINT = (
 
 def _fastapi():
     try:
-        import fastapi  # noqa: PLC0415
+        import fastapi
     except ModuleNotFoundError as exc:  # pragma: no cover - env dependent
         raise ModuleNotFoundError(_FASTAPI_HINT) from exc
     return fastapi
@@ -194,7 +194,7 @@ class ApiReceptor(Receptor):
                 yield sse(sig.type.value.lower(), signal_to_jsonable(sig))
         except ReceptorTimeout as exc:
             yield sse("error", {"message": str(exc), "timeout": True})
-        except Exception as exc:  # noqa: BLE001 - the stream must end cleanly
+        except Exception as exc:
             yield sse("error", {"message": str(exc)})
         yield sse("done", {"ok": True})
 
@@ -229,12 +229,12 @@ class ApiReceptor(Receptor):
     def router(self):
         """An ``APIRouter`` carrying the dispatch endpoint and extra routes."""
         fastapi = _fastapi()
-        from fastapi.responses import StreamingResponse  # noqa: PLC0415
+        from fastapi.responses import StreamingResponse
 
         router = fastapi.APIRouter()
 
         @router.post(self.path)
-        async def dispatch(body: dict | None = None):  # noqa: ANN202
+        async def dispatch(body: dict | None = None):
             result = await self.handle(body)
             if hasattr(result, "__aiter__"):
                 return StreamingResponse(
@@ -245,7 +245,7 @@ class ApiReceptor(Receptor):
             return result
 
         @router.get(self.path + "/{trace_id}")
-        async def observe(trace_id: str):  # noqa: ANN202
+        async def observe(trace_id: str):
             return StreamingResponse(
                 self.observe_stream(trace_id),
                 media_type="text/event-stream",
@@ -271,7 +271,7 @@ class ApiReceptor(Receptor):
         HTTP Receptor sharing a port into one app instead of racing two
         servers for the same socket.
         """
-        from cosmonapse.receptor.runner import _serve_group  # noqa: PLC0415
+        from cosmonapse.receptor.runner import _serve_group
 
         return await _serve_group(self.host, self.port, [self])
 
@@ -289,7 +289,7 @@ class ApiReceptor(Receptor):
             # (dendrites, orchestrator) and the orchestrator is bound here
             app = rx.app(setup=my_setup, teardown=my_teardown)
         """
-        from contextlib import AsyncExitStack  # noqa: PLC0415
+        from contextlib import AsyncExitStack
 
         built: list[Any] = list(dendrites)
         if setup is not None:
@@ -330,7 +330,7 @@ class ApiReceptor(Receptor):
         """
         fastapi = _fastapi()
         if dendrites or setup is not None:
-            def _lifespan(app):  # noqa: ANN202
+            def _lifespan(app):
                 return self.lifespan(*(dendrites or []), setup=setup,
                                      teardown=teardown)
             kw.setdefault("lifespan", _lifespan)

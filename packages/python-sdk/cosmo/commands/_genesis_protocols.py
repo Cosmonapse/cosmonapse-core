@@ -30,15 +30,15 @@ from __future__ import annotations
 import inspect
 from typing import Any
 
+# One-way: _genesis_ast owns what the callees ARE (it has to recognise and
+# rewrite them); this module owns what each one's form should offer.
+from cosmo.commands._genesis_ast import AXON_SOURCE_CALLEES
+
 # Read live off the SDK rather than hardcoded, for the same reason the host
 # protocol table is: a dialect or a preset server added to cosmonapse should
 # show up in Genesis's form without anyone editing this file.
 from cosmonapse.effector.standards import TOOL_STANDARDS as _TOOL_STANDARDS
 from cosmonapse.neuron import STANDARD_MCP_SERVERS as _MCP_SERVERS
-
-# One-way: _genesis_ast owns what the callees ARE (it has to recognise and
-# rewrite them); this module owns what each one's form should offer.
-from cosmo.commands._genesis_ast import AXON_SOURCE_CALLEES
 
 # ---------------------------------------------------------------------------
 # Own protocols

@@ -85,14 +85,14 @@ async def run_brain(*dendrites: Any) -> int:
     async with contextlib.AsyncExitStack() as stack:
         for dendrite in dendrites:
             await stack.enter_async_context(dendrite)
-        receptors: list["Receptor"] = []
+        receptors: list[Receptor] = []
         for dendrite in dendrites:
             receptors.extend(dendrite.receptors)
         return await run_receptors(*receptors)
     return 0        # pragma: no cover - AsyncExitStack never swallows
 
 
-async def run_receptors(*receptors: "Receptor") -> int:
+async def run_receptors(*receptors: Receptor) -> int:
     """Serve every Receptor concurrently for as long as the brain lives.
 
     Returns only when a Receptor signals that the *invocation* is over by
@@ -134,7 +134,7 @@ async def run_receptors(*receptors: "Receptor") -> int:
     # Keep each task next to the Receptor that owns it, so a finishing task
     # can be asked whether its completion was an interface detaching or the
     # whole invocation ending (rule 2 and its exception).
-    owners: list["Receptor | None"] = list(solo) + [None] * len(groups)
+    owners: list[Receptor | None] = list(solo) + [None] * len(groups)
     tasks = [asyncio.ensure_future(c) for c in coros]
 
     try:
@@ -172,7 +172,7 @@ async def run_receptors(*receptors: "Receptor") -> int:
         raise
 
 
-def _warn_on_contended_stdin(receptors: tuple["Receptor", ...]) -> None:
+def _warn_on_contended_stdin(receptors: tuple[Receptor, ...]) -> None:
     """Two REPLs on one stdin is a wiring mistake, not a topology.
 
     A CliReceptor with no command on argv reads stdin with ``input()``. Mount
@@ -194,7 +194,7 @@ def _warn_on_contended_stdin(receptors: tuple["Receptor", ...]) -> None:
         )
 
 
-async def _stop(tasks: "Iterable[asyncio.Future]") -> None:
+async def _stop(tasks: Iterable[asyncio.Future]) -> None:
     """Cancel every still-running interface and wait for it to unwind.
 
     Waiting is the point: a Receptor's cancellation is where it gets to shut
@@ -208,13 +208,13 @@ async def _stop(tasks: "Iterable[asyncio.Future]") -> None:
         await asyncio.gather(*live, return_exceptions=True)
 
 
-def _titles(receptors: list["Receptor"]) -> str:
+def _titles(receptors: list[Receptor]) -> str:
     """What to call an app that several Receptors share."""
     return ", ".join(getattr(rx, "title", None) or rx.receptor_id
                      for rx in receptors)
 
 
-def _stdout_is_contended(receptors: list["Receptor"]) -> bool:
+def _stdout_is_contended(receptors: list[Receptor]) -> bool:
     """Is a REPL drawing a prompt on the same stdout an HTTP server logs to?
 
     Two interfaces, one terminal: uvicorn's access log lands in the middle
@@ -243,7 +243,7 @@ def _exit_code(value: Any) -> int:
 
 
 async def _serve_group(host: str, port: int,
-                       receptors: list["Receptor"],
+                       receptors: list[Receptor],
                        *, quiet: bool = False) -> int:
     """Serve one or more HTTP Receptors as a single app on one port.
 
@@ -253,8 +253,8 @@ async def _serve_group(host: str, port: int,
     by the runner instead, before any of this is scheduled.
     """
     try:
-        import uvicorn  # noqa: PLC0415
-        from fastapi import FastAPI  # noqa: PLC0415
+        import uvicorn
+        from fastapi import FastAPI
     except ModuleNotFoundError as exc:  # pragma: no cover - env dependent
         raise ModuleNotFoundError(_UVICORN_HINT) from exc
 

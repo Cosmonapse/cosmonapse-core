@@ -173,12 +173,12 @@ else:
 
 __all__ = [
     "_HAS_RICH",
-    "set_quiet",
-    "_rule_char",
-    "_stdout_is_console",
     "_TYPE_COLOURS",
     "_banner_line",
     "_err",
     "_hr",
     "_print_signal",
+    "_rule_char",
+    "_stdout_is_console",
+    "set_quiet",
 ]

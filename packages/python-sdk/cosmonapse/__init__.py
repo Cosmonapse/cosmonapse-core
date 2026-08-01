@@ -130,16 +130,6 @@ from cosmonapse.effector import (
     EffectorTimeout,
     ToolOutcome,
 )
-from cosmonapse.receptor import (
-    CliReceptor,
-    run_brain,
-    run_receptors,
-    DispatchMode,
-    Receptor,
-    ReceptorError,
-    ReceptorTimeout,
-    ReceptorUnbound,
-)
 from cosmonapse.engram import (
     Engram,
     EngramBinding,
@@ -198,6 +188,16 @@ from cosmonapse.envelope import (
 )
 from cosmonapse.neuron import STANDARD_MCP_SERVERS, Neuron
 from cosmonapse.pathway import PATHWAY_TYPES, Pathway, PathwayClosedError
+from cosmonapse.receptor import (
+    CliReceptor,
+    DispatchMode,
+    Receptor,
+    ReceptorError,
+    ReceptorTimeout,
+    ReceptorUnbound,
+    run_brain,
+    run_receptors,
+)
 from cosmonapse.retry import RetryStrategy, default_retry_on
 from cosmonapse.storage import (
     MemoryRegistryStore,

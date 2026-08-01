@@ -22,7 +22,6 @@ Covered:
 """
 
 import asyncio
-import json
 import sys
 
 import pytest
@@ -434,6 +433,7 @@ async def test_api_path_is_normalised(stack):
 
 async def test_api_serves_all_three_modes(stack):
     import httpx
+
     from cosmonapse.receptor.api import ApiReceptor
 
     rx = ApiReceptor(dendrite=stack.orch, neuron="echo", path="/run",
@@ -457,6 +457,7 @@ async def test_api_serves_all_three_modes(stack):
 
 async def test_api_maps_failures_to_status_codes(stack):
     import httpx
+
     from cosmonapse.receptor.api import ApiReceptor
 
     rx = ApiReceptor(dendrite=stack.orch, neuron="echo", path="/run",
@@ -475,6 +476,7 @@ async def test_api_maps_failures_to_status_codes(stack):
 
 async def test_api_extra_route(stack):
     import httpx
+
     from cosmonapse.receptor.api import ApiReceptor
 
     rx = ApiReceptor(dendrite=stack.orch, neuron="echo", path="/run")
@@ -541,6 +543,7 @@ async def test_chat_extract_text_finds_the_prose():
 
 async def test_chat_serves_the_page_and_streams_a_turn(stack):
     import httpx
+
     from cosmonapse.receptor.chat import ChatReceptor
 
     rx = ChatReceptor(dendrite=stack.orch, neuron="echo", voice=True,
@@ -812,6 +815,7 @@ async def test_http_receptors_sharing_a_port_merge_into_one_app(stack):
     """The property brain.py relies on: /run and /chat on a single server."""
     import httpx
     from fastapi import FastAPI
+
     from cosmonapse.receptor.api import ApiReceptor
     from cosmonapse.receptor.chat import ChatReceptor
 
@@ -937,6 +941,7 @@ async def test_run_brain_with_no_interfaces_is_a_headless_brain(stack):
 async def test_two_terminal_receptors_warn_about_stdin(stack, caplog):
     """Adding a second CLI interface is a one-click mistake in Genesis."""
     import logging
+
     from cosmonapse.receptor.runner import _warn_on_contended_stdin
 
     a = CliReceptor(dendrite=stack.orch, neuron="echo", prog="a")

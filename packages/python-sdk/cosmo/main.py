@@ -20,9 +20,9 @@ import click
 from cosmo.commands.answer import answer
 from cosmo.commands.completion import completion
 from cosmo.commands.dispatch import dispatch
-from cosmo.commands.prism import doppler, prism
 from cosmo.commands.genesis import genesis
 from cosmo.commands.init import init
+from cosmo.commands.prism import doppler, prism
 from cosmo.commands.registry import registry
 from cosmo.commands.schema import schema
 from cosmo.commands.synapse import synapse
