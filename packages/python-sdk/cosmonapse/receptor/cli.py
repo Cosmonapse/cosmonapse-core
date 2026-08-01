@@ -45,7 +45,7 @@ import json
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from cosmonapse.envelope import Signal, SignalType
 from cosmonapse.receptor.base import (
@@ -55,6 +55,9 @@ from cosmonapse.receptor.base import (
     ReceptorTimeout,
     _maybe_await,
 )
+
+if TYPE_CHECKING:
+    from cosmonapse.dendrite import Dendrite
 
 DIM, BOLD, RED, RESET = "\033[2m", "\033[1m", "\033[31m", "\033[0m"
 
@@ -135,7 +138,7 @@ class CliReceptor(Receptor):
     def __init__(
         self,
         *,
-        dendrite=None,
+        dendrite: Dendrite | None = None,
         neuron: str | None = None,
         capabilities: list[str] | None = None,
         prog: str | None = None,

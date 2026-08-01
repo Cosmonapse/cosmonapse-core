@@ -36,7 +36,7 @@ dependency: ``pip install 'cosmonapse[receptor]'``. They are imported
 lazily here, so ``import cosmonapse`` costs nothing without it.
 """
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from cosmonapse.receptor.base import (
     TERMINAL_TYPES,
@@ -77,7 +77,7 @@ _LAZY = {
 }
 
 
-def __getattr__(name: str):
+def __getattr__(name: str) -> Any:
     """Import the FastAPI-backed Receptors only when they are asked for."""
     target = _LAZY.get(name)
     if target is None:

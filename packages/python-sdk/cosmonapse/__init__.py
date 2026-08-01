@@ -104,6 +104,7 @@ entire surface is opt-in additive sugar over the existing
 # (see pyproject.toml). Nothing here is hand-edited per release.
 from importlib.metadata import PackageNotFoundError as _PkgNotFound
 from importlib.metadata import version as _dist_version
+from typing import Any
 
 from cosmonapse._url import connect_synapse, synapse_from_url
 from cosmonapse.axon import (
@@ -336,7 +337,7 @@ __all__ = [  # noqa: RUF022
 _LAZY_RECEPTORS = {"ApiReceptor", "ChatReceptor"}
 
 
-def __getattr__(name: str):
+def __getattr__(name: str) -> Any:
     if name in _LAZY_RECEPTORS:
         from importlib import import_module
 

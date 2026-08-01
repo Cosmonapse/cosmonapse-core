@@ -37,7 +37,7 @@ import asyncio
 import json
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from cosmonapse.receptor.base import (
     DispatchMode,
@@ -48,13 +48,16 @@ from cosmonapse.receptor.base import (
     signal_to_jsonable,
 )
 
+if TYPE_CHECKING:
+    from cosmonapse.dendrite import Dendrite
+
 _FASTAPI_HINT = (
     "ApiReceptor needs FastAPI: pip install 'cosmonapse[receptor]' "
     "(or pip install fastapi uvicorn)"
 )
 
 
-def _fastapi():
+def _fastapi() -> Any:
     try:
         import fastapi
     except ModuleNotFoundError as exc:  # pragma: no cover - env dependent
@@ -81,7 +84,7 @@ class ApiReceptor(Receptor):
     def __init__(
         self,
         *,
-        dendrite=None,
+        dendrite: Dendrite | None = None,
         neuron: str | None = None,
         capabilities: list[str] | None = None,
         path: str = "/dispatch",
@@ -104,7 +107,7 @@ class ApiReceptor(Receptor):
         # split them into separate servers.
         self.host = host
         self.port = port
-        self._extra_routes: list[tuple[str, str, Callable[..., Any], dict]] = []
+        self._extra_routes: list[tuple[str, str, Callable[..., Any], dict[str, Any]]] = []
 
     # ------------------------------------------------------------------
     # Extra routes (the GET /memory, GET /stats every example grows)
@@ -128,7 +131,9 @@ class ApiReceptor(Receptor):
     # Request handling - transport-free, so it is unit-testable
     # ------------------------------------------------------------------
 
-    def parse(self, body: dict[str, Any] | None) -> tuple[Any, DispatchMode, float | None, dict]:
+    def parse(
+        self, body: dict[str, Any] | None,
+    ) -> tuple[Any, DispatchMode, float | None, dict[str, Any]]:
         """Body -> (raw input, mode, timeout, dispatch overrides)."""
         body = dict(body or {})
         raw = body.pop("input", None)
@@ -226,15 +231,16 @@ class ApiReceptor(Receptor):
     # ------------------------------------------------------------------
 
     @property
-    def router(self):
+    def router(self) -> Any:
         """An ``APIRouter`` carrying the dispatch endpoint and extra routes."""
         fastapi = _fastapi()
         from fastapi.responses import StreamingResponse
 
         router = fastapi.APIRouter()
 
-        @router.post(self.path)
-        async def dispatch(body: dict | None = None):
+        # router is Any - fastapi is a soft dep, imported dynamically in _fastapi().
+        @router.post(self.path)  # type: ignore[untyped-decorator]
+        async def dispatch(body: dict[str, Any] | None = None) -> Any:
             result = await self.handle(body)
             if hasattr(result, "__aiter__"):
                 return StreamingResponse(
@@ -244,8 +250,8 @@ class ApiReceptor(Receptor):
                 )
             return result
 
-        @router.get(self.path + "/{trace_id}")
-        async def observe(trace_id: str):
+        @router.get(self.path + "/{trace_id}")  # type: ignore[untyped-decorator]
+        async def observe(trace_id: str) -> Any:
             return StreamingResponse(
                 self.observe_stream(trace_id),
                 media_type="text/event-stream",
@@ -276,7 +282,11 @@ class ApiReceptor(Receptor):
         return await _serve_group(self.host, self.port, [self])
 
     @asynccontextmanager
-    async def lifespan(self, *dendrites, setup=None, teardown=None):
+    async def lifespan(
+        self, *dendrites: Any,
+        setup: Callable[[], Any] | None = None,
+        teardown: Callable[[], Any] | None = None,
+    ) -> AsyncIterator[None]:
         """Open the stack for the app's lifetime.
 
         Two shapes, because an ASGI app is imported before there is an
@@ -319,9 +329,13 @@ class ApiReceptor(Receptor):
                 if hasattr(result, "__await__"):
                     await result
 
-    def app(self, *, title: str = "Cosmonapse Receptor",
-            dendrites: list[Any] | None = None, setup=None, teardown=None,
-            **kw: Any):
+    def app(
+        self, *, title: str = "Cosmonapse Receptor",
+        dendrites: list[Any] | None = None,
+        setup: Callable[[], Any] | None = None,
+        teardown: Callable[[], Any] | None = None,
+        **kw: Any,
+    ) -> Any:
         """A standalone FastAPI app carrying just this Receptor.
 
         ``dendrites=[...]`` opens Dendrites you already built; ``setup=``
@@ -330,7 +344,7 @@ class ApiReceptor(Receptor):
         """
         fastapi = _fastapi()
         if dendrites or setup is not None:
-            def _lifespan(app):
+            def _lifespan(app: Any) -> Any:
                 return self.lifespan(*(dendrites or []), setup=setup,
                                      teardown=teardown)
             kw.setdefault("lifespan", _lifespan)

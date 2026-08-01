@@ -53,7 +53,7 @@ import inspect
 import json
 import logging
 from abc import ABC
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import TYPE_CHECKING, Any, Literal
 
 from cosmonapse.envelope import Signal, SignalType
@@ -467,7 +467,7 @@ class Receptor(ABC):  # noqa: B024 - no method needs overriding; ABC only blocks
     async def iter_signals(
         self, raw: Any = None, *, timeout_s: float | None = None,
         stop_on: frozenset[SignalType] | None = None, **overrides: Any,
-    ):
+    ) -> AsyncIterator[Signal]:
         """Async-generate every Signal on one trace, terminal one included.
 
         The generator stops after yielding a terminal Signal - a stream has

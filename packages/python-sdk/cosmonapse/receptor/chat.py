@@ -35,8 +35,8 @@ from __future__ import annotations
 
 import json
 from collections import defaultdict, deque
-from collections.abc import AsyncIterator
-from typing import Any
+from collections.abc import AsyncIterator, Callable
+from typing import TYPE_CHECKING, Any
 
 from cosmonapse.envelope import Signal, SignalType
 from cosmonapse.receptor.api import ApiReceptor, sse
@@ -46,6 +46,9 @@ from cosmonapse.receptor.base import (
     ReceptorTimeout,
     signal_to_jsonable,
 )
+
+if TYPE_CHECKING:
+    from cosmonapse.dendrite import Dendrite
 
 #: Fields a Neuron might put its prose in, in the order we look.
 REPLY_KEYS = ("reply", "response", "answer", "text", "message", "content",
@@ -84,7 +87,7 @@ class ChatReceptor(ApiReceptor):
     def __init__(
         self,
         *,
-        dendrite=None,
+        dendrite: Dendrite | None = None,
         neuron: str | None = None,
         capabilities: list[str] | None = None,
         path: str = "/chat",
@@ -103,7 +106,7 @@ class ChatReceptor(ApiReceptor):
         self.voice = voice
         self.greeting = greeting
         self.history_turns = history_turns
-        self._history: dict[str, deque] = defaultdict(
+        self._history: dict[str, deque[dict[str, str]]] = defaultdict(
             lambda: deque(maxlen=max(history_turns, 0) * 2 or 1)
         )
 
@@ -204,7 +207,7 @@ class ChatReceptor(ApiReceptor):
     # ------------------------------------------------------------------
 
     @property
-    def router(self):
+    def router(self) -> Any:
         """Chat endpoint + the served page, on top of ApiReceptor's routes."""
         from fastapi import APIRouter
         from fastapi.responses import HTMLResponse, StreamingResponse
@@ -212,11 +215,11 @@ class ChatReceptor(ApiReceptor):
         router = APIRouter()
 
         @router.get("/", response_class=HTMLResponse)
-        async def page():
+        async def page() -> str:
             return self.html()
 
         @router.post(self.path)
-        async def chat(body: dict | None = None):
+        async def chat(body: dict[str, Any] | None = None) -> Any:
             body = dict(body or {})
             message = str(body.pop("message", "") or "").strip()
             session = str(body.pop("session", "default") or "default")
@@ -249,12 +252,12 @@ class ChatReceptor(ApiReceptor):
             return {"reply": reply, "session": session}
 
         @router.post(self.path + "/reset")
-        async def reset(body: dict | None = None):
+        async def reset(body: dict[str, Any] | None = None) -> dict[str, Any]:
             self.reset((body or {}).get("session"))
             return {"ok": True}
 
         @router.get(self.path + "/{trace_id}")
-        async def observe(trace_id: str):
+        async def observe(trace_id: str) -> Any:
             return StreamingResponse(
                 self.observe_stream(trace_id),
                 media_type="text/event-stream",
@@ -265,9 +268,13 @@ class ChatReceptor(ApiReceptor):
             router.add_api_route(path, fn, **kw)
         return router
 
-    def app(self, *, title: str | None = None,
-            dendrites: list[Any] | None = None, setup=None, teardown=None,
-            **kw: Any):
+    def app(
+        self, *, title: str | None = None,
+        dendrites: list[Any] | None = None,
+        setup: Callable[[], Any] | None = None,
+        teardown: Callable[[], Any] | None = None,
+        **kw: Any,
+    ) -> Any:
         return super().app(title=title or self.title, dendrites=dendrites,
                            setup=setup, teardown=teardown, **kw)
 
