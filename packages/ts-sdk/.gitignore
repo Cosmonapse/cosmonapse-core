@@ -1,6 +1,0 @@
-node_modules/
-dist/
-*.tsbuildinfo
-
-# transient TS test-compile output (created by sandbox test runs)
-.tt*/

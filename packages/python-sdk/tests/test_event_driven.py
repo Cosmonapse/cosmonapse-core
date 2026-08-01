@@ -116,11 +116,11 @@ def test_orchestrator_role_can_dispatch():
                         heartbeat_s=0)
         try:
             async with orch:
-                # dispatch_task without a target raises ValueError, not
-                # DendriteProtocolError  -  the role guard passes, the
-                # arg validation catches it.
-                with pytest.raises(ValueError):
-                    await orch.dispatch_task(input={})
+                # The mirror of the worker case above: the role guard lets
+                # this through. No target is needed to prove it - an
+                # untargeted dispatch_task is a legal open call.
+                sig = await orch.dispatch_task(input={})
+                assert sig.type is SignalType.TASK
         finally:
             await s.close()
     _run(run())
@@ -231,16 +231,26 @@ def test_capability_routed_no_match_times_out():
     _run(run())
 
 
-def test_dispatch_requires_neuron_or_capabilities():
+def test_dispatch_without_a_target_is_an_open_call():
+    """Neither neuron= nor capabilities= no longer raises.
+
+    The TASK goes out unaddressed on the broadcast subject, where a
+    catch_all Axon or an unfiltered @on_task_signal observer may take it.
+    Who (if anyone) answers is a receiving-side question - see
+    test_dendrite_api.py - so all this asserts is the shape on the wire.
+    """
     async def run():
         s = await _make_synapse()
         orch = Dendrite(synapse=s, namespace="t", heartbeat_s=0)
         try:
             async with orch:
-                with pytest.raises(ValueError):
-                    await orch.dispatch(input={})
-                with pytest.raises(ValueError):
-                    await orch.dispatch_task(input={})
+                sig = await orch.dispatch_task(input={})
+                assert sig.directed is None
+                assert not (sig.payload.get("capabilities") or [])
+
+                pw = await orch.dispatch(input={})
+                assert pw is not None
+                await pw.close()
         finally:
             await s.close()
     _run(run())

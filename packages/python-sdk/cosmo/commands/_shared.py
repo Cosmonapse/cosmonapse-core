@@ -67,8 +67,60 @@ _TYPE_COLOURS: dict[str, str] = {
 # Output helpers  -  rich variant if available, plain otherwise
 # ---------------------------------------------------------------------------
 
+#: Banner suppression, process-wide. See `set_quiet`.
+_QUIET = False
+
+
+def set_quiet(value: bool) -> None:
+    """Silence banner output for the rest of the process.
+
+    Genesis spawns `cosmo synapse start --quiet` with stdout pointed at the
+    null device, where a banner is not merely unread  -  it is the thing most
+    likely to raise on the way out, taking a healthy server with it. Gating
+    once at the writer keeps `--quiet` meaning the same thing for every
+    transport instead of asking each starter to remember to check. Errors are
+    deliberately unaffected: `_err` writes to stderr and always speaks.
+    """
+    global _QUIET
+    _QUIET = bool(value)
+
+
+def _stdout_is_console() -> bool:
+    """Is stdout a terminal we can drive, rather than a file or a null sink?"""
+    try:
+        return bool(sys.stdout is not None and sys.stdout.isatty())
+    except Exception:  # detached or closed stream
+        return False
+
+
+def _rule_char() -> str:
+    """``-`` unless stdout can actually encode a box-drawing dash.
+
+    A redirected stdout on Windows is opened with the locale encoding, and
+    cp1252 has no U+2500. Writing one raises UnicodeEncodeError from inside a
+    banner, which is a spectacular way to lose a server process over
+    decoration. Ask the stream what it can represent instead of assuming.
+    """
+    enc = getattr(sys.stdout, "encoding", None) or "utf-8"
+    try:
+        "\u2500".encode(enc)
+    except (LookupError, UnicodeEncodeError, TypeError):
+        return "-"
+    return "\u2500"
+
+
 if _HAS_RICH:
-    _console = Console()
+    # `legacy_windows=False` when stdout is not a console, and it matters.
+    #
+    # On Windows rich decides whether to use the pre-VT Win32 console renderer
+    # by calling GetConsoleMode on fd 1. Redirect stdout to NUL  -  which is
+    # exactly what Genesis does when it spawns `cosmo synapse start`  -  and
+    # that call fails, so rich concludes it is talking to an old console and
+    # drives the Win32 console API against a handle with no console behind it.
+    # The write raises, and a synapse dies mid-banner having already bound its
+    # port and registered its namespace. Not a tty means there is no console to
+    # drive, so say so outright rather than letting detection guess wrong.
+    _console = Console() if _stdout_is_console() else Console(legacy_windows=False)
 
     def _print_signal(subject: str, sig: Signal) -> None:
         colour = _TYPE_COLOURS.get(sig.type.value, "white")
@@ -84,9 +136,13 @@ if _HAS_RICH:
         _console.print(t)
 
     def _hr() -> None:
-        _console.print("  " + "─" * 64)
+        if _QUIET:
+            return
+        _console.print("  " + _rule_char() * 64)
 
     def _banner_line(text: str, style: str = "") -> None:
+        if _QUIET:
+            return
         _console.print(text, style=style)
 
     def _err(text: str) -> None:
@@ -102,9 +158,13 @@ else:
         )
 
     def _hr() -> None:
-        print("  " + "─" * 64)
+        if _QUIET:
+            return
+        print("  " + _rule_char() * 64)
 
     def _banner_line(text: str, style: str = "") -> None:
+        if _QUIET:
+            return
         print(text)
 
     def _err(text: str) -> None:
@@ -118,4 +178,7 @@ __all__ = [
     "_err",
     "_hr",
     "_print_signal",
+    "_rule_char",
+    "_stdout_is_console",
+    "set_quiet",
 ]

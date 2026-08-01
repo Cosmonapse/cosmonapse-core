@@ -391,7 +391,7 @@ async def web_research_neuron(input, context, *, recall, imprint):
 Two benefits:
 
 - The Neuron cannot accidentally hit an Engram the developer did not whitelist. The Axon refuses.
-- Dashboards and `cosmo doppler` can show "Neuron X depends on Engrams [ctx, vectors]" without static analysis of source.
+- Dashboards and `cosmo prism --tail` can show "Neuron X depends on Engrams [ctx, vectors]" without static analysis of source.
 
 ### 5.7 Traffic implications
 

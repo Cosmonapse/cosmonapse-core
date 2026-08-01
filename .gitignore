@@ -44,7 +44,7 @@ coverage.xml
 *.cover
 
 # ---------------------------------------------------------------------------
-# Node / web (cosmonapse-landing-page, ts-sdk)
+# Node / web (cosmonapse-landing-page, prism-ui, genesis-ui)
 # ---------------------------------------------------------------------------
 node_modules/
 .next/

@@ -19,6 +19,15 @@ Layers
                 argument; everything else is opt-in.
   Synapse       Message bus adapter (memory / dev / NATS / Kafka).
                 Caller-owned; built and closed externally.
+  Receptor      Interface layer. The edge where the outside world
+                touches the fabric - a CLI command, an HTTP request, a
+                chat turn - turned into a TASK and handed back as one
+                of the three dispatch shapes (send / wait / stream).
+                ``CliReceptor`` / ``ApiReceptor`` / ``ChatReceptor``.
+                Emits nothing new on the wire. Mounted with
+                ``dendrite.attach_receptor(rx)`` and run with
+                ``await dendrite.run()`` - which is what makes a
+                brain.py runnable.
 
 Cortex
 ------
@@ -95,6 +104,7 @@ entire surface is opt-in additive sugar over the existing
 # (see pyproject.toml). Nothing here is hand-edited per release.
 from importlib.metadata import PackageNotFoundError as _PkgNotFound
 from importlib.metadata import version as _dist_version
+from typing import Any
 
 from cosmonapse._url import connect_synapse, synapse_from_url
 from cosmonapse.axon import (
@@ -179,6 +189,16 @@ from cosmonapse.envelope import (
 )
 from cosmonapse.neuron import STANDARD_MCP_SERVERS, Neuron
 from cosmonapse.pathway import PATHWAY_TYPES, Pathway, PathwayClosedError
+from cosmonapse.receptor import (
+    CliReceptor,
+    DispatchMode,
+    Receptor,
+    ReceptorError,
+    ReceptorTimeout,
+    ReceptorUnbound,
+    run_brain,
+    run_receptors,
+)
 from cosmonapse.retry import RetryStrategy, default_retry_on
 from cosmonapse.storage import (
     MemoryRegistryStore,
@@ -298,4 +318,28 @@ __all__ = [  # noqa: RUF022
     "InMemoryEngram",
     "SqliteEngram",
     "PostgresEngram",
+    # Receptor
+    "Receptor",
+    "CliReceptor",
+    "ApiReceptor",
+    "ChatReceptor",
+    "DispatchMode",
+    "ReceptorError",
+    "ReceptorTimeout",
+    "ReceptorUnbound",
+    "run_brain",
+    "run_receptors",
 ]
+
+# The FastAPI-backed Receptors are resolved on first attribute access so
+# `import cosmonapse` never imports FastAPI (an optional extra:
+# `pip install 'cosmonapse[receptor]'`).
+_LAZY_RECEPTORS = {"ApiReceptor", "ChatReceptor"}
+
+
+def __getattr__(name: str) -> Any:
+    if name in _LAZY_RECEPTORS:
+        from importlib import import_module
+
+        return getattr(import_module("cosmonapse.receptor"), name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

@@ -6,9 +6,9 @@ This document is the milestone-by-milestone plan from the current public alpha
 substantially in place; 1.0 is about making them provably correct, observable in
 CI, and trustworthy for third-party implementers.
 
-1.0.0 means: the envelope spec is frozen and machine-checkable, both SDKs are at
-parity on the core contract, every wire transport is integration-tested against a
-real broker, and the whole thing is enforced by CI on every commit.
+1.0.0 means: the envelope spec is frozen and machine-checkable, every wire
+transport is integration-tested against a real broker, and the whole thing is
+enforced by CI on every commit.
 
 Status legend: ☐ not started · ◐ in progress · ☑ done
 
@@ -19,9 +19,9 @@ Status legend: ☐ not started · ◐ in progress · ☑ done
 The protocol is the most mature layer (clear envelope spec, complete 26-type
 signal taxonomy, executable validator). The Python SDK is the reference
 implementation and is broad and clean (~133 tests, zero TODO/FIXME markers in
-`cosmonapse/`). The TypeScript SDK ships as a **preview** with known parity gaps
-(`packages/ts-sdk/PORTING_STATUS.md`). The `cosmo` CLI is functional and
-appropriately scoped as a developer tool.
+`cosmonapse/`)  -  and, since the TypeScript SDK was retired (DECISIONS #19), the
+only first-party SDK. The `cosmo` CLI is functional and appropriately scoped as
+a developer tool.
 
 The gaps that 1.0 must close, in priority order, are below.
 
@@ -32,14 +32,11 @@ The gaps that 1.0 must close, in priority order, are below.
 The single most important gap: nothing currently enforces the tests. Close that
 first so every subsequent change lands on a green baseline.
 
-- ☑ GitHub Actions CI running Python tests + ruff + mypy across 3.11/3.12/3.13,
-      TS typecheck/build/test, and a spec validator smoke check
-      (`.github/workflows/ci.yml`).
+- ☑ GitHub Actions CI running Python tests + ruff + mypy across 3.11/3.12/3.13
+      and a spec validator smoke check (`.github/workflows/ci.yml`).
 - ☐ Make CI required for merge to `main` (branch protection).
 - ☐ Add a coverage gate for the Python SDK (target ≥85% on `cosmonapse/`,
       excluding optional broker adapters that need external services).
-- ☐ Pin a lockfile for the TS SDK (`package-lock.json`) so `npm ci` is
-      reproducible in CI.
 - ☐ Reconcile all version references project-wide (done for `DECISIONS.md`;
       audit `README`, examples, and docstrings for stale `v0.x` mentions).
 
@@ -59,8 +56,8 @@ Python.
 - ☐ Move `ENVELOPE_SPEC.md` from **`1.0.0-draft` / Draft** to **`1.0.0` /
       Stable**; document the compatibility promise (additive-only within a major
       `v`).
-- ☐ Cross-language conformance: the same golden-envelope corpus must round-trip
-      identically through the Python and TS codecs.
+- ☐ Publish the golden-envelope corpus as a portable conformance fixture set so
+      any third-party implementation can round-trip it against the Python codec.
 
 **Exit criteria:** spec is marked Stable; a non-Python implementer has a schema
 + fixtures to build against.
@@ -85,37 +82,18 @@ integration test in CI.
 
 ---
 
-## Milestone 0.5.0  -  "Parity" (TypeScript SDK)
-
-Promote the TS SDK from preview to first-class by closing the
-`PORTING_STATUS.md` gaps that block authoring decentralised workflows.
-
-- ☐ Lifecycle hooks (`on_connect` / `on_refresh` / `on_schedule`)  -  required for
-      p2p workflows; currently the headline gap.
-- ☐ `connectSynapse(url)` URL factory (parity with `connect_synapse`).
-- ☐ `DevSynapse` / dev broker client so TS-first users need no Python process.
-- ☐ LLM provider neuron factories (`ollama`, `huggingface`).
-- ☐ `SqliteRegistryStore` (+ Postgres where a driver allows).
-- ☐ Run the cross-language conformance corpus from 0.3.0 in TS CI.
-
-**Exit criteria:** `PORTING_STATUS.md` "still to port" list is empty or contains
-only items explicitly deferred past 1.0 with rationale.
-
----
-
 ## Milestone 1.0.0  -  "Stable"
 
 - ☐ All of the above complete and green in CI.
-- ☐ API reference docs generated for both SDKs.
+- ☐ API reference docs generated for the Python SDK.
 - ☐ A documented deprecation / semver policy for the post-1.0 line.
 - ☐ Final pass on examples: every example runs in CI against the memory synapse.
-- ☐ Security / dependency audit (`pip-audit`, `npm audit`) wired into CI.
-- ☐ Tag `v1.0.0`; publish to PyPI + npm (registry publishing, deferred from the
+- ☐ Security / dependency audit (`pip-audit`) wired into CI.
+- ☐ Tag `v1.0.0`; publish to PyPI (registry publishing, deferred from the
       0.1.0 git-only release).
 
 **1.0.0 promise:** the envelope `v="1"` contract is stable; breaking changes
-require `v="2"`; the Python and TS SDKs are at parity on the core contract;
-every transport is integration-tested.
+require `v="2"`; every transport is integration-tested.
 
 ---
 

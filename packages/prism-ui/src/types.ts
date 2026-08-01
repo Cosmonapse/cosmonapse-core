@@ -51,7 +51,7 @@ export type SignalType =
   | "MEMORY_APPEND"
   | "CONTEXT_SYNC";
 
-export type ParticipantKind = "neuron" | "engram" | "effector";
+export type ParticipantKind = "neuron" | "engram" | "effector" | "receptor";
 
 /**
  * The single uniform participant-kind check for the whole UI.
@@ -64,6 +64,11 @@ export type ParticipantKind = "neuron" | "engram" | "effector";
  * for signals that carry no kind evidence (e.g. a TASK or a RECALL) so
  * callers keep whatever kind they already recorded - classification comes
  * from registration, never from traffic.
+ *
+ * Receptors are deliberately outside this function. They are caller-side:
+ * they originate signals rather than being addressed by them, so they never
+ * REGISTER and never own a `directed.id`. See `receptorRef` below - that is
+ * the only door a Receptor enters the UI through.
  */
 export function participantKind(sig: Signal): ParticipantKind | null {
   const role = sig.payload?.role;
@@ -95,6 +100,33 @@ export function isPrismError(sig: Signal): boolean {
 }
 
 export const SYNAPSE_NODE = "__synapse__";
+
+/**
+ * Receptors are the one participant Prism cannot learn about by being told.
+ *
+ * A Receptor emits the same TASK an orchestrator Dendrite always emitted - it
+ * adds no signal type and no wire format - and marks its authorship with
+ * `meta.receptor`. So there is no REGISTER to read a `role` off, and the
+ * envelope's `directed.id` names the *target neuron*, not the Receptor. That
+ * meta key is the only evidence, which is why receptor nodes are synthesized
+ * from traffic while every other kind is classified at registration.
+ *
+ * The synthetic id is prefixed so a Receptor named "api" can never collide
+ * with a neuron named "api" in the participant map, which is keyed by
+ * `directed.id` for everyone else. `receptorLabel` strips it again for
+ * display - the prefix is bookkeeping, not something a user should read.
+ */
+export const RECEPTOR_PREFIX = "rx:";
+
+export function receptorRef(sig: Signal): string | null {
+  const name = sig.meta?.receptor;
+  return typeof name === "string" && name ? RECEPTOR_PREFIX + name : null;
+}
+
+export const isReceptorId = (id: string): boolean => id.startsWith(RECEPTOR_PREFIX);
+
+export const receptorLabel = (id: string): string =>
+  isReceptorId(id) ? id.slice(RECEPTOR_PREFIX.length) : id;
 
 // Signal types emitted by the Axon/Dendrite side (neuron → synapse).
 // Matches cosmonapse.envelope.AXON_TYPES.

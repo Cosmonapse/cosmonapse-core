@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { participantKind } from "./types";
+import { participantKind, receptorRef } from "./types";
 import type { NeuronView, Signal, SignalType } from "./types";
 
 export interface SynapseTarget {
@@ -54,6 +54,34 @@ export function useSignalStream(
       onSignalRef.current?.(sig);
       setTotal((t) => t + 1);
       setSignals((prev) => [sig, ...prev].slice(0, bufferSize));
+
+      // A Receptor is the author of a signal, not its addressee, so it has
+      // to be recorded before the directed.id guard below - the TASK a
+      // Receptor dispatches is directed at the *target neuron*, and would
+      // otherwise credit the whole interaction to that neuron alone.
+      const rxid = receptorRef(sig);
+      if (rxid) {
+        setNeurons((prev) => {
+          const next = new Map(prev);
+          const ex: NeuronView = next.get(rxid) ?? {
+            id: rxid,
+            count: 0,
+            kind: "receptor",
+            capabilities: [],
+            firstSeen: sig.ts,
+          };
+          next.set(rxid, {
+            ...ex,
+            // Kind is pinned: a Receptor never registers, so there is no
+            // later evidence that could reclassify it.
+            kind: "receptor",
+            count: ex.count + 1,
+            lastType: sig.type as SignalType,
+            lastTs: sig.ts,
+          });
+          return next;
+        });
+      }
 
       const nid = sig.directed?.id ?? null;
       if (!nid) return;

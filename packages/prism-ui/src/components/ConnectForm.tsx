@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { C, MONO } from "../theme";
 import { Logo } from "./Logo";
+import { ThemeToggle } from "./ThemeToggle";
 import type { SynapseTarget } from "../useSignalStream";
 
 interface Props {
@@ -36,26 +37,30 @@ export function ConnectForm({ initial, onConnect, onCancel }: Props) {
         style={{
           width: "100%",
           maxWidth: 440,
-          background: "rgba(15,17,26,0.7)",
+          background: "var(--bg-panel)",
           border: "1px solid " + C.borderStrong,
           borderRadius: 16,
           padding: 28,
           backdropFilter: "blur(20px)",
           WebkitBackdropFilter: "blur(20px)",
-          boxShadow: "0 40px 120px -30px rgba(0,0,0,0.7)",
+          boxShadow: "0 40px 120px -30px rgba(var(--shadow-rgb), 0.7)",
+          position: "relative",
         }}
       >
+        <div style={{ position: "absolute", top: 18, right: 18 }}>
+          <ThemeToggle />
+        </div>
         <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 6 }}>
           <Logo size={32} />
           <div>
-            <div style={{ fontWeight: 700, fontSize: 18 }}>
+            <div style={{ fontWeight: 700, fontSize: 19 }}>
               <span className="brand-word">Cosmonapse</span>{" "}
               <span style={{ color: C.textDim, fontWeight: 500 }}>Prism</span>
             </div>
           </div>
         </div>
-        <p style={{ color: C.textDim, fontSize: 13, margin: "8px 0 22px" }}>
-          Drop a synapse link. Prism attaches a read-only Doppler and visualizes every
+        <p style={{ color: C.textDim, fontWeight: 600, fontSize: 15, margin: "8px 0 22px" }}>
+          Drop a synapse link. Prism attaches a read-only observer and visualizes every
           signal live.
         </p>
 
@@ -93,8 +98,8 @@ export function ConnectForm({ initial, onConnect, onCancel }: Props) {
               border: "1px solid " + C.borderStrong,
               borderRadius: 10,
               padding: "10px 16px",
-              color: C.textDim,
-              fontSize: 13,
+              color: C.textDim, fontWeight: 600,
+              fontSize: 15,
               cursor: "pointer",
             }}
           >
@@ -102,7 +107,7 @@ export function ConnectForm({ initial, onConnect, onCancel }: Props) {
           </button>
         )}
 
-        <div style={{ color: C.textFaint, fontFamily: MONO, fontSize: 11, marginTop: 16 }}>
+        <div style={{ color: C.textFaint, fontWeight: 600, fontFamily: MONO, fontSize: 13.5, marginTop: 16 }}>
           Schemes: cosmo:// · nats:// · kafka://
         </div>
       </form>
@@ -113,35 +118,35 @@ export function ConnectForm({ initial, onConnect, onCancel }: Props) {
 const labelStyle: React.CSSProperties = {
   display: "block",
   fontFamily: MONO,
-  fontSize: 11,
+  fontSize: 13.5,
   letterSpacing: "0.12em",
   textTransform: "uppercase",
-  color: C.textFaint,
+  color: "var(--text-faint)",
   marginBottom: 7,
 };
 
 const inputStyle: React.CSSProperties = {
   width: "100%",
-  background: "rgba(0,0,0,0.35)",
-  border: "1px solid " + C.borderStrong,
+  background: "var(--bg-well)",
+  border: "1px solid var(--border-strong)",
   borderRadius: 9,
   padding: "11px 13px",
-  color: C.text,
+  color: "var(--text)",
   fontFamily: MONO,
-  fontSize: 13.5,
+  fontSize: 15.5,
   outline: "none",
 };
 
 const connectBtn: React.CSSProperties = {
   width: "100%",
   marginTop: 24,
-  background: "linear-gradient(135deg,#8b5cf6,#7c3aed)",
+  background: "var(--grad-accent)",
   border: "none",
   borderRadius: 10,
   padding: "12px 16px",
-  color: "#fff",
-  fontSize: 14,
+  color: "var(--on-accent)",
+  fontSize: 16,
   fontWeight: 600,
   cursor: "pointer",
-  boxShadow: "0 10px 30px -8px " + C.glow,
+  boxShadow: "0 10px 30px -8px var(--glow)",
 };

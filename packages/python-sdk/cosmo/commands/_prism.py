@@ -1,7 +1,7 @@
 """
 cosmo.commands._prism
 ~~~~~~~~~~~~~~~~~~~~~~~
-Prism  -  the browser visualization for the Doppler.
+Prism  -  the browser visualization for a Synapse namespace.
 
 Architecture
 ------------
@@ -83,7 +83,7 @@ the UI yet.</p>
 
 
 # ---------------------------------------------------------------------------
-# Synapse factory (mirrors the one in doppler.py  -  kept here to avoid an
+# Synapse factory (mirrors the one in prism.py  -  kept here to avoid an
 # import cycle and so this module is fully self-contained).
 # ---------------------------------------------------------------------------
 
@@ -119,6 +119,31 @@ def _error_envelope(code: str, message: str) -> str:
     })
 
 
+async def _send_error(ws, code: str, message: str) -> None:
+    """Best-effort error envelope + close.
+
+    The browser side can drop the socket (tab closed, form resubmitted,
+    page navigated away) at any point while we're still mid-connect - e.g.
+    while ``syn.connect()`` is blocked on a refused TCP connection. If that
+    happens, ``ws.send_str``/``ws.close()`` themselves raise (aiohttp's
+    ClientConnectionResetError: "Cannot write to closing transport"), which
+    would otherwise escape handle_ws unhandled and get logged as a scary
+    "Error handling request" traceback for what is really just a client that
+    already left. Swallow that here so a refused/failed synapse connection
+    only ever surfaces the one clean error we intended to send.
+    """
+    if ws.closed:
+        return
+    try:
+        await ws.send_str(_error_envelope(code, message))
+    except Exception:
+        pass
+    try:
+        await ws.close()
+    except Exception:
+        pass
+
+
 # ---------------------------------------------------------------------------
 # Public entry point
 # ---------------------------------------------------------------------------
@@ -133,7 +158,7 @@ async def run_prism(
         from aiohttp import web
     except ImportError:
         click.echo(
-            "  aiohttp is required for --prism mode.\n"
+            "  aiohttp is required to serve Prism.\n"
             "  Install it with: pip install aiohttp\n",
             err=True,
         )
@@ -160,6 +185,16 @@ async def run_prism(
             raise web.HTTPFound("/" + initial_qs)
         return web.FileResponse(dist / "index.html")
 
+    async def handle_mark(request):
+        # The Cosmonapse mark, referenced by index.html as the tab icon. It
+        # sits at the bundle root rather than under /assets (Vite copies
+        # public/ verbatim), so without its own route the browser's request
+        # for /mark.png finds no handler and the tab falls back to a blank
+        # icon - the file was always there, just never served.
+        if dist is None or not (dist / "mark.png").is_file():
+            return web.Response(status=404)
+        return web.FileResponse(dist / "mark.png")
+
     async def handle_view(request):
         # Back-compat with the old two-page flow (/view?url=&namespace=): the
         # SPA now lives at the root and reads the same query params, so just
@@ -182,22 +217,19 @@ async def run_prism(
         base_url = request.query.get("url")
         namespace = request.query.get("namespace") or "dev"
         if not base_url:
-            await ws.send_str(_error_envelope("no_url", "missing url query param"))
-            await ws.close()
+            await _send_error(ws, "no_url", "missing url query param")
             return ws
 
         try:
             syn = _make_synapse(base_url)
         except click.ClickException as e:
-            await ws.send_str(_error_envelope("bad_url", e.format_message()))
-            await ws.close()
+            await _send_error(ws, "bad_url", e.format_message())
             return ws
 
         try:
             await syn.connect()
         except Exception as exc:
-            await ws.send_str(_error_envelope("connect_failed", str(exc)))
-            await ws.close()
+            await _send_error(ws, "connect_failed", str(exc))
             return ws
 
         async def on_signal(sig: Signal) -> None:
@@ -225,12 +257,11 @@ async def run_prism(
                 queue_group=None,
             )
         except Exception as exc:
-            await ws.send_str(_error_envelope("subscribe_failed", str(exc)))
             try:
                 await syn.close()
             except Exception:
                 pass
-            await ws.close()
+            await _send_error(ws, "subscribe_failed", str(exc))
             return ws
 
         # Keep the connection open until the client disconnects. We don't
@@ -247,6 +278,7 @@ async def run_prism(
 
     app = web.Application()
     app.router.add_get("/", handle_index)
+    app.router.add_get("/mark.png", handle_mark)
     app.router.add_get("/view", handle_view)
     app.router.add_get("/ws", handle_ws)
     if dist is not None:
@@ -260,7 +292,7 @@ async def run_prism(
     ui_url = f"http://127.0.0.1:{port}"
     if _HAS_RICH:
         console.print()
-        console.print("  [bold cyan]cosmo doppler[/bold cyan]  [dim]--prism[/dim]")
+        console.print("  [bold cyan]cosmo prism[/bold cyan]")
         if initial_base_url:
             console.print(
                 f"  Synapse:   [cyan]{initial_base_url}/{initial_namespace or 'dev'}[/cyan]"
@@ -273,7 +305,7 @@ async def run_prism(
         console.print("  " + "-" * 60)
         console.print()
     else:
-        print("\n  cosmo doppler --prism")
+        print("\n  cosmo prism")
         if initial_base_url:
             print(f"  Synapse: {initial_base_url}/{initial_namespace or 'dev'}")
         else:

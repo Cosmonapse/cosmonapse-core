@@ -1,4 +1,16 @@
 import { useMemo, useState } from "react";
+import {
+  ResponsiveContainer,
+  LineChart,
+  Line,
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip as RTooltip,
+  Cell,
+} from "recharts";
 import { C, MONO, colorFor } from "../theme";
 import {
   computeMetrics,
@@ -9,12 +21,17 @@ import {
   computeMemory,
   computeParticipants,
   computeMarket,
+  computeVolumeSeries,
+  computeLatencyTrend,
+  computeHitlTrend,
+  histogram,
   fmtMs,
   fmtPct,
   type TaskMetric,
   type ParticipantMetric,
 } from "../metrics";
 import { computeConsistency, consistencyColor, type SetupGroup } from "../constellation";
+import { receptorLabel } from "../types";
 import type { Signal } from "../types";
 
 interface Props {
@@ -31,7 +48,41 @@ const OK_C = colorFor("FINAL");
 const ERR_C = colorFor("ERROR");
 const ESC_C = colorFor("ESCALATION");
 const OFFER_C = colorFor("TASK_OFFER");
-const OTHER_C = "#64748b";
+const OTHER_C = C.muted;
+
+// Shared axis/tooltip styling so every recharts chart in this file matches
+// the rest of Prism's mono/dim-grey chrome instead of recharts' defaults.
+const axisTick = { fill: C.textFaint, fontFamily: MONO, fontSize: 11 };
+const tooltipStyle: React.CSSProperties = {
+  background: C.bgPanel,
+  border: "1px solid " + C.border,
+  borderRadius: 8,
+  fontFamily: MONO,
+  fontSize: 12.5,
+  color: C.text,
+};
+
+function participantKindColor(k: string): string {
+  return k === "engram" ? MEM_C : k === "effector" ? TOOL_C : k === "receptor" ? C.receptor : k === "neuron" ? C.accent : C.textFaint;
+}
+
+function ChartTitle({ children }: { children: React.ReactNode }) {
+  return (
+    <div style={{ fontFamily: MONO, fontSize: 13, color: C.textFaint, fontWeight: 600, letterSpacing: "0.04em", margin: "14px 0 8px" }}>
+      {children}
+    </div>
+  );
+}
+
+function ChartFrame({ height, children }: { height: number; children: React.ReactElement }) {
+  return (
+    <div style={{ width: "100%", height, marginBottom: 8, background: C.bgCard, border: "1px solid " + C.border, borderRadius: 10, padding: "10px 14px 4px" }}>
+      <ResponsiveContainer width="100%" height="100%">
+        {children}
+      </ResponsiveContainer>
+    </div>
+  );
+}
 
 export function Metrics({ signals }: Props) {
   const m = useMemo(() => computeMetrics(signals), [signals]);
@@ -43,9 +94,14 @@ export function Metrics({ signals }: Props) {
   const parts = useMemo(() => computeParticipants(signals), [signals]);
   const market = useMemo(() => computeMarket(signals), [signals]);
   const cons = useMemo(() => computeConsistency(signals), [signals]);
+  const volumeSeries = useMemo(() => computeVolumeSeries(signals), [signals]);
+  const latencyTrend = useMemo(() => computeLatencyTrend(signals), [signals]);
+  const hitlTrend = useMemo(() => computeHitlTrend(signals), [signals]);
+  const toolHist = useMemo(() => histogram(m.toolCalls.map((t) => t.durationMs)), [m.toolCalls]);
+  const recallHist = useMemo(() => histogram(m.recalls.map((t) => t.durationMs)), [m.recalls]);
   const permTotal = hitl.approvals + hitl.denials;
 
-  const [active, setActive] = useState<string>("home");
+  const [active, setActive] = useState<string>("health");
   const [menuOpen, setMenuOpen] = useState(true);
 
   const sections: { id: string; label: string; el: React.ReactNode }[] = [
@@ -59,6 +115,18 @@ export function Metrics({ signals }: Props) {
           <MiniStat color={C.textDim} label="Retries" help="TASK dispatches whose meta.attempt is greater than 0 — re-attempts after a timeout or failure." value={health.retries} />
           <MiniStat color={ESC_C} label="Escalations" help="Count of ESCALATION signals — work handed up to another handler." value={health.escalations} />
         </Cards>
+        <ChartTitle>Task volume &amp; outcome over time</ChartTitle>
+        <ChartFrame height={200}>
+          <BarChart data={volumeSeries}>
+            <CartesianGrid strokeDasharray="3 3" stroke={C.border} vertical={false} />
+            <XAxis dataKey="label" tick={axisTick} minTickGap={28} />
+            <YAxis tick={axisTick} width={30} allowDecimals={false} />
+            <RTooltip contentStyle={tooltipStyle} labelStyle={{ color: C.textFaint }} cursor={{ fill: "rgba(var(--fg-rgb), 0.04)" }} />
+            <Bar dataKey="completed" stackId="v" fill={OK_C} name="completed" />
+            <Bar dataKey="inFlight" stackId="v" fill={TASK_C} name="in flight" />
+            <Bar dataKey="failed" stackId="v" fill={ERR_C} name="failed" />
+          </BarChart>
+        </ChartFrame>
       </Section>
     ) },
     { id: "latency", label: "Latency", el: (
@@ -71,6 +139,19 @@ export function Metrics({ signals }: Props) {
           <MiniStat color={MEM_C} label="Memory recall" help="Average RECALL to RECALLED round-trip latency." value={fmtMs(mem.recallAgg.avgMs)} sub={`${mem.recallAgg.count} reads`} />
           <MiniStat color={WRITE_C} label="Memory write" help="Average IMPRINT to IMPRINTED round-trip latency." value={fmtMs(mem.writeAgg.avgMs)} sub={`${mem.writeAgg.count} writes`} />
         </Cards>
+        <ChartTitle>Average latency over time</ChartTitle>
+        <Legend items={[["task end-to-end", TASK_C], ["tool call", TOOL_C], ["memory recall", MEM_C]]} />
+        <ChartFrame height={220}>
+          <LineChart data={latencyTrend}>
+            <CartesianGrid strokeDasharray="3 3" stroke={C.border} vertical={false} />
+            <XAxis dataKey="label" tick={axisTick} minTickGap={28} />
+            <YAxis tick={axisTick} width={44} tickFormatter={fmtMs} />
+            <RTooltip contentStyle={tooltipStyle} labelStyle={{ color: C.textFaint }} formatter={(v: number) => fmtMs(v)} />
+            <Line type="monotone" dataKey="taskAvgMs" stroke={TASK_C} strokeWidth={2} dot={false} connectNulls name="task end-to-end" />
+            <Line type="monotone" dataKey="toolAvgMs" stroke={TOOL_C} strokeWidth={2} dot={false} connectNulls name="tool call" />
+            <Line type="monotone" dataKey="recallAvgMs" stroke={MEM_C} strokeWidth={2} dot={false} connectNulls name="memory recall" />
+          </LineChart>
+        </ChartFrame>
       </Section>
     ) },
     { id: "per-task", label: "Per-task breakdown", el: (
@@ -101,6 +182,18 @@ export function Metrics({ signals }: Props) {
           <MiniStat color={OK_C} label="Approval rate" help="Share of permission decisions with granted = true." value={permTotal ? fmtPct(hitl.approvals / permTotal) : "—"} sub={`${hitl.approvals} allow · ${hitl.denials} deny`} />
           <MiniStat color={colorFor("PERMISSION")} label="Permission round-trip" help="Average PERMISSION to PERMISSION_DECISION latency." value={fmtMs(hitl.permAgg.avgMs)} />
         </Cards>
+        <ChartTitle>Round-trip latency over time</ChartTitle>
+        <Legend items={[["clarification", WAIT_C], ["permission", colorFor("PERMISSION")]]} />
+        <ChartFrame height={200}>
+          <LineChart data={hitlTrend}>
+            <CartesianGrid strokeDasharray="3 3" stroke={C.border} vertical={false} />
+            <XAxis dataKey="label" tick={axisTick} minTickGap={28} />
+            <YAxis tick={axisTick} width={44} tickFormatter={fmtMs} />
+            <RTooltip contentStyle={tooltipStyle} labelStyle={{ color: C.textFaint }} formatter={(v: number) => fmtMs(v)} />
+            <Line type="monotone" dataKey="clarifyAvgMs" stroke={WAIT_C} strokeWidth={2} dot={false} connectNulls name="clarification" />
+            <Line type="monotone" dataKey="permAvgMs" stroke={colorFor("PERMISSION")} strokeWidth={2} dot={false} connectNulls name="permission" />
+          </LineChart>
+        </ChartFrame>
       </Section>
     ) },
     { id: "memory", label: "Memory effectiveness", el: (
@@ -126,7 +219,21 @@ export function Metrics({ signals }: Props) {
       </Section>
     ) },
     { id: "participants", label: "Participants", el: (
-      <Section color={C.accent} title="Participants" help="Activity per neuron / engram / effector, keyed by the signal directed.id.">
+      <Section color={C.accent} title="Participants" help="Activity per neuron / engram / effector, keyed by the signal directed.id - plus receptors, keyed by meta.receptor.">
+        <ChartTitle>Signal volume by participant (top 12)</ChartTitle>
+        <ChartFrame height={Math.max(160, Math.min(12, parts.length) * 28 + 40)}>
+          <BarChart data={parts.slice(0, 12).map((p) => ({ ...p, name: receptorLabel(p.id) }))} layout="vertical" margin={{ left: 8 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke={C.border} horizontal={false} />
+            <XAxis type="number" tick={axisTick} allowDecimals={false} />
+            <YAxis type="category" dataKey="name" tick={axisTick} width={140} />
+            <RTooltip contentStyle={tooltipStyle} labelStyle={{ color: C.textFaint }} cursor={{ fill: "rgba(var(--fg-rgb), 0.04)" }} />
+            <Bar dataKey="total" name="signals">
+              {parts.slice(0, 12).map((p) => (
+                <Cell key={p.id} fill={participantKindColor(p.kind)} />
+              ))}
+            </Bar>
+          </BarChart>
+        </ChartFrame>
         <ParticipantTable rows={parts} />
       </Section>
     ) },
@@ -142,7 +249,7 @@ export function Metrics({ signals }: Props) {
             {market.wins.length > 0 && (
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 12 }}>
                 {market.wins.map((w) => (
-                  <span key={w.id} style={{ fontFamily: MONO, fontSize: 11, color: C.textDim, background: "rgba(255,255,255,0.04)", border: "1px solid " + C.border, borderRadius: 6, padding: "3px 9px" }}>
+                  <span key={w.id} style={{ fontFamily: MONO, fontSize: 13.5, color: C.textDim, fontWeight: 600, background: "rgba(var(--fg-rgb), 0.04)", border: "1px solid " + C.border, borderRadius: 6, padding: "3px 9px" }}>
                     {w.id} <span style={{ color: OK_C }}>· {w.count} win{w.count === 1 ? "" : "s"}</span>
                   </span>
                 ))}
@@ -153,23 +260,51 @@ export function Metrics({ signals }: Props) {
       : []),
     { id: "tools", label: "Longest tool calls", el: (
       <Section color={TOOL_C} title="Longest tool calls" help="The slowest individual TOOL_CALL to TOOL_RESULT round-trips.">
+        {toolHist.length > 0 && (
+          <>
+            <ChartTitle>Tool call latency distribution</ChartTitle>
+            <ChartFrame height={160}>
+              <BarChart data={toolHist}>
+                <CartesianGrid strokeDasharray="3 3" stroke={C.border} vertical={false} />
+                <XAxis dataKey="label" tick={axisTick} interval={0} angle={-30} textAnchor="end" height={50} />
+                <YAxis tick={axisTick} width={30} allowDecimals={false} />
+                <RTooltip contentStyle={tooltipStyle} labelStyle={{ color: C.textFaint }} cursor={{ fill: "rgba(var(--fg-rgb), 0.04)" }} />
+                <Bar dataKey="count" fill={TOOL_C} name="calls" />
+              </BarChart>
+            </ChartFrame>
+          </>
+        )}
         <BarList color={TOOL_C} rows={m.toolCalls} empty="No completed tool calls yet." />
       </Section>
     ) },
     { id: "recalls", label: "Longest memory recalls", el: (
       <Section color={MEM_C} title="Longest memory recalls" help="The slowest individual RECALL to RECALLED round-trips.">
+        {recallHist.length > 0 && (
+          <>
+            <ChartTitle>Memory recall latency distribution</ChartTitle>
+            <ChartFrame height={160}>
+              <BarChart data={recallHist}>
+                <CartesianGrid strokeDasharray="3 3" stroke={C.border} vertical={false} />
+                <XAxis dataKey="label" tick={axisTick} interval={0} angle={-30} textAnchor="end" height={50} />
+                <YAxis tick={axisTick} width={30} allowDecimals={false} />
+                <RTooltip contentStyle={tooltipStyle} labelStyle={{ color: C.textFaint }} cursor={{ fill: "rgba(var(--fg-rgb), 0.04)" }} />
+                <Bar dataKey="count" fill={MEM_C} name="recalls" />
+              </BarChart>
+            </ChartFrame>
+          </>
+        )}
         <BarList color={MEM_C} rows={m.recalls} empty="No completed memory recalls yet." />
       </Section>
     ) },
   ];
 
   const validIds = new Set(sections.map((sd) => sd.id));
-  const cur = active !== "home" && validIds.has(active) ? active : "home";
-  const shown = cur === "home" ? sections : sections.filter((sd) => sd.id === cur);
-  const nav = [{ id: "home", label: "Home" }, ...sections.map((sd) => ({ id: sd.id, label: sd.label }))];
+  const cur = validIds.has(active) ? active : sections[0]?.id ?? "";
+  const shown = sections.filter((sd) => sd.id === cur);
+  const nav = sections.map((sd) => ({ id: sd.id, label: sd.label }));
 
   return (
-    <div style={{ position: "absolute", top: 64, left: 0, right: 0, bottom: 0, display: "flex", background: "rgba(7,8,12,0.6)" }}>
+    <div style={{ position: "absolute", top: 64, left: 0, right: 0, bottom: 0, display: "flex", background: "var(--bg-view)" }}>
       {/* collapsible menu */}
       <div
         style={{
@@ -177,13 +312,13 @@ export function Metrics({ signals }: Props) {
           flexShrink: 0,
           overflow: "hidden",
           borderRight: menuOpen ? "1px solid " + C.border : "none",
-          background: "rgba(0,0,0,0.2)",
+          background: "var(--bg-rail)",
           transition: "width 0.2s ease",
           display: "flex",
           flexDirection: "column",
         }}
       >
-        <div style={{ padding: "12px 14px", fontFamily: MONO, fontSize: 10.5, color: C.accent, letterSpacing: "0.14em", textTransform: "uppercase", borderBottom: "1px solid " + C.border, whiteSpace: "nowrap" }}>
+        <div style={{ padding: "12px 14px", fontFamily: MONO, fontSize: 13, color: C.accent, letterSpacing: "0.14em", textTransform: "uppercase", borderBottom: "1px solid " + C.border, whiteSpace: "nowrap" }}>
           Views
         </div>
         <div style={{ overflowY: "auto", flex: 1 }}>
@@ -198,9 +333,9 @@ export function Metrics({ signals }: Props) {
                   cursor: "pointer",
                   whiteSpace: "nowrap",
                   fontFamily: MONO,
-                  fontSize: 11.5,
+                  fontSize: 14,
                   color: on ? C.accent2 : C.textDim,
-                  background: on ? "rgba(34,211,238,0.08)" : "transparent",
+                  background: on ? "rgba(var(--accent2-rgb), 0.08)" : "transparent",
                   borderLeft: `3px solid ${on ? C.accent2 : "transparent"}`,
                   borderBottom: "1px solid " + C.border,
                 }}
@@ -218,18 +353,18 @@ export function Metrics({ signals }: Props) {
           <button
             onClick={() => setMenuOpen((o) => !o)}
             title={menuOpen ? "Hide menu" : "Show menu"}
-            style={{ background: "transparent", border: "1px solid " + C.borderStrong, color: C.textDim, borderRadius: 8, padding: "4px 10px", fontSize: 12, fontFamily: MONO, cursor: "pointer" }}
+            style={{ background: "transparent", border: "1px solid " + C.borderStrong, color: C.textDim, fontWeight: 600, borderRadius: 8, padding: "4px 10px", fontSize: 14.5, fontFamily: MONO, cursor: "pointer" }}
           >
             {menuOpen ? "‹ menu" : "☰ menu"}
           </button>
-          <span style={{ fontFamily: MONO, fontSize: 11.5, color: C.textFaint }}>
-            {cur === "home" ? "All metrics" : sections.find((sd) => sd.id === cur)?.label}
+          <span style={{ fontFamily: MONO, fontSize: 14, color: C.textFaint, fontWeight: 600, }}>
+            {sections.find((sd) => sd.id === cur)?.label}
           </span>
         </div>
         <div style={{ flex: 1, overflowY: "auto", padding: "24px 32px 56px" }}>
           <div style={{ maxWidth: 1180, margin: "0 auto" }}>
             {signals.length === 0 && (
-              <div style={{ textAlign: "center", color: C.textFaint, fontSize: 13, padding: 64 }}>
+              <div style={{ textAlign: "center", color: C.textFaint, fontWeight: 600, fontSize: 15, padding: 64 }}>
                 Waiting for signals…
               </div>
             )}
@@ -266,12 +401,12 @@ function MiniStat({ color, label, value, sub, help }: { color: string; label: st
         padding: "12px 14px",
       }}
     >
-      <div style={{ fontFamily: MONO, fontSize: 9.5, color: C.textFaint, letterSpacing: "0.08em", textTransform: "uppercase", display: "flex", alignItems: "center", gap: 4, cursor: help ? "help" : "default" }}>
+      <div style={{ fontFamily: MONO, fontSize: 12.5, color: C.textFaint, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", display: "flex", alignItems: "center", gap: 4, cursor: help ? "help" : "default" }}>
         {label}
         {help && <span style={{ opacity: 0.55 }}>ⓘ</span>}
       </div>
-      <div style={{ fontFamily: MONO, fontSize: 21, fontWeight: 700, color: C.text, marginTop: 6 }}>{value}</div>
-      {sub && <div style={{ fontFamily: MONO, fontSize: 10, color: C.textFaint, marginTop: 3 }}>{sub}</div>}
+      <div style={{ fontFamily: MONO, fontSize: 22, fontWeight: 700, color: C.text, marginTop: 6 }}>{value}</div>
+      {sub && <div style={{ fontFamily: MONO, fontSize: 13, color: C.textFaint, fontWeight: 600, marginTop: 3 }}>{sub}</div>}
     </div>
   );
 }
@@ -281,9 +416,9 @@ function Section({ color, title, help, children }: { color: string; title: strin
     <div style={{ marginBottom: 30 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
         <span style={{ width: 8, height: 8, borderRadius: 2, background: color, flexShrink: 0 }} />
-        <span title={help} style={{ fontFamily: MONO, fontSize: 12.5, color: C.textDim, letterSpacing: "0.04em", display: "inline-flex", alignItems: "center", gap: 5, cursor: help ? "help" : "default" }}>
+        <span title={help} style={{ fontFamily: MONO, fontSize: 14.5, color: C.textDim, fontWeight: 600, letterSpacing: "0.04em", display: "inline-flex", alignItems: "center", gap: 5, cursor: help ? "help" : "default" }}>
           {title}
-          {help && <span style={{ color: C.textFaint, opacity: 0.55, fontSize: 11 }}>ⓘ</span>}
+          {help && <span style={{ color: C.textFaint, fontWeight: 600, opacity: 0.55, fontSize: 13.5 }}>ⓘ</span>}
         </span>
       </div>
       {children}
@@ -295,7 +430,7 @@ function Legend({ items }: { items: [string, string][] }) {
   return (
     <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginBottom: 10 }}>
       {items.map(([label, color]) => (
-        <span key={label} style={{ display: "flex", alignItems: "center", gap: 5, fontFamily: MONO, fontSize: 10, color: C.textFaint }}>
+        <span key={label} style={{ display: "flex", alignItems: "center", gap: 5, fontFamily: MONO, fontSize: 13, color: C.textFaint, fontWeight: 600, }}>
           <span style={{ width: 9, height: 9, borderRadius: 2, background: color }} />
           {label}
         </span>
@@ -307,12 +442,12 @@ function Legend({ items }: { items: [string, string][] }) {
 // ── per-task table ──────────────────────────────────────────────────────────
 function PerTaskTable({ rows }: { rows: TaskMetric[] }) {
   if (rows.length === 0) {
-    return <div style={{ fontFamily: MONO, fontSize: 12, color: C.textFaint, padding: "6px 2px" }}>No tasks in the buffer yet.</div>;
+    return <div style={{ fontFamily: MONO, fontSize: 14.5, color: C.textFaint, fontWeight: 600, padding: "6px 2px" }}>No tasks in the buffer yet.</div>;
   }
   const cols = "minmax(170px, 3fr) 84px 88px 116px 116px 64px 68px";
   return (
     <div style={{ border: "1px solid " + C.border, borderRadius: 10, overflow: "hidden" }}>
-      <div style={{ display: "grid", gridTemplateColumns: cols, gap: 12, padding: "8px 14px", background: "rgba(255,255,255,0.03)", borderBottom: "1px solid " + C.border, fontFamily: MONO, fontSize: 10, color: C.textFaint, letterSpacing: "0.06em", textTransform: "uppercase" }}>
+      <div style={{ display: "grid", gridTemplateColumns: cols, gap: 12, padding: "8px 14px", background: "rgba(var(--fg-rgb), 0.03)", borderBottom: "1px solid " + C.border, fontFamily: MONO, fontSize: 13, color: C.textFaint, fontWeight: 600, letterSpacing: "0.06em", textTransform: "uppercase" }}>
         <span title="Top-level task (hint or target neuron), with status.">Task</span>
         <span title="End-to-end wall-clock over the task subtree." style={{ textAlign: "right" }}>Total</span>
         <span title="Time to the first AGENT_OUTPUT." style={{ textAlign: "right" }}>1st out</span>
@@ -328,10 +463,10 @@ function PerTaskTable({ rows }: { rows: TaskMetric[] }) {
           <div key={r.trace} style={{ display: "grid", gridTemplateColumns: cols, gap: 12, padding: "9px 14px", borderBottom: "1px solid " + C.border, alignItems: "center" }}>
             <span style={{ minWidth: 0, display: "flex", alignItems: "center", gap: 8 }}>
               <span style={{ width: 7, height: 7, borderRadius: "50%", background: statusColor, flexShrink: 0, boxShadow: `0 0 5px ${statusColor}` }} />
-              <span title={r.label} style={{ fontFamily: MONO, fontSize: 11.5, color: C.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+              <span title={r.label} style={{ fontFamily: MONO, fontSize: 14, color: C.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                 {r.label}
               </span>
-              <span style={{ fontFamily: MONO, fontSize: 9.5, color: C.textFaint, flexShrink: 0 }}>· {status}</span>
+              <span style={{ fontFamily: MONO, fontSize: 12.5, color: C.textFaint, fontWeight: 600, flexShrink: 0 }}>· {status}</span>
             </span>
             <Num color={TASK_C} bold>{fmtMs(r.durationMs)}</Num>
             <Num>{r.ttfoMs == null ? "—" : fmtMs(r.ttfoMs)}</Num>
@@ -348,7 +483,7 @@ function PerTaskTable({ rows }: { rows: TaskMetric[] }) {
 
 function Num({ children, color, bold }: { children: React.ReactNode; color?: string; bold?: boolean }) {
   return (
-    <span style={{ textAlign: "right", fontFamily: MONO, fontSize: 11, color: color ?? C.textDim, fontWeight: bold ? 600 : 400 }}>
+    <span style={{ textAlign: "right", fontFamily: MONO, fontSize: 13.5, color: color ?? C.textDim, fontWeight: bold ? 600 : 400 }}>
       {children}
     </span>
   );
@@ -357,7 +492,7 @@ function Num({ children, color, bold }: { children: React.ReactNode; color?: str
 // ── stacked wall-clock composition ──────────────────────────────────────────
 function Composition({ rows }: { rows: TaskMetric[] }) {
   if (rows.length === 0) {
-    return <div style={{ fontFamily: MONO, fontSize: 12, color: C.textFaint, padding: "6px 2px" }}>No tasks in the buffer yet.</div>;
+    return <div style={{ fontFamily: MONO, fontSize: 14.5, color: C.textFaint, fontWeight: 600, padding: "6px 2px" }}>No tasks in the buffer yet.</div>;
   }
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
@@ -372,15 +507,15 @@ function Composition({ rows }: { rows: TaskMetric[] }) {
         const total = segs.reduce((a, [v]) => a + v, 0) || 1;
         return (
           <div key={r.trace} style={{ display: "flex", alignItems: "center", gap: 12 }}>
-            <span title={r.label} style={{ width: 200, flexShrink: 0, fontFamily: MONO, fontSize: 11.5, color: C.textDim, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+            <span title={r.label} style={{ width: 200, flexShrink: 0, fontFamily: MONO, fontSize: 14, color: C.textDim, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
               {r.label}
             </span>
-            <div style={{ flex: 1, height: 16, display: "flex", background: "rgba(255,255,255,0.04)", borderRadius: 4, overflow: "hidden" }}>
+            <div style={{ flex: 1, height: 16, display: "flex", background: "rgba(var(--fg-rgb), 0.04)", borderRadius: 4, overflow: "hidden" }}>
               {segs.map(([v, c, name], i) =>
                 v > 0 ? <div key={i} title={`${name}: ${fmtMs(v)}`} style={{ width: `${(v / total) * 100}%`, background: c }} /> : null,
               )}
             </div>
-            <span style={{ width: 74, flexShrink: 0, textAlign: "right", fontFamily: MONO, fontSize: 11.5, color: C.text }}>{fmtMs(r.durationMs)}</span>
+            <span style={{ width: 74, flexShrink: 0, textAlign: "right", fontFamily: MONO, fontSize: 14, color: C.text }}>{fmtMs(r.durationMs)}</span>
           </div>
         );
       })}
@@ -391,15 +526,15 @@ function Composition({ rows }: { rows: TaskMetric[] }) {
 // ── participants ────────────────────────────────────────────────────────────
 function ParticipantTable({ rows }: { rows: ParticipantMetric[] }) {
   if (rows.length === 0) {
-    return <div style={{ fontFamily: MONO, fontSize: 12, color: C.textFaint, padding: "6px 2px" }}>No participants seen yet.</div>;
+    return <div style={{ fontFamily: MONO, fontSize: 14.5, color: C.textFaint, fontWeight: 600, padding: "6px 2px" }}>No participants seen yet.</div>;
   }
   const cols = "minmax(150px, 3fr) 78px 70px 62px 72px 62px 60px 92px";
-  const kindColor = (k: string) => (k === "engram" ? MEM_C : k === "effector" ? TOOL_C : k === "neuron" ? C.accent : C.textFaint);
+  const kindColor = participantKindColor;
   return (
     <div style={{ border: "1px solid " + C.border, borderRadius: 10, overflow: "hidden" }}>
-      <div style={{ display: "grid", gridTemplateColumns: cols, gap: 10, padding: "8px 14px", background: "rgba(255,255,255,0.03)", borderBottom: "1px solid " + C.border, fontFamily: MONO, fontSize: 10, color: C.textFaint, letterSpacing: "0.06em", textTransform: "uppercase" }}>
-        <span title="A neuron / engram / effector id (signal directed.id).">Participant</span>
-        <span title="Role from its REGISTER signal — neuron, engram or effector.">Kind</span>
+      <div style={{ display: "grid", gridTemplateColumns: cols, gap: 10, padding: "8px 14px", background: "rgba(var(--fg-rgb), 0.03)", borderBottom: "1px solid " + C.border, fontFamily: MONO, fontSize: 13, color: C.textFaint, fontWeight: 600, letterSpacing: "0.06em", textTransform: "uppercase" }}>
+        <span title="A neuron / engram / effector id (signal directed.id), or a receptor id (meta.receptor).">Participant</span>
+        <span title="Role from its REGISTER signal — neuron, engram or effector. Receptors never register, so they are identified by authorship instead.">Kind</span>
         <span title="Total signals attributed to this participant." style={{ textAlign: "right" }}>Signals</span>
         <span title="TASK signals directed at this participant." style={{ textAlign: "right" }}>Tasks</span>
         <span title="AGENT_OUTPUT and FINAL signals it produced." style={{ textAlign: "right" }}>Outputs</span>
@@ -409,8 +544,8 @@ function ParticipantTable({ rows }: { rows: ParticipantMetric[] }) {
       </div>
       {rows.map((p) => (
         <div key={p.id} style={{ display: "grid", gridTemplateColumns: cols, gap: 10, padding: "9px 14px", borderBottom: "1px solid " + C.border, alignItems: "center" }}>
-          <span title={p.capabilities.join(", ")} style={{ fontFamily: MONO, fontSize: 11.5, color: C.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.id}</span>
-          <span style={{ fontFamily: MONO, fontSize: 10.5, color: kindColor(p.kind) }}>{p.kind}</span>
+          <span title={p.capabilities.join(", ")} style={{ fontFamily: MONO, fontSize: 14, color: C.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{receptorLabel(p.id)}</span>
+          <span style={{ fontFamily: MONO, fontSize: 13, color: kindColor(p.kind) }}>{p.kind}</span>
           <Num>{p.total}</Num>
           <Num>{p.tasks || "—"}</Num>
           <Num>{p.outputs || "—"}</Num>
@@ -426,20 +561,20 @@ function ParticipantTable({ rows }: { rows: ParticipantMetric[] }) {
 // ── longest-N bar list ──────────────────────────────────────────────────────
 function BarList({ color, rows, empty }: { color: string; rows: { id: string; label: string; durationMs: number }[]; empty: string }) {
   if (rows.length === 0) {
-    return <div style={{ fontFamily: MONO, fontSize: 12, color: C.textFaint, padding: "6px 2px" }}>{empty}</div>;
+    return <div style={{ fontFamily: MONO, fontSize: 14.5, color: C.textFaint, fontWeight: 600, padding: "6px 2px" }}>{empty}</div>;
   }
   const max = Math.max(...rows.map((r) => r.durationMs), 1);
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
       {rows.slice(0, 20).map((r) => (
         <div key={r.id} style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <span title={r.label} style={{ width: 200, flexShrink: 0, fontFamily: MONO, fontSize: 11.5, color: C.textDim, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+          <span title={r.label} style={{ width: 200, flexShrink: 0, fontFamily: MONO, fontSize: 14, color: C.textDim, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
             {r.label}
           </span>
-          <div style={{ flex: 1, height: 16, background: "rgba(255,255,255,0.04)", borderRadius: 4, overflow: "hidden" }}>
+          <div style={{ flex: 1, height: 16, background: "rgba(var(--fg-rgb), 0.04)", borderRadius: 4, overflow: "hidden" }}>
             <div style={{ width: `${Math.max(2, (r.durationMs / max) * 100)}%`, height: "100%", background: `linear-gradient(90deg, ${color}88, ${color})`, borderRadius: 4 }} />
           </div>
-          <span style={{ width: 74, flexShrink: 0, textAlign: "right", fontFamily: MONO, fontSize: 11.5, color: C.text }}>{fmtMs(r.durationMs)}</span>
+          <span style={{ width: 74, flexShrink: 0, textAlign: "right", fontFamily: MONO, fontSize: 14, color: C.text }}>{fmtMs(r.durationMs)}</span>
         </div>
       ))}
     </div>
@@ -454,12 +589,12 @@ function safeTime(t: string): string {
 // ── consistency per setup ──────────────────────────────────────────────────────────
 function ConsistencyTable({ rows }: { rows: SetupGroup[] }) {
   if (rows.length === 0) {
-    return <div style={{ fontFamily: MONO, fontSize: 12, color: C.textFaint, padding: "6px 2px", marginTop: 12 }}>No tasks in the buffer yet.</div>;
+    return <div style={{ fontFamily: MONO, fontSize: 14.5, color: C.textFaint, fontWeight: 600, padding: "6px 2px", marginTop: 12 }}>No tasks in the buffer yet.</div>;
   }
   const cols = "minmax(190px, 3fr) 64px 100px minmax(120px, 2fr)";
   return (
     <div style={{ border: "1px solid " + C.border, borderRadius: 10, overflow: "hidden", marginTop: 12 }}>
-      <div style={{ display: "grid", gridTemplateColumns: cols, gap: 12, padding: "8px 14px", background: "rgba(255,255,255,0.03)", borderBottom: "1px solid " + C.border, fontFamily: MONO, fontSize: 10, color: C.textFaint, letterSpacing: "0.06em", textTransform: "uppercase" }}>
+      <div style={{ display: "grid", gridTemplateColumns: cols, gap: 12, padding: "8px 14px", background: "rgba(var(--fg-rgb), 0.03)", borderBottom: "1px solid " + C.border, fontFamily: MONO, fontSize: 13, color: C.textFaint, fontWeight: 600, letterSpacing: "0.06em", textTransform: "uppercase" }}>
         <span title="Runs are grouped into a setup by their normalized task prompt.">Setup</span>
         <span title="Number of runs of this setup in the buffer." style={{ textAlign: "right" }}>Runs</span>
         <span title="Mean pairwise Jaccard similarity of the run graphs." style={{ textAlign: "right" }}>Consistency</span>
@@ -470,7 +605,7 @@ function ConsistencyTable({ rows }: { rows: SetupGroup[] }) {
         const stable = [...g.edgeFreq.values()].filter((f) => f >= 1).length;
         return (
           <div key={g.key} style={{ display: "grid", gridTemplateColumns: cols, gap: 12, padding: "9px 14px", borderBottom: "1px solid " + C.border, alignItems: "center" }}>
-            <span title={g.label} style={{ fontFamily: MONO, fontSize: 11.5, color: C.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{g.label}</span>
+            <span title={g.label} style={{ fontFamily: MONO, fontSize: 14, color: C.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{g.label}</span>
             <Num>{g.runs.length}</Num>
             <Num color={cc} bold>{g.consistency == null ? "—" : fmtPct(g.consistency)}</Num>
             <Num>{g.runs.length > 1 ? `${stable} / ${g.edgeFreq.size}` : "—"}</Num>

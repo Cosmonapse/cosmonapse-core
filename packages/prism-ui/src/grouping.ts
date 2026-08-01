@@ -82,7 +82,7 @@ export function taskHint(sig: Signal | undefined): string | undefined {
     if (typeof v === "string" && v.trim()) return v.trim();
     if (v && typeof v === "object") {
       // common shape: payload.input.prompt
-      for (const kk of ["prompt", "task", "text", "query"]) {
+      for (const kk of ["prompt", "task", "text", "query", "goal", "description"]) {
         const vv = (v as Record<string, unknown>)[kk];
         if (typeof vv === "string" && vv.trim()) return vv.trim();
       }

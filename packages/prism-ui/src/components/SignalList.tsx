@@ -53,6 +53,77 @@ function taskDuration(task: TaskGroup): number {
   return Math.max(0, ts(sigs[sigs.length - 1]) - ts(sigs[0]));
 }
 
+function taskStatus(task: TaskGroup): string {
+  const sigs = ownSignals(task);
+  if (sigs.some((s) => s.type === "ERROR")) return "error";
+  if (sigs.some((s) => s.type === "FINAL")) return "final";
+  return "open";
+}
+
+function taskTitle(task: TaskGroup): string {
+  return task.hint || task.taskSig?.directed?.id || task.trace.slice(0, 16);
+}
+
+/** Render one signal node (and its lineage) as indented plain text with the
+ *  full envelope expanded. */
+function sigToText(node: SigNode, depth: number, out: string[]): void {
+  const pad = "  ".repeat(depth);
+  const s = node.sig;
+  out.push(`${pad}- ${s.type}  ${s.directed?.id || "\u2014"}  ${safeTime(s.ts)}`);
+  const json = JSON.stringify(s, null, 2)
+    .split("\n")
+    .map((l) => `${pad}    ${l}`)
+    .join("\n");
+  out.push(json);
+  for (const c of node.children) sigToText(c, depth + 1, out);
+}
+
+/** Full plain-text dump of a task subtree: every signal, every envelope. */
+function taskToText(task: TaskGroup, depth: number, out: string[]): void {
+  const pad = "  ".repeat(depth);
+  const label = depth > 0 || task.depth > 0 ? "SUBTASK" : "TASK";
+  out.push("");
+  out.push(`${pad}${"=".repeat(72 - pad.length)}`);
+  out.push(`${pad}${label}: ${taskTitle(task)}`);
+  out.push(`${pad}trace:    ${task.trace}`);
+  out.push(`${pad}status:   ${taskStatus(task)}`);
+  out.push(`${pad}duration: ${fmtMs(taskDuration(task))}`);
+  out.push(`${pad}signals:  ${task.count} own / ${task.subtreeCount} subtree`);
+  out.push(`${pad}${"=".repeat(72 - pad.length)}`);
+  // The TASK envelope itself — the tree view peels it off (it *is* the header),
+  // but an export that drops it loses the run's root and its dispatch metadata.
+  if (task.taskSig) sigToText({ sig: task.taskSig, children: [] }, depth + 1, out);
+  for (const n of ownSignalForest(task)) sigToText(n, depth + 1, out);
+  for (const c of task.children) taskToText(c, depth + 1, out);
+}
+
+function slugify(s: string): string {
+  return (
+    s
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 48) || "task"
+  );
+}
+
+function downloadTask(task: TaskGroup): void {
+  const out: string[] = [
+    `Cosmonapse \u00b7 Prism signal trace`,
+    `exported: ${new Date().toISOString()}`,
+  ];
+  taskToText(task, 0, out);
+  const blob = new Blob([out.join("\n") + "\n"], { type: "text/plain;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `${slugify(taskTitle(task))}-${task.trace.slice(0, 8)}.txt`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
 export function SignalList({ signals }: Props) {
   const grouped = useMemo(() => groupSignals(signals), [signals]);
   // Collapsed group keys (default expanded). Full-envelope keys (default off).
@@ -84,22 +155,22 @@ export function SignalList({ signals }: Props) {
               width: 12,
               flexShrink: 0,
               textAlign: "center",
-              color: C.textFaint,
-              fontSize: 9,
+              color: C.textFaint, fontWeight: 600,
+              fontSize: 12,
               cursor: hasKids ? "pointer" : "default",
             }}
           >
             {hasKids ? (kidsOpen ? "▼" : "▶") : "·"}
           </span>
           <span style={{ width: 8, height: 8, borderRadius: "50%", background: c, boxShadow: `0 0 5px ${c}`, flexShrink: 0 }} />
-          <span style={{ color: c, fontFamily: MONO, fontSize: 11.5, fontWeight: 600, minWidth: 104, flexShrink: 0 }}>
+          <span style={{ color: c, fontFamily: MONO, fontSize: 14, fontWeight: 600, minWidth: 104, flexShrink: 0 }}>
             {s.type}
           </span>
           <span
             style={{
-              color: C.textDim,
+              color: C.textDim, fontWeight: 600,
               fontFamily: MONO,
-              fontSize: 11,
+              fontSize: 13.5,
               whiteSpace: "nowrap",
               overflow: "hidden",
               textOverflow: "ellipsis",
@@ -109,17 +180,17 @@ export function SignalList({ signals }: Props) {
           >
             {s.directed?.id || "—"}
           </span>
-          <span style={{ color: C.textFaint, fontFamily: MONO, fontSize: 10.5, flexShrink: 0 }}>{safeTime(s.ts)}</span>
+          <span style={{ color: C.textFaint, fontWeight: 600, fontFamily: MONO, fontSize: 13, flexShrink: 0 }}>{safeTime(s.ts)}</span>
           <span
             onClick={() => toggle(setFull, fKey)}
             style={{
               color: isFull ? C.accent2 : C.textFaint,
               fontFamily: MONO,
-              fontSize: 10,
+              fontSize: 13,
               flexShrink: 0,
               cursor: "pointer",
               textDecoration: "underline",
-              textDecorationColor: "rgba(255,255,255,0.2)",
+              textDecorationColor: "rgba(var(--fg-rgb), 0.2)",
               textUnderlineOffset: 2,
             }}
           >
@@ -167,12 +238,12 @@ export function SignalList({ signals }: Props) {
             userSelect: "none",
           }}
         >
-          <span style={{ color: C.textFaint, fontSize: 10, width: 10, flexShrink: 0 }}>{open ? "▼" : "▶"}</span>
+          <span style={{ color: C.textFaint, fontWeight: 600, fontSize: 13, width: 10, flexShrink: 0 }}>{open ? "▼" : "▶"}</span>
           <Tag color={colorFor("TASK")}>{task.depth > 0 ? "subtask" : "task"}</Tag>
           <span
             style={{
               fontFamily: MONO,
-              fontSize: 12.5,
+              fontSize: 14.5,
               color: C.text,
               whiteSpace: "nowrap",
               overflow: "hidden",
@@ -188,7 +259,28 @@ export function SignalList({ signals }: Props) {
           {task.children.length > 0 && (
             <Badge>{task.children.length} child{task.children.length === 1 ? "" : "ren"}</Badge>
           )}
-          <span style={{ fontFamily: MONO, fontSize: 10.5, color: statusColor, flexShrink: 0 }}>● {status}</span>
+          <span style={{ fontFamily: MONO, fontSize: 13, color: statusColor, flexShrink: 0 }}>● {status}</span>
+          <span
+            title="Download this task's full trace as text"
+            onClick={(e) => {
+              e.stopPropagation();
+              downloadTask(task);
+            }}
+            style={{
+              fontFamily: MONO,
+              fontSize: 12.5,
+              color: C.textFaint,
+              border: "1px solid " + C.border,
+              background: "rgba(var(--fg-rgb), 0.04)",
+              borderRadius: 5,
+              padding: "1px 7px",
+              flexShrink: 0,
+              cursor: "pointer",
+              whiteSpace: "nowrap",
+            }}
+          >
+            ↓ txt
+          </span>
         </div>
 
         {open && (
@@ -217,12 +309,12 @@ export function SignalList({ signals }: Props) {
         bottom: 0,
         overflowY: "auto",
         padding: "24px 32px 48px",
-        background: "rgba(7,8,12,0.6)",
+        background: "var(--bg-view)",
       }}
     >
       <div style={{ maxWidth: 1000, margin: "0 auto" }}>
         {grouped.roots.length === 0 && (
-          <div style={{ textAlign: "center", color: C.textFaint, fontSize: 13, padding: 64 }}>
+          <div style={{ textAlign: "center", color: C.textFaint, fontWeight: 600, fontSize: 15, padding: 64 }}>
             Waiting for tasks…
           </div>
         )}
@@ -230,7 +322,7 @@ export function SignalList({ signals }: Props) {
 
         {grouped.lifecycle.length > 0 && (
           <div style={{ marginTop: 20, opacity: 0.7 }}>
-            <div style={{ fontFamily: MONO, fontSize: 11, color: C.textFaint, letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 6 }}>
+            <div style={{ fontFamily: MONO, fontSize: 13.5, color: C.textFaint, fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 6 }}>
               lifecycle · {grouped.lifecycle.length}
             </div>
           </div>
@@ -245,7 +337,7 @@ function Tag({ color, children }: { color: string; children: React.ReactNode }) 
     <span
       style={{
         fontFamily: MONO,
-        fontSize: 9.5,
+        fontSize: 12.5,
         color,
         border: `1px solid ${color}40`,
         background: `${color}12`,
@@ -266,9 +358,9 @@ function Badge({ children }: { children: React.ReactNode }) {
     <span
       style={{
         fontFamily: MONO,
-        fontSize: 10.5,
-        color: C.textDim,
-        background: "rgba(255,255,255,0.04)",
+        fontSize: 13,
+        color: C.textDim, fontWeight: 600,
+        background: "rgba(var(--fg-rgb), 0.04)",
         border: "1px solid " + C.border,
         borderRadius: 5,
         padding: "1px 7px",
@@ -284,11 +376,11 @@ function Badge({ children }: { children: React.ReactNode }) {
 const preStyle: React.CSSProperties = {
   margin: "4px 0 6px 20px",
   padding: 10,
-  background: "rgba(0,0,0,0.35)",
-  border: "1px solid " + C.border,
+  background: "var(--bg-well)",
+  border: "1px solid var(--border)",
   borderRadius: 8,
-  color: C.textDim,
-  fontSize: 10.5,
+  color: "var(--text-dim)",
+  fontSize: 13,
   fontFamily: MONO,
   whiteSpace: "pre-wrap",
   wordBreak: "break-all",

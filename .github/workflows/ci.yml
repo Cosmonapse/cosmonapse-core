@@ -43,34 +43,6 @@ jobs:
       - name: Test (pytest)
         run: pytest -q
 
-  typescript:
-    name: TypeScript SDK
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: packages/ts-sdk
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: "22"   # >= 21 for node --test glob patterns
-          cache: npm
-          cache-dependency-path: packages/ts-sdk/package-lock.json
-
-      - name: Install
-        run: npm ci || npm install
-
-      - name: Type-check (tsc)
-        run: npm run typecheck
-
-      - name: Build
-        run: npm run build
-
-      - name: Test (node:test)
-        run: npm test
-
   spec:
     name: Envelope spec validator
     runs-on: ubuntu-latest

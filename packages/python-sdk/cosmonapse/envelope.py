@@ -586,7 +586,7 @@ def register_signal(
 
     Every REGISTER carries one universal discriminator, ``payload.role``
     (``"neuron"`` or ``"engram"``): the single field every consumer
-    (Dendrite registry, Prism, doppler) checks to classify the participant.
+    (Dendrite registry, Prism) checks to classify the participant.
     ``role`` defaults from the ``engram`` flag when omitted, so callers may
     pass either. The legacy ``payload.engram = true`` marker is still
     emitted for Engrams as a back-compat alias.

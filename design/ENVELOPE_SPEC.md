@@ -10,7 +10,7 @@
 
 The envelope is the single shared contract of the Cosmonapse protocol. Every message that crosses a Cosmonapse channel  -  regardless of who produced it, what synapse carries it, or what router or workflow manager is running  -  must be a valid envelope.
 
-This document is the authoritative reference. The SDK, the CLI validator, and any third-party implementation derive their correctness from it. The Python (`cosmonapse.envelope`) and TypeScript (`@cosmonapse/sdk` envelope) bindings are byte-compatible projections of this format.
+This document is the authoritative reference. The SDK, the CLI validator, and any third-party implementation derive their correctness from it. The Python binding (`cosmonapse.envelope`) is a byte-compatible projection of this format.
 
 ---
 
@@ -23,7 +23,7 @@ This document is the authoritative reference. The SDK, the CLI validator, and an
 - **The Dendrite owns the wire.** All envelope publishing  -  REGISTER, HEARTBEAT, DEREGISTER, the reply to a TASK  -  is the Dendrite's responsibility. The Axon produces the Signal object; it never touches the Synapse directly.
 - **No lifecycle rules.** The spec defines what a valid envelope looks like. It does not define what sequence of envelopes constitutes a valid workflow. Task lifecycle, error handling, retry logic, and termination conditions are entirely the developer's responsibility  -  implemented in their orchestrating Dendrite (or in cooperating Dendrites for the decentralised case).
 - **Extensible where it does not.** `payload` and `meta` are open objects. Implementations may add fields freely; consumers must ignore unknown fields.
-- **Language-agnostic.** The spec is defined in terms of JSON. SDK bindings in Python, TypeScript, or any other language are transformations of this format.
+- **Language-agnostic.** The spec is defined in terms of JSON. SDK bindings in Python or any other language are transformations of this format.
 
 ---
 
@@ -886,15 +886,15 @@ async for envelope in synapse.subscribe("cosmonapse.>", handler):
 
 A Doppler process **must never** publish to the channel. Synapse adapters connect non-queue subscribers as non-competing consumer groups so their consumption position never delays delivery to Dendrites.
 
-### 12.2 cosmo doppler
+### 12.2 cosmo prism --tail
 
-`cosmo doppler` is the built-in Doppler. It subscribes to a Synapse and streams envelopes to stdout as newline-delimited JSON.
+`cosmo prism --tail` is the built-in Doppler. It subscribes to a Synapse and streams envelopes to stdout as newline-delimited JSON.
 
 ```
-cosmo doppler                          # everything
-cosmo doppler --type AGENT_OUTPUT      # filter by envelope type
-cosmo doppler --neuron claude-debug    # filter by directed.id
-cosmo doppler --trace trc_01H...       # follow one trace
+cosmo prism --tail                          # everything
+cosmo prism --tail --type AGENT_OUTPUT      # filter by envelope type
+cosmo prism --tail --neuron claude-debug    # filter by directed.id
+cosmo prism --tail --trace trc_01H...       # follow one trace
 ```
 
 ---

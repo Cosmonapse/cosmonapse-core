@@ -107,7 +107,7 @@ export function Sidebar({ open, width, signals, selected, onSelect }: Props) {
         right: 0,
         bottom: 0,
         width: open ? width : 0,
-        background: "rgba(7,8,12,0.85)",
+        background: "var(--bg-sidebar)",
         WebkitBackdropFilter: "blur(20px)",
         backdropFilter: "blur(20px)",
         borderLeft: open ? "1px solid " + C.border : "none",
@@ -131,7 +131,7 @@ export function Sidebar({ open, width, signals, selected, onSelect }: Props) {
         <span
           style={{
             fontFamily: MONO,
-            fontSize: 11,
+            fontSize: 13.5,
             color: C.accent,
             letterSpacing: "0.14em",
             textTransform: "uppercase",
@@ -144,11 +144,11 @@ export function Sidebar({ open, width, signals, selected, onSelect }: Props) {
           title="Group signals by task, then by pathway"
           style={{
             fontFamily: MONO,
-            fontSize: 10.5,
+            fontSize: 13,
             color: grouped ? C.accent2 : C.textFaint,
             cursor: "pointer",
             userSelect: "none",
-            border: "1px solid " + (grouped ? "rgba(34,211,238,0.4)" : C.borderStrong),
+            border: "1px solid " + (grouped ? "rgba(var(--accent2-rgb), 0.4)" : C.borderStrong),
             borderRadius: 6,
             padding: "2px 8px",
             transition: "all 0.15s",
@@ -157,14 +157,14 @@ export function Sidebar({ open, width, signals, selected, onSelect }: Props) {
         >
           {grouped ? "group: task ▸ pathway" : "group: off"}
         </span>
-        <span style={{ marginLeft: "auto", color: C.textFaint, fontSize: 12, fontFamily: MONO }}>
+        <span style={{ marginLeft: "auto", color: C.textFaint, fontWeight: 600, fontSize: 14.5, fontFamily: MONO }}>
           {signals.length}
         </span>
       </div>
 
       <div style={{ flex: 1, overflowY: "auto" }}>
         {signals.length === 0 && (
-          <div style={{ padding: 48, textAlign: "center", color: C.textFaint, fontSize: 13 }}>
+          <div style={{ padding: 48, textAlign: "center", color: C.textFaint, fontWeight: 600, fontSize: 15 }}>
             Waiting for signals…
           </div>
         )}
@@ -222,18 +222,18 @@ function GroupHeader({ level, indent = 0, collapsed, color, tag, title, hint, co
         padding: level === 0 ? `9px 16px 9px ${padLeft}px` : `6px 16px 6px ${padLeft}px`,
         cursor: "pointer",
         userSelect: "none",
-        background: level === 0 ? "rgba(255,255,255,0.025)" : "transparent",
+        background: level === 0 ? "rgba(var(--fg-rgb), 0.025)" : "transparent",
         borderBottom: "1px solid " + C.border,
       }}
     >
-      <span style={{ color: C.textFaint, fontSize: 9, width: 10, flexShrink: 0 }}>
+      <span style={{ color: C.textFaint, fontWeight: 600, fontSize: 12, width: 10, flexShrink: 0 }}>
         {collapsed ? "▶" : "▼"}
       </span>
       {tag && (
         <span
           style={{
             fontFamily: MONO,
-            fontSize: 9.5,
+            fontSize: 12.5,
             color,
             border: `1px solid ${color}40`,
             background: `${color}12`,
@@ -259,14 +259,14 @@ function GroupHeader({ level, indent = 0, collapsed, color, tag, title, hint, co
         }}
       >
         {title}
-        {approx && <span style={{ color: C.textFaint }}> ≈</span>}
+        {approx && <span style={{ color: C.textFaint, fontWeight: 600, }}> ≈</span>}
       </span>
       {hint && (
         <span
           style={{
             fontFamily: MONO,
-            fontSize: 10,
-            color: C.textFaint,
+            fontSize: 13,
+            color: C.textFaint, fontWeight: 600,
             whiteSpace: "nowrap",
             overflow: "hidden",
             textOverflow: "ellipsis",
@@ -279,8 +279,8 @@ function GroupHeader({ level, indent = 0, collapsed, color, tag, title, hint, co
       <span
         style={{
           marginLeft: "auto",
-          color: C.textFaint,
-          fontSize: 10,
+          color: C.textFaint, fontWeight: 600,
+          fontSize: 13,
           fontFamily: MONO,
           flexShrink: 0,
         }}
@@ -309,7 +309,7 @@ function SignalRow({ sig, indent, isSel, isFull, onClick, onToggleFull }: {
         padding: `10px 16px 10px ${16 + indent}px`,
         cursor: "pointer",
         borderBottom: "1px solid " + C.border,
-        background: isSel ? "rgba(139,92,246,0.08)" : "transparent",
+        background: isSel ? "rgba(var(--accent-rgb), 0.08)" : "transparent",
         transition: "background 0.15s",
       }}
     >
@@ -329,7 +329,7 @@ function SignalRow({ sig, indent, isSel, isFull, onClick, onToggleFull }: {
           style={{
             color: c,
             fontFamily: MONO,
-            fontSize: 11.5,
+            fontSize: 14,
             fontWeight: 600,
             letterSpacing: "0.03em",
           }}
@@ -339,8 +339,8 @@ function SignalRow({ sig, indent, isSel, isFull, onClick, onToggleFull }: {
         <span
           style={{
             marginLeft: "auto",
-            color: C.textFaint,
-            fontSize: 10.5,
+            color: C.textFaint, fontWeight: 600,
+            fontSize: 13,
             fontFamily: MONO,
           }}
         >
@@ -350,8 +350,8 @@ function SignalRow({ sig, indent, isSel, isFull, onClick, onToggleFull }: {
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
         <span
           style={{
-            color: C.textDim,
-            fontSize: 11.5,
+            color: C.textDim, fontWeight: 600,
+            fontSize: 14,
             fontFamily: MONO,
             whiteSpace: "nowrap",
             overflow: "hidden",
@@ -361,7 +361,7 @@ function SignalRow({ sig, indent, isSel, isFull, onClick, onToggleFull }: {
           }}
         >
           {sig.directed?.id || " - "}
-          <span style={{ color: C.textFaint }}> · {(sig.trace_id || "").slice(4, 12)}</span>
+          <span style={{ color: C.textFaint, fontWeight: 600, }}> · {(sig.trace_id || "").slice(4, 12)}</span>
         </span>
         <span
           onClick={(e) => {
@@ -370,13 +370,13 @@ function SignalRow({ sig, indent, isSel, isFull, onClick, onToggleFull }: {
           }}
           style={{
             color: isFull ? C.accent2 : C.textFaint,
-            fontSize: 10,
+            fontSize: 13,
             fontFamily: MONO,
             cursor: "pointer",
             userSelect: "none",
             flexShrink: 0,
             textDecoration: "underline",
-            textDecorationColor: "rgba(255,255,255,0.2)",
+            textDecorationColor: "rgba(var(--fg-rgb), 0.2)",
             textUnderlineOffset: 2,
           }}
         >
@@ -394,10 +394,10 @@ function SignalRow({ sig, indent, isSel, isFull, onClick, onToggleFull }: {
 const preStyle: React.CSSProperties = {
   marginTop: 8,
   padding: 8,
-  background: "rgba(0,0,0,0.3)",
+  background: "var(--bg-well)",
   borderRadius: 6,
-  color: C.textDim,
-  fontSize: 10.5,
+  color: "var(--text-dim)",
+  fontSize: 13,
   fontFamily: MONO,
   whiteSpace: "pre-wrap",
   wordBreak: "break-all",

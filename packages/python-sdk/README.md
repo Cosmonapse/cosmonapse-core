@@ -17,10 +17,7 @@ pip install httpx
 ```
 
 This puts both `import cosmonapse` and the `cosmo` CLI on your PATH. The CLI
-has a single implementation - this package - and is also reachable from npm:
-`npm install -g @cosmonapse/sdk` ships a launcher that delegates to
-`python -m cosmo`, auto-installing this package into a private environment on
-first run if needed. One CLI build either way.
+has a single implementation - this package.
 
 ---
 
@@ -324,7 +321,7 @@ Backends: `InMemoryEngram` (tests), `SqliteEngram` (single-host durable),
 | `cosmo dispatch` | Dispatch a TASK from the terminal and await the reply |
 | `cosmo registry` | Inspect the live Neuron population (DISCOVER-based) |
 | `cosmo answer` | Interactively answer CLARIFICATION / PERMISSION requests |
-| `cosmo doppler -n demo` | Stream every Signal on the bus to stdout (`--type` to filter, `--prism` for the browser view) |
+| `cosmo prism -n demo` | Open Prism, the live browser view onto the bus (`--tail` to stream to stdout instead, `--type` to filter) |
 | `cosmo schema` | Export the Signal envelope JSON Schema |
 | `cosmo validate` | Validate that Signals on the bus conform to the envelope spec |
 | `cosmo completion` | Print a shell-completion script (bash / zsh / fish) |
@@ -333,7 +330,7 @@ Watch any workflow live:
 
 ```bash
 cosmo synapse start memory --namespace=demo
-cosmo doppler --prism --url=cosmo://127.0.0.1:7070 -n demo   # opens http://127.0.0.1:7071
+cosmo prism --url=cosmo://127.0.0.1:7070 -n demo   # opens http://127.0.0.1:7071
 ```
 
 ---

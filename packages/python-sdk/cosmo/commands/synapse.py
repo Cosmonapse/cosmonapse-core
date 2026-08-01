@@ -30,6 +30,7 @@ from cosmo.commands._shared import (
     _err,
     _hr,
     _print_signal,
+    set_quiet,
 )
 from cosmonapse import Signal
 
@@ -185,7 +186,7 @@ def synapse() -> None:
               help="Broker URL for nats (nats://...) or kafka (kafka://...). "
                    "Defaults: nats://127.0.0.1:4222, localhost:9092.")
 @click.option("--quiet", is_flag=True, default=False,
-              help="Don't stream Signals to stdout.")
+              help="Print nothing to stdout: no banner, no Signal stream.")
 def start(transport: str, namespace: str, host: str, port: int,
           broker: str | None, quiet: bool) -> None:
     """Boot a Synapse and stream every Signal that crosses it.
@@ -198,6 +199,9 @@ def start(transport: str, namespace: str, host: str, port: int,
       cosmo synapse start nats   --namespace=prod --broker=nats://localhost:4222
       cosmo synapse start kafka  --namespace=prod --broker=localhost:9092
     """
+    # Before anything prints. A --quiet synapse is nearly always one whose
+    # stdout is a pipe or the null device, and its banner has no reader.
+    set_quiet(quiet)
     asyncio.run(_run_start(
         transport=transport, namespace=namespace,
         host=host, port=port, broker=broker, quiet=quiet,

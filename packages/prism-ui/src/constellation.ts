@@ -2,21 +2,31 @@
 // score how consistently a setup reproduces that graph across runs.
 //
 // A run is one top-level task subtree (rootBundles in metrics.ts). Its graph
-// has one node per participant that took part (neuron / engram / effector) and
-// one typed edge per interaction channel. The synapse is transport, not a
+// has one node per participant that took part (receptor / neuron / engram /
+// effector) and one typed edge per interaction channel. The synapse is transport, not a
 // participant: when A tool-calls B the envelope crosses the synapse, but the
 // edge is A → B. Channels:
-//   task     — TASK delegation (dispatching neuron → child neuron)
+//   task     — TASK delegation (dispatching neuron → child neuron), and the
+//              entry edge (receptor → the neuron it handed the root task to)
 //   tool     — TOOL_CALL → effector          (replies: TOOL_RESULT)
 //   recall   — RECALL → engram               (replies: RECALLED)
 //   imprint  — IMPRINT → engram              (replies: IMPRINTED)
 //   output   — a subtask's FINAL back to the neuron that delegated it
 //
-// The sender of a request is inferred: the trace's current worker (its latest
-// TASK target), falling back — for traces that carry no TASK, e.g. the
-// no-orchestrator pattern — to the neuron the trace's cognition signals
-// (AGENT_OUTPUT / PLAN / THOUGHT_DELTA / FINAL) are attributed to. A request
-// whose sender cannot be established contributes node activity but no edge.
+// The sender of a request is resolved by LINEAGE, not by trace: every signal
+// is attributed to the worker of its nearest TASK ancestor (parent_id chain).
+// This is what makes handoff runs read correctly — a capability-routed graph
+// keeps every step of a multi-agent run on ONE trace, so "the trace's current
+// worker" would credit the whole run to whoever spoke first. Fallbacks, in
+// order: the trace's latest TASK target, then the neuron the trace's cognition
+// signals (AGENT_OUTPUT / PLAN / THOUGHT_DELTA / FINAL) are attributed to. A
+// request whose sender cannot be established contributes node activity but no
+// edge.
+//
+// A TASK need not name its target: capability routing dispatches undirected
+// (directed = null, payload.capabilities = [...]) and only the *answer* reveals
+// who took it. So a TASK's worker is its directed.id when it has one, else the
+// neuron of the first cognition signal that lands inside its scope.
 //
 // Consistency (structural): runs are grouped into "setups" by their normalized
 // task prompt (falling back to the target neuron). Each run reduces to a
@@ -26,8 +36,9 @@
 // deliberately ignored (structure, not load).
 
 import { rootBundles } from "./metrics";
+import { C } from "./theme";
 import { ts } from "./grouping";
-import { participantKind, type ParticipantKind, type Signal } from "./types";
+import { participantKind, receptorRef, type ParticipantKind, type Signal } from "./types";
 
 export type NodeKind = ParticipantKind;
 
@@ -96,6 +107,10 @@ export const edgeSig = (e: { from: string; to: string; channel: string }): strin
 function kindMap(signals: Signal[]): Map<string, ParticipantKind> {
   const kinds = new Map<string, ParticipantKind>();
   for (const s of signals) {
+    // Receptors are never addressed, so they are classified by the meta key
+    // that names their author rather than by any directed.id.
+    const rxid = receptorRef(s);
+    if (rxid) kinds.set(rxid, "receptor");
     const id = s.directed?.id;
     if (!id) continue;
     const k = participantKind(s);
@@ -143,6 +158,47 @@ function buildRunGraph(
       fallback.set(trc, id);
   }
 
+  // ── scope: the nearest TASK ancestor of a signal ────────────────────────
+  // Memoized walk up parent_id. This is the unit of attribution: everything
+  // under a TASK was done by whoever ran that TASK, whatever trace it sits on.
+  const scope = new Map<string, Signal | null>();
+  const enclosingTask = (s: Signal): Signal | null => {
+    const memo = scope.get(s.id);
+    if (memo !== undefined) return memo;
+    const chain: string[] = [];
+    let cur: string | null | undefined = s.parent_id;
+    let found: Signal | null = null;
+    const guard = new Set<string>([s.id]);
+    while (cur && !guard.has(cur)) {
+      guard.add(cur);
+      const p: Signal | undefined = byId.get(cur);
+      if (!p) break;
+      if (p.type === "TASK") {
+        found = p;
+        break;
+      }
+      chain.push(p.id);
+      cur = p.parent_id;
+    }
+    scope.set(s.id, found);
+    for (const id of chain) if (!scope.has(id)) scope.set(id, found);
+    return found;
+  };
+
+  // ── TASK id → the neuron that ran it ────────────────────────────────────
+  // Directed dispatch names its target up front. Capability-routed dispatch
+  // does not, so the task is credited to the first cognition signal that
+  // answers inside its scope.
+  const taskWorker = new Map<string, string>();
+  for (const s of chron) if (s.type === "TASK" && s.directed?.id) taskWorker.set(s.id, s.directed.id);
+  for (const s of chron) {
+    const id = s.directed?.id;
+    if (!id || !COGNITION.has(s.type)) continue;
+    if (kinds.get(id) === "engram" || kinds.get(id) === "effector") continue;
+    const t = enclosingTask(s);
+    if (t && !taskWorker.has(t.id)) taskWorker.set(t.id, id);
+  }
+
   const node = (id: string): GraphNode => {
     let n = nodes.get(id);
     if (!n) nodes.set(id, (n = { id, kind: kinds.get(id) ?? "neuron", activity: 0, errors: 0 }));
@@ -157,9 +213,15 @@ function buildRunGraph(
     if (!e) edges.set(key, (e = { from, to, channel, count: 0, replies: 0, freq: 1 }));
     return e;
   };
-  /** Who is sending requests on this trace right now; null when unknowable. */
-  const src = (sigTrace: string): string | null =>
-    worker.get(sigTrace) ?? fallback.get(sigTrace) ?? null;
+  /** Who emitted this signal: the worker of its enclosing TASK, else the
+   *  trace's current worker. Null when unknowable. */
+  const src = (s: Signal): string | null => {
+    const t = enclosingTask(s);
+    const byScope = t ? taskWorker.get(t.id) : undefined;
+    if (byScope) return byScope;
+    const trc = s.trace_id || "no-trace";
+    return worker.get(trc) ?? fallback.get(trc) ?? null;
+  };
 
   /** Register a reply on its request's edge. The responder is resolved via
    *  lineage first — reply.parent_id → request.directed.id — because reply
@@ -189,34 +251,61 @@ function buildRunGraph(
     if (s.type === "FINAL") final = true;
     if (s.type === "ERROR") error = true;
 
+    // Authorship first: a Receptor takes part in the run without ever being
+    // addressed, so its activity has to be counted before the directed.id
+    // guard that every other participant is found by.
+    const rxid = receptorRef(s);
+    if (rxid) {
+      const rn = node(rxid);
+      rn.activity++;
+      if (s.type === "ERROR") rn.errors++;
+    }
+
+    const trc = s.trace_id || "no-trace";
+
+    // TASK is handled before the directed.id guard: a capability-routed task
+    // is dispatched undirected, and its target is only known from the answer.
+    if (s.type === "TASK") {
+      const target = s.directed?.id ?? taskWorker.get(s.id) ?? null;
+      if (target) {
+        const tn = node(target);
+        tn.activity++;
+        // A Receptor-raised task does have a source: the edge it arrived
+        // through. Drawing it makes the entry point part of the run's
+        // structural signature, so "same work, different door" reads as the
+        // structural difference it is.
+        if (rxid) edge(rxid, target, "task").count++;
+
+        // Delegation edge: whoever was running the enclosing scope handed
+        // this task on. Works for a subtask on its own trace and for a
+        // handoff that stays on the parent's trace alike.
+        const encl = enclosingTask(s);
+        let pw = encl ? taskWorker.get(encl.id) ?? null : null;
+        const parent = s.parent_id ? byId.get(s.parent_id) : undefined;
+        const pt = parent?.trace_id;
+        const crossTrace = !!pt && pt !== trc;
+        if (!pw && crossTrace) pw = worker.get(pt!) ?? fallback.get(pt!) ?? null;
+        if (pw) {
+          // pw === target is a self-delegation loop — kept on purpose: a
+          // neuron spawning a task it executes itself is structure.
+          edge(pw, target, "task").count++;
+          // Only a task that opened its own trace returns its FINAL to the
+          // dispatcher; a same-trace handoff already shows as the task edge.
+          if (crossTrace) dispatcher.set(trc, pw);
+        }
+        worker.set(trc, target);
+      }
+      continue;
+    }
+
     const id = s.directed?.id;
     if (!id) continue;
     const n = node(id);
     n.activity++;
     if (s.type === "ERROR") n.errors++;
-    const trc = s.trace_id || "no-trace";
-    const from = src(trc);
+    const from = src(s);
 
     switch (s.type) {
-      case "TASK": {
-        // Delegation edge only when a parent neuron dispatched this task; a
-        // root task simply starts at its target neuron.
-        if (s.parent_id) {
-          const parent = byId.get(s.parent_id);
-          const pt = parent?.trace_id;
-          if (pt && pt !== trc) {
-            const pw = worker.get(pt) ?? fallback.get(pt);
-            if (pw) {
-              // pw === id is a self-delegation loop — kept on purpose: a
-              // neuron spawning a task it executes itself is structure.
-              edge(pw, id, "task").count++;
-              dispatcher.set(trc, pw);
-            }
-          }
-        }
-        worker.set(trc, id);
-        break;
-      }
       case "TOOL_CALL":
         if (from && from !== id) edge(from, id, "tool").count++;
         break;
@@ -239,7 +328,7 @@ function buildRunGraph(
         // A subtask's FINAL flows back to the neuron that delegated it. A
         // root task's FINAL leaves the graph (to the caller), so no edge.
         const dest = dispatcher.get(trc);
-        const w = worker.get(trc) ?? fallback.get(trc) ?? id;
+        const w = src(s) ?? id;
         if (dest && dest !== w) edge(w, dest, "output").count++;
         break;
       }
@@ -336,8 +425,8 @@ export function computeConsistency(signals: Signal[]): ConsistencyReport {
 
 /** Color ramp for consistency badges. */
 export function consistencyColor(x: number | null): string {
-  if (x == null) return "#5b6275";
-  if (x >= 0.9) return "#34d399";
-  if (x >= 0.6) return "#fbbf24";
-  return "#f87171";
+  if (x == null) return C.textFaint;
+  if (x >= 0.9) return C.okSoft;
+  if (x >= 0.6) return C.warn;
+  return C.danger;
 }

@@ -201,6 +201,11 @@ class Dendrite(LifecycleHooks):
         # index so a TOOL_CALL with directed.type addresses every hosted
         # match - the action-side mirror of the Engram tables above.
         self._effectors: dict[str, Effector] = {}
+        # Receptors mounted on this Dendrite (orchestrator-role only).
+        # Unlike Axons/Effectors/Engrams these are caller-side - they
+        # originate TASKs and service nothing - so there is no
+        # subscription and no index, just the list run() will run.
+        self._receptors: list[Any] = []
         self._effector_kind_index: dict[str, list[str]] = {}
         self._effector_client: EffectorClient = EffectorClient(self)
 
@@ -467,6 +472,76 @@ class Dendrite(LifecycleHooks):
             self._effector_kind_index.pop(effector.effector_kind, None)
         del self._effectors[effector_id]
         effector._dendrite = None
+
+    # ------------------------------------------------------------------
+    # Receptors  -  the interface layer
+    # ------------------------------------------------------------------
+
+    def attach_receptor(self, receptor: Any) -> Any:
+        """Mount a Receptor on this Dendrite. Returns it, for chaining.
+
+        The fourth attach point: Axons think, Effectors act, Engrams
+        remember, Receptors listen. Attaching binds the Receptor to this
+        Dendrite (the same thing ``receptor.bind(self)`` does) and adds it
+        to the set ``run()`` will run.
+
+        Unlike the other three this adds no subscription - a Receptor is
+        caller-side. It originates TASKs and services no signal type, so
+        there is nothing for the Dendrite to listen for on its behalf.
+
+        Only orchestrator-role Dendrites may mount one, and the check
+        happens here rather than at first dispatch: a Receptor on a worker
+        is a wiring mistake, and failing at attach beats failing at the
+        first request.
+        """
+        self._require_orchestrator("attach_receptor")
+        if receptor in self._receptors:
+            raise ValueError(
+                f"Dendrite already hosts this Receptor "
+                f"({receptor.receptor_id!r})"
+            )
+        receptor.bind(self)
+        self._receptors.append(receptor)
+        return receptor
+
+    def detach_receptor(self, receptor: Any) -> None:
+        """Unmount a Receptor. It keeps its binding; it just stops being run."""
+        try:
+            self._receptors.remove(receptor)
+        except ValueError:
+            raise ValueError(
+                f"Dendrite does not host Receptor {receptor.receptor_id!r}"
+            ) from None
+
+    @property
+    def receptors(self) -> list[Any]:
+        """The Receptors mounted on this Dendrite, in attach order."""
+        return list(self._receptors)
+
+    async def run(self) -> int:
+        """Serve every mounted Receptor concurrently. Returns an exit code.
+
+        This is what makes a brain runnable: build the Dendrites, attach
+        the interfaces, ``await edge.run()``. HTTP Receptors sharing a
+        (host, port) are merged onto one app.
+
+        The brain is not bound to its interfaces. A Receptor finishing
+        detaches that interface and nothing more - ``:quit`` closes a REPL,
+        it does not kill the process hosting the Axons - so this normally
+        blocks until cancelled by a signal (Ctrl-C, or SIGTERM from
+        Genesis's Stop button). With nothing attached, or once everything
+        attached has finished, it blocks as a headless worker node, still
+        reachable via ``cosmo dispatch``. A Receptor that *raises* still
+        brings the brain down with its traceback, and a one-shot CLI
+        command returns its exit code (see
+        :mod:`cosmonapse.receptor.runner` for all four rules).
+
+        ``run`` and not ``serve``: ``Effector.serve()`` / ``Engram.serve()``
+        are constructors, so the verb already means something else.
+        """
+        from cosmonapse.receptor.runner import run_receptors
+
+        return await run_receptors(*self._receptors)
 
     @property
     def effectors(self) -> dict[str, Effector]:
@@ -1307,13 +1382,19 @@ class Dendrite(LifecycleHooks):
         finalize: bool = False,
         meta: dict[str, Any] | None = None,
     ) -> Signal:
-        """Emit a TASK signal. Addressed (``neuron=...``) or capability-routed
-        (``capabilities=[...]``)  -  at least one must be set.
+        """Emit a TASK signal. Addressed (``neuron=...``), capability-routed
+        (``capabilities=[...]``), or neither  -  an open call.
 
         Addressed TASKs go on the broadcast TASK subject; the unique
         host filters by neuron_id and acts. Capability-routed TASKs go
         on the queue-grouped routed subject so the broker delivers them
-        to exactly one Dendrite per matching cap profile.
+        to exactly one Dendrite per matching cap profile. With neither
+        set the TASK is an open call on the broadcast subject: every
+        Dendrite sees it, and the ones that answer are those hosting a
+        ``catch_all=True`` Axon, plus any unfiltered ``@on_task_signal``
+        handler. That is at-least-once across the whole namespace, not
+        once-only  -  expect one reply per willing host on the trace, and
+        ``dispatch_and_wait`` resolving on whichever lands first.
 
         ``finalize=True`` tags the TASK so the handling worker Dendrite
         promotes a successful AGENT_OUTPUT to FINAL (terminal-handler
@@ -1322,11 +1403,6 @@ class Dendrite(LifecycleHooks):
         Only orchestrator-role Dendrites may dispatch.
         """
         self._require_orchestrator("dispatch_task")
-        if neuron is None and not capabilities:
-            raise ValueError(
-                "dispatch_task requires either neuron= (addressed) or "
-                "capabilities=[...] (capability-routed)"
-            )
         parent_id = self._inherit_parent(parent_id)
         sig = task_signal(
             trace_id=trace_id, parent_id=parent_id,
@@ -1344,6 +1420,10 @@ class Dendrite(LifecycleHooks):
         Capability-routed (no directed.id, capabilities in payload) → routed
         subject (queue-grouped on receivers, once-only delivery within
         a matching cap profile).
+        Neither → broadcast subject as an open call. Deliberately *not* the
+        routed subject: queue-grouping there is per cap profile, and an open
+        call has no profile to group by, so it would be handed to one
+        arbitrary Dendrite instead of offered to all of them.
         """
         if sig.directed and sig.directed.id:
             subject = self._subject(SignalType.TASK)
@@ -1429,11 +1509,6 @@ class Dendrite(LifecycleHooks):
         :meth:`stop` closes any still-open Pathways.
         """
         self._require_orchestrator("dispatch")
-        if neuron is None and not capabilities:
-            raise ValueError(
-                "dispatch requires either neuron= (addressed) or "
-                "capabilities=[...] (capability-routed)"
-            )
         if finalize is None:
             finalize = scope == "terminal"
         tid = trace_id or new_trace_id()
@@ -2480,11 +2555,20 @@ class Dendrite(LifecycleHooks):
         Addressed (``task.neuron`` set): look up that Axon by neuron_id;
         if not hosted here, drop silently. Capability-routed (no neuron,
         capabilities in payload): pick the first local Axon whose
-        capabilities superset the request and route there.
+        capabilities superset the request and route there. Open call
+        (neither): the first local Axon built with ``catch_all=True``, and
+        no Axon at all when none opted in.
 
-        Capability-routed TASKs may be processed by more than one
-        Dendrite if multiple have a covering Axon (at-least-once across
+        Capability-routed and open-call TASKs may be processed by more than
+        one Dendrite if several have a willing Axon (at-least-once across
         the matching set). Use TASK_OFFER / BID for atomic claim.
+
+        Note the asymmetry: ``catch_all`` widens *this* branch only. A
+        capability-routed TASK nobody matches is still dropped rather than
+        handed to a catch-all Axon, because the routed subject is
+        queue-grouped per cap profile - a catch-all host is not in the
+        matching group, and quietly answering out of it would break the
+        once-only guarantee capability routing exists to give.
         """
         target = task.directed.id if task.directed else None
         axon: Axon | None = None
@@ -2495,13 +2579,16 @@ class Dendrite(LifecycleHooks):
                 return
         else:
             requested = task.payload.get("capabilities") or []
-            if not requested:
-                return
-            req_set = set(requested)
-            for candidate in self._axons.values():
-                if req_set.issubset(set(candidate.capabilities)):
-                    axon = candidate
-                    break
+            if requested:
+                req_set = set(requested)
+                for candidate in self._axons.values():
+                    if req_set.issubset(set(candidate.capabilities)):
+                        axon = candidate
+                        break
+            else:
+                axon = next(
+                    (c for c in self._axons.values() if c.catch_all), None,
+                )
             if axon is None:
                 return
             target = axon.neuron_id
@@ -2736,6 +2823,14 @@ class Dendrite(LifecycleHooks):
                 )
 
     async def _emit_register(self, axon: Axon) -> None:
+        """Announce a hosted Axon on the Synapse via REGISTER.
+
+        ``meta.catch_all`` is carried only when the Axon opted in, so a
+        namespace's willingness to answer open calls is discoverable the same
+        way its capabilities are - Prism can show it, and an
+        operator can tell "nobody answered" from "nobody was listening"
+        without reading the source.
+        """
         neuron_kind = getattr(axon, "neuron_kind", "neuron") or "neuron"
         await self._publish(register_signal(
             directed=Directed(
@@ -2746,6 +2841,7 @@ class Dendrite(LifecycleHooks):
             capabilities=axon.capabilities,
             version=axon.version,
             role="neuron",
+            meta={"catch_all": True} if getattr(axon, "catch_all", False) else None,
         ))
 
     async def _emit_engram_register(self, engram: Engram) -> None:
@@ -2775,7 +2871,7 @@ class Dendrite(LifecycleHooks):
         ``directed.id`` = effector_id, ``directed.type`` = effector_kind,
         ``directed.capabilities`` = the Effector's capabilities; the
         ``role="effector"`` payload field tells receivers (Dendrite
-        registry, Prism, doppler) to classify it distinctly from a Neuron
+        registry, Prism) to classify it distinctly from a Neuron
         or Engram - mirrors ``_emit_engram_register`` exactly, one level
         down the ABC hierarchy (Neurons think, Engrams remember, Effectors
         act).

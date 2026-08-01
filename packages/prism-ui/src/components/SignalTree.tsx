@@ -342,7 +342,7 @@ export function SignalTree({ signals }: Props) {
         bottom: 0,
         display: "flex",
         flexDirection: "row",
-        background: "rgba(7,8,12,0.6)",
+        background: "var(--bg-view)",
       }}
     >
       {/* left: parent task list ("files") */}
@@ -352,14 +352,14 @@ export function SignalTree({ signals }: Props) {
             flexShrink: 0,
             borderRight: "1px solid " + C.border,
             overflowY: "auto",
-            background: "rgba(0,0,0,0.2)",
+            background: "var(--bg-rail)",
           }}
         >
           <div
             style={{
               padding: "12px 14px",
               fontFamily: MONO,
-              fontSize: 10.5,
+              fontSize: 13,
               color: C.accent,
               letterSpacing: "0.14em",
               textTransform: "uppercase",
@@ -369,7 +369,7 @@ export function SignalTree({ signals }: Props) {
             Tasks
           </div>
           {roots.length === 0 && (
-            <div style={{ padding: 20, color: C.textFaint, fontSize: 12, fontFamily: MONO }}>Waiting…</div>
+            <div style={{ padding: 20, color: C.textFaint, fontWeight: 600, fontSize: 14.5, fontFamily: MONO }}>Waiting…</div>
           )}
           {roots.map((t) => {
             const on = activeTask?.trace === t.trace;
@@ -393,7 +393,7 @@ export function SignalTree({ signals }: Props) {
                   cursor: "pointer",
                   borderBottom: "1px solid " + C.border,
                   borderLeft: `3px solid ${on ? colorFor("TASK") : "transparent"}`,
-                  background: on ? "rgba(34,211,238,0.08)" : "transparent",
+                  background: on ? "rgba(var(--accent2-rgb), 0.08)" : "transparent",
                 }}
               >
                 <span style={{ width: 7, height: 7, borderRadius: "50%", background: dot, flexShrink: 0, boxShadow: `0 0 5px ${dot}` }} />
@@ -401,7 +401,7 @@ export function SignalTree({ signals }: Props) {
                   <div
                     style={{
                       fontFamily: MONO,
-                      fontSize: 11.5,
+                      fontSize: 14,
                       color: on ? C.text : C.textDim,
                       whiteSpace: "nowrap",
                       overflow: "hidden",
@@ -410,7 +410,7 @@ export function SignalTree({ signals }: Props) {
                   >
                     {t.hint || t.taskSig?.directed?.id || t.trace.slice(0, 14)}
                   </div>
-                  <div style={{ fontFamily: MONO, fontSize: 9.5, color: C.textFaint }}>
+                  <div style={{ fontFamily: MONO, fontSize: 12.5, color: C.textFaint, fontWeight: 600, }}>
                     {t.trace.slice(0, 12)} · {t.subtreeCount} sig{t.subtreeCount === 1 ? "" : "s"}
                   </div>
                 </div>
@@ -431,7 +431,7 @@ export function SignalTree({ signals }: Props) {
               flexShrink: 0,
             }}
           >
-            <span style={{ fontFamily: MONO, fontSize: 10.5, color: C.textFaint, letterSpacing: "0.1em", textTransform: "uppercase" }}>
+            <span style={{ fontFamily: MONO, fontSize: 13, color: C.textFaint, fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase" }}>
               layout
             </span>
             <Seg active={mode === "simple"} onClick={() => setMode("simple")}>
@@ -443,7 +443,7 @@ export function SignalTree({ signals }: Props) {
           </div>
           <div style={{ flex: 1, overflow: "auto", minWidth: 0 }}>
             {!activeTask ? (
-              <div style={{ padding: 48, textAlign: "center", color: C.textFaint, fontFamily: MONO, fontSize: 13 }}>
+              <div style={{ padding: 48, textAlign: "center", color: C.textFaint, fontWeight: 600, fontFamily: MONO, fontSize: 15 }}>
                 Select a task to render its signal tree.
               </div>
             ) : (
@@ -496,7 +496,7 @@ export function SignalTree({ signals }: Props) {
             width: 384,
             flexShrink: 0,
             borderLeft: "1px solid " + C.border,
-            background: "rgba(7,8,12,0.92)",
+            background: "var(--bg-overlay)",
             display: "flex",
             flexDirection: "column",
             overflow: "hidden",
@@ -513,10 +513,10 @@ export function SignalTree({ signals }: Props) {
             }}
           >
             <span style={{ width: 10, height: 10, borderRadius: "50%", background: colorFor(selSig.type), boxShadow: `0 0 6px ${colorFor(selSig.type)}` }} />
-            <span style={{ color: colorFor(selSig.type), fontFamily: MONO, fontSize: 14, fontWeight: 700 }}>{selSig.type}</span>
+            <span style={{ color: colorFor(selSig.type), fontFamily: MONO, fontSize: 16, fontWeight: 700 }}>{selSig.type}</span>
             <span
               onClick={() => setSelSigId(null)}
-              style={{ marginLeft: "auto", color: C.textFaint, fontSize: 18, cursor: "pointer", lineHeight: 1 }}
+              style={{ marginLeft: "auto", color: C.textFaint, fontWeight: 600, fontSize: 19, cursor: "pointer", lineHeight: 1 }}
               title="Close"
             >
               ×
@@ -529,17 +529,17 @@ export function SignalTree({ signals }: Props) {
             <Field label="directed" value={selSig.directed?.id ?? "—"} />
             <Field label="ts" value={selSig.ts} />
             <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "14px 0 6px" }}>
-              <span style={{ fontFamily: MONO, fontSize: 10.5, color: C.textFaint, letterSpacing: "0.1em", textTransform: "uppercase" }}>
+              <span style={{ fontFamily: MONO, fontSize: 13, color: C.textFaint, fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase" }}>
                 {full ? "full envelope" : "payload"}
               </span>
               <span
                 onClick={() => setFull((f) => !f)}
                 style={{
                   fontFamily: MONO,
-                  fontSize: 10.5,
+                  fontSize: 13,
                   color: C.accent2,
                   cursor: "pointer",
-                  border: "1px solid rgba(34,211,238,0.4)",
+                  border: "1px solid rgba(var(--accent2-rgb), 0.4)",
                   borderRadius: 6,
                   padding: "2px 9px",
                 }}
@@ -563,12 +563,12 @@ function Seg({ active, onClick, children }: { active: boolean; onClick: () => vo
       onClick={onClick}
       style={{
         fontFamily: MONO,
-        fontSize: 10.5,
+        fontSize: 13,
         cursor: "pointer",
         userSelect: "none",
         color: active ? C.accent2 : C.textDim,
-        background: active ? "rgba(34,211,238,0.12)" : "transparent",
-        border: "1px solid " + (active ? "rgba(34,211,238,0.4)" : C.border),
+        background: active ? "rgba(var(--accent2-rgb), 0.12)" : "transparent",
+        border: "1px solid " + (active ? "rgba(var(--accent2-rgb), 0.4)" : C.border),
         borderRadius: 6,
         padding: "3px 10px",
         whiteSpace: "nowrap",
@@ -582,8 +582,8 @@ function Seg({ active, onClick, children }: { active: boolean; onClick: () => vo
 function Field({ label, value }: { label: string; value: string }) {
   return (
     <div style={{ display: "flex", gap: 10, padding: "2px 0", alignItems: "baseline" }}>
-      <span style={{ fontFamily: MONO, fontSize: 10.5, color: C.textFaint, width: 74, flexShrink: 0 }}>{label}</span>
-      <span style={{ fontFamily: MONO, fontSize: 11, color: C.textDim, wordBreak: "break-all", flex: 1, minWidth: 0 }}>{value}</span>
+      <span style={{ fontFamily: MONO, fontSize: 13, color: C.textFaint, fontWeight: 600, width: 74, flexShrink: 0 }}>{label}</span>
+      <span style={{ fontFamily: MONO, fontSize: 13.5, color: C.textDim, fontWeight: 600, wordBreak: "break-all", flex: 1, minWidth: 0 }}>{value}</span>
     </div>
   );
 }
@@ -591,11 +591,11 @@ function Field({ label, value }: { label: string; value: string }) {
 const preStyle: React.CSSProperties = {
   margin: 0,
   padding: 10,
-  background: "rgba(0,0,0,0.4)",
-  border: "1px solid " + C.border,
+  background: "var(--bg-well)",
+  border: "1px solid var(--border)",
   borderRadius: 8,
-  color: C.textDim,
-  fontSize: 10.5,
+  color: "var(--text-dim)",
+  fontSize: 13,
   fontFamily: MONO,
   whiteSpace: "pre-wrap",
   wordBreak: "break-all",

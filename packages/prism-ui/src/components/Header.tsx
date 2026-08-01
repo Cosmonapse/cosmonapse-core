@@ -1,5 +1,8 @@
 import { C, MONO } from "../theme";
+import type { SynapseTab } from "../tabs";
 import { Logo } from "./Logo";
+import { ThemeToggle } from "./ThemeToggle";
+import { SynapseSwitcher } from "./SynapseSwitcher";
 
 export type PrismView = "brain" | "constellation" | "tree" | "list" | "metrics";
 
@@ -16,12 +19,15 @@ interface Props {
   total: number;
   paused: boolean;
   sidebarOpen: boolean;
-  /** The single monitored synapse. */
-  namespace: string;
-  url: string;
+  /** Every synapse Prism currently holds open, and which one is in front. */
+  tabs: SynapseTab[];
+  activeId: string | null;
+  statuses: Record<string, boolean>;
   view: PrismView;
   onSelectView: (v: PrismView) => void;
-  onDisconnect: () => void;
+  onSelectTab: (id: string) => void;
+  onAddTab: () => void;
+  onCloseTab: (id: string) => void;
   onTogglePause: () => void;
   onToggleSidebar: () => void;
   onClear: () => void;
@@ -34,7 +40,7 @@ function btn(active?: string | null): React.CSSProperties {
     color: active || C.textDim,
     borderRadius: 8,
     padding: "5px 12px",
-    fontSize: 12,
+    fontSize: 14.5,
     fontFamily: MONO,
     cursor: "pointer",
     transition: "all 0.15s",
@@ -46,11 +52,14 @@ export function Header({
   total,
   paused,
   sidebarOpen,
-  namespace,
-  url,
+  tabs,
+  activeId,
+  statuses,
   view,
   onSelectView,
-  onDisconnect,
+  onSelectTab,
+  onAddTab,
+  onCloseTab,
   onTogglePause,
   onToggleSidebar,
   onClear,
@@ -67,7 +76,7 @@ export function Header({
         alignItems: "center",
         gap: 14,
         padding: "12px 20px",
-        background: "rgba(7,8,12,0.7)",
+        background: "var(--bg-header)",
         WebkitBackdropFilter: "blur(20px)",
         backdropFilter: "blur(20px)",
         borderBottom: "1px solid " + C.border,
@@ -75,49 +84,22 @@ export function Header({
     >
       <div style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
         <Logo size={30} />
-        <span className="brand-word" style={{ fontWeight: 700, fontSize: 17 }}>Cosmonapse</span>
-        <span style={{ color: C.textDim, fontWeight: 500, fontSize: 17 }}>Prism</span>
+        <span className="brand-word" style={{ fontWeight: 700, fontSize: 18 }}>Cosmonapse</span>
+        <span style={{ color: C.textDim, fontWeight: 500, fontSize: 18 }}>Prism</span>
       </div>
-      <span style={{ color: C.textFaint, flexShrink: 0 }}>│</span>
+      <span style={{ color: C.textFaint, fontWeight: 600, flexShrink: 0 }}>│</span>
 
-      {/* The single monitored synapse */}
-      <div
-        title={`${shortUrl(url)} /${namespace}`}
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 7,
-          flexShrink: 0,
-          padding: "4px 10px",
-          borderRadius: 8,
-          fontFamily: MONO,
-          fontSize: 12,
-          background: "rgba(139,92,246,0.13)",
-          border: "1px solid rgba(139,92,246,0.45)",
-        }}
-      >
-        <span
-          style={{
-            width: 6,
-            height: 6,
-            borderRadius: "50%",
-            flexShrink: 0,
-            background: connected ? "#34d399" : "#f87171",
-            boxShadow: `0 0 5px ${connected ? "#34d399" : "#f87171"}`,
-          }}
-        />
-        <span style={{ color: C.accent2, whiteSpace: "nowrap" }}>{shortUrl(url)}</span>
-        <span style={{ color: C.textDim, whiteSpace: "nowrap" }}>/{namespace}</span>
-        <span
-          onClick={onDisconnect}
-          title="Disconnect / monitor another synapse"
-          style={{ color: C.textFaint, paddingLeft: 2, fontSize: 13, lineHeight: 1, cursor: "pointer" }}
-        >
-          ×
-        </span>
-      </div>
+      {/* Which synapse is in front - and every other one, one click away. */}
+      <SynapseSwitcher
+        tabs={tabs}
+        activeId={activeId}
+        statuses={statuses}
+        onSelect={onSelectTab}
+        onAdd={onAddTab}
+        onClose={onCloseTab}
+      />
 
-      <span style={{ color: C.textFaint, flexShrink: 0 }}>│</span>
+      <span style={{ color: C.textFaint, fontWeight: 600, flexShrink: 0 }}>│</span>
 
       {/* View switcher for this namespace */}
       <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
@@ -133,11 +115,11 @@ export function Header({
                 borderRadius: 8,
                 cursor: "pointer",
                 fontFamily: MONO,
-                fontSize: 12,
+                fontSize: 14.5,
                 whiteSpace: "nowrap",
                 color: on ? C.accent2 : C.textDim,
-                background: on ? "rgba(34,211,238,0.12)" : "transparent",
-                border: "1px solid " + (on ? "rgba(34,211,238,0.4)" : C.border),
+                background: on ? "rgba(var(--accent2-rgb), 0.12)" : "transparent",
+                border: "1px solid " + (on ? "rgba(var(--accent2-rgb), 0.4)" : C.border),
                 transition: "all 0.15s",
               }}
             >
@@ -158,32 +140,29 @@ export function Header({
       >
         <span
           style={{
-            color: connected ? "#34d399" : "#f87171",
-            fontSize: 12,
+            color: connected ? C.okSoft : C.danger,
+            fontSize: 14.5,
             fontFamily: MONO,
           }}
         >
           {connected ? "● connected" : "○ reconnecting…"}
         </span>
-        <span style={{ color: C.textFaint, fontSize: 12, fontFamily: MONO }}>
+        <span style={{ color: C.textFaint, fontWeight: 600, fontSize: 14.5, fontFamily: MONO }}>
           {total} signals
         </span>
-        <button onClick={onTogglePause} style={btn(paused ? "#fbbf24" : null)}>
+        <button onClick={onTogglePause} style={btn(paused ? C.warn : null)}>
           {paused ? "▶ resume" : "⏸ pause"}
         </button>
         <button onClick={onClear} style={btn(null)}>
           clear
         </button>
         {view === "brain" && (
-          <button onClick={onToggleSidebar} style={btn(sidebarOpen ? "#a78bfa" : null)}>
+          <button onClick={onToggleSidebar} style={btn(sidebarOpen ? C.engram : null)}>
             {sidebarOpen ? "hide signals ›" : "‹ signals"}
           </button>
         )}
+        <ThemeToggle />
       </div>
     </div>
   );
-}
-
-function shortUrl(url: string): string {
-  return url.replace(/^[a-z]+:\/\//i, "");
 }
