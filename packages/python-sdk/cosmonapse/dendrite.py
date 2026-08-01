@@ -2805,18 +2805,7 @@ class Dendrite(LifecycleHooks):
         payload = signal.payload or {}
         target = payload.get("neuron")
         caps_filter = payload.get("capabilities")
-<<<<<<< HEAD
-        # Jitter so a namespace full of Dendrites does not answer a DISCOVER
-        # in lockstep. The Dendrite can be stopped inside that window (a
-        # short-lived process that starts, dispatches once and exits), and a
-        # stopped Dendrite must not publish - the Synapse it would publish
-        # on is typically already closed.
-        await asyncio.sleep(random.uniform(0, 0.1))
-        if not self._running:
-            return
-=======
         await asyncio.sleep(random.uniform(0, 0.1))  # noqa: S311  - scheduling jitter, not crypto
->>>>>>> 16997d577596750e139f3eb83fd5c4b1c3c740bf
         caps_set: set[str] | None = (
             set(caps_filter) if caps_filter else None
         )
