@@ -29,12 +29,21 @@ export function FieldInput({
 }) {
   const label = spec?.blurb;
   const required = spec?.required;
+  // A credential is masked unless asked for. The spec is authoritative, but
+  // the name check catches the same thing on a keyword no table describes
+  // yet - a form that shows one key in the clear teaches the wrong habit.
+  const secret = spec?.secret ?? SECRET_NAME.test(field.name);
+  const unset = isBlank(field);
 
   return (
     <div style={{ marginBottom: 14 }}>
       <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 5 }}>
         <label style={labelStyle}>{field.name}</label>
-        {required && <span style={{ fontSize: 12, color: C.effector }}>required</span>}
+        {required && (
+          <span style={{ fontSize: 12, color: unset ? C.warn : C.effector }}>
+            {unset ? "required · not set" : "required"}
+          </span>
+        )}
         {field.type === "expr" && (
           <span style={{ fontSize: 12, color: C.textFaint, fontWeight: 600, }}>expression · edit in the file</span>
         )}
@@ -80,6 +89,15 @@ export function FieldInput({
         <div style={{ ...inputStyle, color: C.textDim, fontWeight: 600, whiteSpace: "pre-wrap", cursor: "default" }}>
           {String(field.value ?? "")}
         </div>
+      ) : secret ? (
+        <SecretInput
+          value={field.value === null ? "" : String(field.value)}
+          placeholder={spec?.placeholder || "sk-…"}
+          missing={required && unset}
+          onChange={(v) =>
+            onChange(v === "" ? { ...field, type: "none", value: null } : { ...field, type: "string", value: v })
+          }
+        />
       ) : (
         // string, or a None the form lets you fill in
         <>
@@ -91,7 +109,7 @@ export function FieldInput({
               const v = e.target.value;
               onChange(v === "" ? { ...field, type: "none", value: null } : { ...field, type: "string", value: v });
             }}
-            style={inputStyle}
+            style={required && unset ? missingStyle : inputStyle}
           />
           {!!spec?.suggest?.length && (
             <datalist id={`sug-${field.name}`}>
@@ -105,6 +123,80 @@ export function FieldInput({
 
       {label && <div style={helpStyle}>{label}</div>}
     </div>
+  );
+}
+
+/**
+ * Keyword names that carry a credential, for the sources whose field table
+ * doesn't say so itself. Kept deliberately broad - a false positive costs a
+ * click on the reveal toggle, a false negative puts a live key on screen.
+ */
+const SECRET_NAME = /(^|_)(api_?key|access_?key|token|secret|password|passwd|pwd)(_|$)/i;
+
+/** Whether a field is carrying nothing yet - an unfilled required row. */
+export function isBlank(field: Field): boolean {
+  if (field.type === "string_list") return ((field.value as string[]) ?? []).length === 0;
+  if (field.type === "bool") return typeof field.value !== "boolean";
+  return field.value === null || field.value === undefined || String(field.value).trim() === "";
+}
+
+/**
+ * A credential box: dots by default, one click to read it back.
+ *
+ * The value still lives in the file in plain text - this is about the screen,
+ * not about storage - so the toggle is an eye rather than anything that
+ * pretends the key is encrypted.
+ */
+function SecretInput({
+  value,
+  placeholder,
+  missing,
+  onChange,
+}: {
+  value: string;
+  placeholder: string;
+  missing?: boolean;
+  onChange: (v: string) => void;
+}) {
+  const [shown, setShown] = useState(false);
+  return (
+    <div style={{ position: "relative" }}>
+      <input
+        type={shown ? "text" : "password"}
+        value={value}
+        placeholder={placeholder}
+        autoComplete="off"
+        spellCheck={false}
+        onChange={(e) => onChange(e.target.value)}
+        style={{ ...(missing ? missingStyle : inputStyle), paddingRight: 38 }}
+      />
+      <span
+        onClick={() => setShown((s) => !s)}
+        title={shown ? "hide" : "show"}
+        style={{
+          position: "absolute",
+          right: 8,
+          top: "50%",
+          transform: "translateY(-50%)",
+          display: "flex",
+          cursor: "pointer",
+          color: shown ? C.accent2 : C.textFaint,
+          padding: 2,
+        }}
+      >
+        <Eye off={!shown} />
+      </span>
+    </div>
+  );
+}
+
+function Eye({ off }: { off: boolean }) {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+      <path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12z" />
+      <circle cx="12" cy="12" r="2.8" />
+      {off && <path d="M4 20 20 4" />}
+    </svg>
   );
 }
 
@@ -209,6 +301,13 @@ export const inputStyle: CSSProperties = {
   fontSize: 14.5,
   fontFamily: MONO,
   outline: "none",
+};
+
+/** An unfilled required box, so the form says so before the save fails. */
+export const missingStyle: CSSProperties = {
+  ...inputStyle,
+  borderColor: "color-mix(in srgb, var(--warn) 50%, transparent)",
+  background: "color-mix(in srgb, var(--warn) 7%, transparent)",
 };
 
 export const labelStyle: CSSProperties = {

@@ -9,7 +9,7 @@ cosmo dispatch    Dispatch a TASK from the terminal and await the reply
 cosmo registry    Inspect the live Neuron population (DISCOVER-based)
 cosmo answer      Interactively answer CLARIFICATION / PERMISSION requests
 cosmo schema      Export the Signal envelope JSON Schema
-cosmo doppler     Attach a Doppler to the Synapse, stream Signals to stdout
+cosmo prism       Open Prism, the live browser view onto a Synapse namespace
 cosmo validate    Validate that Signals on the Synapse conform to the envelope spec
 cosmo genesis     Open Genesis - name a brain, scaffold it, grow it on a canvas
 cosmo completion  Print a shell-completion script (bash / zsh / fish)
@@ -20,7 +20,7 @@ import click
 from cosmo.commands.answer import answer
 from cosmo.commands.completion import completion
 from cosmo.commands.dispatch import dispatch
-from cosmo.commands.doppler import doppler
+from cosmo.commands.prism import doppler, prism
 from cosmo.commands.genesis import genesis
 from cosmo.commands.init import init
 from cosmo.commands.registry import registry
@@ -41,6 +41,8 @@ cli.add_command(dispatch)
 cli.add_command(registry)
 cli.add_command(answer)
 cli.add_command(schema)
+cli.add_command(prism)
+# Deprecated alias for `cosmo prism`; hidden from --help.
 cli.add_command(doppler)
 cli.add_command(validate)
 cli.add_command(genesis)

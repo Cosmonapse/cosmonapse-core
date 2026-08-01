@@ -182,7 +182,7 @@ def test_host_regs_applied_once():
 
 def test_effector_registers_with_role_effector():
     """Dendrite.start() announces a hosted Effector on REGISTER with
-    payload.role == "effector" - the discriminator Prism/doppler/the
+    payload.role == "effector" - the discriminator Prism/the
     registry use to classify it distinctly from a Neuron or Engram
     (mirrors the Engram's role="engram" REGISTER)."""
     async def scenario():

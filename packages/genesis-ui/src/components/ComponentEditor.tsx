@@ -21,7 +21,7 @@ import type {
 } from "../types";
 import { kindColor } from "./CanvasNode";
 import { CodeEditor } from "./CodeEditor";
-import { FieldInput } from "./FieldInput";
+import { FieldInput, isBlank } from "./FieldInput";
 import { BehaviorCard, draftFrom, draftOf } from "./BehaviorCard";
 import type { DraftBehavior } from "./BehaviorCard";
 import { ProtocolPicker } from "./ProtocolPicker";
@@ -181,8 +181,8 @@ export function ComponentEditor({
       .then((m) => {
         if (cancelled) return;
         adopt(m);
-        setFields(m.declaration?.fields ?? []);
-        setBackendFields(m.backend?.fields ?? []);
+        setFields(seeded(m.declaration?.fields, m.catalogue?.declaration_fields));
+        setBackendFields(seeded(m.backend?.fields, backendSpecs(m)));
       })
       .catch((e) => !cancelled && setError((e as InitError).error || "Couldn't read that component."));
     return () => {
@@ -237,9 +237,22 @@ export function ComponentEditor({
   const decl = model.declaration;
   const cat = model.catalogue;
   const accent = kindColor()[decl.kind];
-  const declDirty = JSON.stringify(fields) !== JSON.stringify(decl.fields);
-  const backendDirty =
-    !!model.backend && JSON.stringify(backendFields) !== JSON.stringify(model.backend.fields);
+  const fieldSpecs = cat?.declaration_fields ?? [];
+  const backendFieldSpecs = backendSpecs(model);
+
+  // The baseline a form is compared against is the file *plus* the required
+  // keywords this callee takes and the file doesn't set. Switching an Axon
+  // from HuggingFace to Ollama drops the old provider's kwargs and writes
+  // none of the new one's, so without this the one field the call cannot
+  // work without - endpoint=, model= - is offered as a chip at the bottom of
+  // the form, indistinguishable from the optional ones.
+  const declBase = seeded(decl.fields, fieldSpecs);
+  const backendBase = seeded(model.backend?.fields, backendFieldSpecs);
+  const declDirty = JSON.stringify(fields) !== JSON.stringify(declBase);
+  const backendDirty = !!model.backend
+    && JSON.stringify(backendFields) !== JSON.stringify(backendBase);
+  const declMissing = unfilled(fields, fieldSpecs);
+  const backendMissing = model.backend ? unfilled(backendFields, backendFieldSpecs) : [];
 
   const usedProtocols = new Set(model.behaviors.map((b) => b.protocol));
   const usedNames = new Set(model.behaviors.map((b) => b.fn_name));
@@ -254,8 +267,8 @@ export function ComponentEditor({
     const keepBackend = opts.savedForm !== "backend" && backendDirty ? backendFields : null;
     try {
       const m = adopt(await fn(), carry);
-      setFields(keepDecl ?? m.declaration?.fields ?? []);
-      setBackendFields(keepBackend ?? m.backend?.fields ?? []);
+      setFields(keepDecl ?? seeded(m.declaration?.fields, m.catalogue?.declaration_fields));
+      setBackendFields(keepBackend ?? seeded(m.backend?.fields, backendSpecs(m)));
       onChanged();
       return true;
     } catch (e) {
@@ -272,7 +285,10 @@ export function ComponentEditor({
         saveDeclaration({
           path: projectPath,
           file,
-          fields: which === "backend" ? backendFields : fields,
+          fields: written(
+            which === "backend" ? backendFields : fields,
+            which === "backend" ? model?.backend?.fields : model?.declaration?.fields,
+          ),
           which,
         }),
       setDeclError,
@@ -561,7 +577,7 @@ export function ComponentEditor({
         action={
           <>
             {declDirty && (
-              <button onClick={() => setFields(decl.fields)} style={ghost}>
+              <button onClick={() => setFields(declBase)} style={ghost}>
                 revert
               </button>
             )}
@@ -577,10 +593,11 @@ export function ComponentEditor({
       >
         <FormFields
           fields={fields}
-          specs={cat?.declaration_fields ?? []}
+          specs={fieldSpecs}
           names={model.async_fns}
           onChange={setFields}
         />
+        <MissingNote names={declMissing} callee={decl.callee} />
         {declError && <div style={errorStyle}>{declError}</div>}
       </Card>
 
@@ -602,10 +619,11 @@ export function ComponentEditor({
         >
           <FormFields
             fields={backendFields}
-            specs={cat?.declaration_fields ?? []}
+            specs={backendFieldSpecs}
             names={model.async_fns}
             onChange={setBackendFields}
           />
+          <MissingNote names={backendMissing} callee={model.backend.callee} />
         </Card>
       )}
 
@@ -664,6 +682,84 @@ export function ComponentEditor({
       })}
 
       <ReadOnlyChunks chunks={model.other} />
+    </div>
+  );
+}
+
+/**
+ * The delegated storage takes its own keywords, not the declaration's - a
+ * PostgresEngram behind an Engram.serve needs a dsn= that the served half
+ * has never heard of. Older servers don't send the table; falling back to
+ * the declaration's is what this form did before, and it is a subset.
+ */
+function backendSpecs(m: ComponentModel | null): FieldSpec[] {
+  return m?.catalogue?.backend_fields?.length
+    ? m.catalogue.backend_fields
+    : m?.catalogue?.declaration_fields ?? [];
+}
+
+/**
+ * The file's keywords plus every required one it doesn't set, seeded empty.
+ *
+ * A required keyword the module omits is invisible in a form that only
+ * renders what the AST found - it sits in the "add:" row at the bottom
+ * looking exactly like the optional ones. That is how a fresh source lands
+ * in the editor missing the one field it cannot run without: setAxonSource
+ * drops the old provider's kwargs by design, and the new provider's are
+ * never written for it. Seeding is display-only; `written()` below keeps a
+ * row that was never filled out of the file.
+ *
+ * Order follows the field table, and existing rows are never moved, so
+ * saving a form that wasn't edited is still a no-op diff.
+ */
+function seeded(fields: Field[] | undefined, specs: FieldSpec[] | undefined): Field[] {
+  const out = [...(fields ?? [])];
+  if (!specs?.length) return out;
+  const rank = new Map(specs.map((s, i) => [s.name, i]));
+  const present = new Set(out.map((f) => f.name));
+  for (const s of specs) {
+    if (!s.required || present.has(s.name)) continue;
+    const row: Field = {
+      name: s.name,
+      type: s.type === "string" ? "none" : s.type,
+      value: s.type === "string_list" ? [] : s.type === "string" ? null : "",
+    };
+    const at = out.findIndex((f) => (rank.get(f.name) ?? Infinity) > (rank.get(s.name) ?? 0));
+    out.splice(at === -1 ? out.length : at, 0, row);
+  }
+  return out;
+}
+
+/** Required keywords still sitting empty - named so the note can list them. */
+function unfilled(fields: Field[], specs: FieldSpec[]): string[] {
+  const required = new Set(specs.filter((s) => s.required).map((s) => s.name));
+  return fields.filter((f) => required.has(f.name) && isBlank(f)).map((f) => f.name);
+}
+
+/**
+ * What actually goes back into the file: everything the module already had,
+ * plus what the user filled in. A seeded row left blank - or an optional one
+ * added from a chip and then ignored - would otherwise be written as
+ * `model=None`, which is a worse call than the one that omits it.
+ */
+function written(fields: Field[], onDisk: Field[] | undefined): Field[] {
+  const had = new Set((onDisk ?? []).map((f) => f.name));
+  return fields.filter((f) => had.has(f.name) || !isBlank(f));
+}
+
+/** Says out loud what the highlighted boxes above are waiting for. */
+function MissingNote({ names, callee }: { names: string[]; callee: string }) {
+  if (names.length === 0) return null;
+  return (
+    <div style={{ fontSize: 13, color: C.warn, marginTop: 4, lineHeight: 1.5 }}>
+      {callee} needs{" "}
+      {names.map((n, i) => (
+        <span key={n}>
+          {i > 0 && (i === names.length - 1 ? " and " : ", ")}
+          <code style={{ fontFamily: MONO }}>{n}</code>
+        </span>
+      ))}
+      . Left empty {names.length === 1 ? "it isn't" : "they aren't"} written to the file at all.
     </div>
   );
 }

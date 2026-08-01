@@ -60,7 +60,7 @@ export function ConnectForm({ initial, onConnect, onCancel }: Props) {
           </div>
         </div>
         <p style={{ color: C.textDim, fontWeight: 600, fontSize: 15, margin: "8px 0 22px" }}>
-          Drop a synapse link. Prism attaches a read-only Doppler and visualizes every
+          Drop a synapse link. Prism attaches a read-only observer and visualizes every
           signal live.
         </p>
 

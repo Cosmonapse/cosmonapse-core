@@ -97,6 +97,8 @@ export interface FieldSpec {
   required: boolean;
   suggest: string[];
   placeholder: string;
+  /** A credential: masked in the form, with a reveal toggle. */
+  secret?: boolean;
 }
 
 export interface Declaration {
@@ -162,6 +164,8 @@ export interface Catalogue {
   kind: ComponentKind;
   shape: string;
   declaration_fields: FieldSpec[];
+  /** The delegated backend's own keywords - PostgresEngram's dsn=, and so on. */
+  backend_fields?: FieldSpec[];
   own: ProtocolGroup[];
   host: ProtocolGroup[];
   own_empty_reason: string | null;

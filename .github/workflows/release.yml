@@ -10,7 +10,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # --- 1. Python SDK -> PyPI ---------------------------------------------------
+  # --- Python SDK -> PyPI ------------------------------------------------------
   publish-python:
     name: Publish Python SDK to PyPI
     runs-on: ubuntu-latest
@@ -54,39 +54,3 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: packages/python-sdk/dist/
-
-  # --- 2. TypeScript SDK -> npm ------------------------------------------------
-  publish-npm:
-    name: Publish TS SDK to npm
-    runs-on: ubuntu-latest
-    permissions:
-      id-token: write   # needed for OIDC trusted publishing
-    defaults:
-      run:
-        working-directory: packages/ts-sdk
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          # npm OIDC trusted publishing needs npm CLI >= 11.5.1; Node 24 ships npm 11.x.
-          node-version: "24"
-          registry-url: "https://registry.npmjs.org"
-          cache: npm
-          cache-dependency-path: packages/ts-sdk/package-lock.json
-
-      - name: Install
-        run: npm ci || npm install
-
-      - name: Set version from tag
-        # Mirror the Python side: the npm version is the tag, set at publish time
-        # rather than committed. `v0.1.1` -> `0.1.1`.
-        run: npm version "${GITHUB_REF_NAME#v}" --no-git-tag-version --allow-same-version
-
-      - name: Build
-        run: npm run build
-
-      - name: Publish
-        run: npm publish --access public --provenance
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

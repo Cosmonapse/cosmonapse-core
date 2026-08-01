@@ -154,6 +154,7 @@ class Axon(LifecycleHooks):
         neuron_id: str,
         neuron_fn: NeuronFn,
         capabilities: list[str] | None = None,
+        catch_all: bool = False,
         version: str | None = None,
         neuron_kind: str = "neuron",
         context_fetcher: ContextFetcher | None = None,
@@ -165,6 +166,12 @@ class Axon(LifecycleHooks):
         LifecycleHooks.__init__(self)
         self.neuron_id = neuron_id
         self.capabilities = capabilities or []
+        # Answer TASKs that name neither a neuron nor any capability - the
+        # open call (see Dendrite.dispatch_task). Off by default: an Axon
+        # silently widening its own inbox is the kind of surprise that makes
+        # a namespace hard to reason about, so it has to be asked for. It
+        # changes nothing about addressed or capability-routed delivery.
+        self.catch_all = catch_all
         self.version = version
         # The participant kind carried on REGISTER as ``directed.type`` -
         # the Neuron-side analogue of an Engram's ``engram_kind``. Defaults

@@ -1,7 +1,7 @@
 """
 cosmo.commands._prism
 ~~~~~~~~~~~~~~~~~~~~~~~
-Prism  -  the browser visualization for the Doppler.
+Prism  -  the browser visualization for a Synapse namespace.
 
 Architecture
 ------------
@@ -84,7 +84,7 @@ the UI yet.</p>
 
 
 # ---------------------------------------------------------------------------
-# Synapse factory (mirrors the one in doppler.py  -  kept here to avoid an
+# Synapse factory (mirrors the one in prism.py  -  kept here to avoid an
 # import cycle and so this module is fully self-contained).
 # ---------------------------------------------------------------------------
 
@@ -160,7 +160,7 @@ async def run_prism(
         from aiohttp import web
     except ImportError:
         click.echo(
-            "  aiohttp is required for --prism mode.\n"
+            "  aiohttp is required to serve Prism.\n"
             "  Install it with: pip install aiohttp\n",
             err=True,
         )
@@ -294,7 +294,7 @@ async def run_prism(
     ui_url = f"http://127.0.0.1:{port}"
     if _HAS_RICH:
         console.print()
-        console.print("  [bold cyan]cosmo doppler[/bold cyan]  [dim]--prism[/dim]")
+        console.print("  [bold cyan]cosmo prism[/bold cyan]")
         if initial_base_url:
             console.print(
                 f"  Synapse:   [cyan]{initial_base_url}/{initial_namespace or 'dev'}[/cyan]"
@@ -307,7 +307,7 @@ async def run_prism(
         console.print("  " + "-" * 60)
         console.print()
     else:
-        print("\n  cosmo doppler --prism")
+        print("\n  cosmo prism")
         if initial_base_url:
             print(f"  Synapse: {initial_base_url}/{initial_namespace or 'dev'}")
         else:

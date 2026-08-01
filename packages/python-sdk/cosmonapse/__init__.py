@@ -175,6 +175,7 @@ from cosmonapse.effector import (
 )
 from cosmonapse.receptor import (
     CliReceptor,
+    run_brain,
     run_receptors,
     DispatchMode,
     Receptor,
@@ -323,6 +324,7 @@ __all__ = [
     "ReceptorError",
     "ReceptorTimeout",
     "ReceptorUnbound",
+    "run_brain",
     "run_receptors",
 ]
 

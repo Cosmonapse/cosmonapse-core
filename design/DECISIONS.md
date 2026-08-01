@@ -30,7 +30,7 @@ Record of every significant design decision made during the Cosmonapse architect
 | **Cortex**                 | A Dendrite plus the minimum primitives to act as an orchestrator (dispatch_task / emit_final / inbound handlers / registry). |
 | **RegistryStore**          | The one mandatory persistent surface; namespaces' live Neuron view.                      |
 | **Synapse adapters**     | Memory, dev-synapse (TCP), NATS, Kafka.                                                  |
-| **`cosmo` CLI**            | `cosmo dev synapse` for local dev; `cosmo doppler`, `cosmo validate` for tooling.        |
+| **`cosmo` CLI**            | `cosmo dev synapse` for local dev; `cosmo prism`, `cosmo validate` for tooling.        |
 
 Nothing else.
 
@@ -181,7 +181,7 @@ The new signal *types* (`PERMISSION`, `PERMISSION_DECISION`, `CLARIFICATION_ANSW
 
 ## 13. The Doppler
 
-**Decision:** The Doppler is not an SDK primitive. It is just a process that subscribes to the Synapse using the Synapse's `subscribe` method without a `queue_group`. Cosmonapse ships `cosmo doppler` as the built-in Doppler; developers build their own visualisations the same way.
+**Decision:** The Doppler is not an SDK primitive. It is just a process that subscribes to the Synapse using the Synapse's `subscribe` method without a `queue_group`. Cosmonapse ships `cosmo prism --tail` as the built-in Doppler; developers build their own visualisations the same way.
 
 **Passive constraint:** A Doppler process must never publish to the channel. All adapters connect non-queue subscribers as non-competing consumer groups so they cannot block delivery to Dendrites or Cortices.
 
@@ -197,7 +197,9 @@ The new signal *types* (`PERMISSION`, `PERMISSION_DECISION`, `CLARIFICATION_ANSW
 
 ## 15. Build approach
 
-**Decision:** Python SDK first, TypeScript SDK later. Monorepo. In-memory synapse before any real synapse.
+**Decision:** Python SDK first. Monorepo. In-memory synapse before any real synapse.
+
+> Superseded in part by **#19** - the TypeScript SDK shipped and was later retired.
 
 **Build order (delivered in v0.2):**
 
@@ -227,12 +229,12 @@ The new signal *types* (`PERMISSION`, `PERMISSION_DECISION`, `CLARIFICATION_ANSW
 ## 16. Version roadmap
 
 **v0.1.0 (current):** First public release. Manual SDK  -  developer reads the spec
-and builds Dendrites by hand. Ships the Python SDK (reference implementation), a
-preview TypeScript SDK, the `cosmo` CLI, Engram shared memory, Pathways,
+and builds Dendrites by hand. Ships the Python SDK (the single reference
+implementation), the `cosmo` CLI, Engram shared memory, Pathways,
 capability-routed dispatch, and competitive bidding. Full control, full
 complexity, appropriate for early adopters. The detailed, milestone-by-milestone
 path from here to **1.0.0** (stabilisation: CI, machine-readable schema, broker
-integration tests, TS parity) lives in [`ROADMAP.md`](./ROADMAP.md).
+integration tests) lives in [`ROADMAP.md`](./ROADMAP.md).
 
 **Post-1.0 direction (indicative, not committed):**
 
@@ -247,11 +249,9 @@ integration tests, TS parity) lives in [`ROADMAP.md`](./ROADMAP.md).
 
 ## 17. Things deliberately excluded from the 0.x line
 
-The TypeScript SDK was previously listed here as excluded ("post Python
-stabilisation"). It now ships as a preview alongside the Python SDK in 0.1.0;
-its remaining parity gaps are tracked in
-[`packages/ts-sdk/PORTING_STATUS.md`](./packages/ts-sdk/PORTING_STATUS.md), not
-here.
+A first-party TypeScript SDK shipped as a preview during 0.1.x and was retired
+again  -  see **#19**. Second-language SDKs are out of scope for the 0.x line;
+the envelope spec is the contract for anyone who wants to write one.
 
 | Excluded                          | Reason                                            |
 |---|---|
@@ -281,3 +281,27 @@ All internal and external naming uses these terms.
 | **Doppler** | Watcher / observer      | Passive read-only listener                                                |
 | **RegistryStore** | Local DB           | Live view of Neurons (capabilities, status, heartbeat)                    |
 | **LifecycleHooks** | Mixin             | 
+
+---
+
+## 19. One reference implementation (TypeScript SDK retired)
+
+**Decision:** Python is the single first-party SDK. `packages/ts-sdk` and the
+published `@cosmonapse/sdk` npm package are retired; the last state of the code
+lives on the `archive/ts-sdk` branch.
+
+**Why:** two first-party SDKs meant every protocol change had to land twice
+before it could be documented as shipped, and the parity table became a
+standing tax on every feature. The value the second SDK was supposed to prove
+- that the protocol is language-agnostic - is already carried by the envelope
+spec plus `cosmo schema`, which is what a third-party implementation actually
+builds against.
+
+**What does not change:** the wire format. Nothing in the envelope is
+Python-specific, and a component in any language that emits and accepts valid
+Signals is a full participant on the bus. The `cosmo` CLI is unaffected - it
+always had exactly one implementation, shipped in the Python package.
+
+**Consequence:** "parity" disappears as a release gate. `ROADMAP.md` milestone
+0.5.0 is dropped, and the docs site keeps `/docs/typescript/*` alive as 308
+redirects into the Python reference so external links do not rot.

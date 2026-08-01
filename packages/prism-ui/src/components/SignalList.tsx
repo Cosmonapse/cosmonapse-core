@@ -53,6 +53,77 @@ function taskDuration(task: TaskGroup): number {
   return Math.max(0, ts(sigs[sigs.length - 1]) - ts(sigs[0]));
 }
 
+function taskStatus(task: TaskGroup): string {
+  const sigs = ownSignals(task);
+  if (sigs.some((s) => s.type === "ERROR")) return "error";
+  if (sigs.some((s) => s.type === "FINAL")) return "final";
+  return "open";
+}
+
+function taskTitle(task: TaskGroup): string {
+  return task.hint || task.taskSig?.directed?.id || task.trace.slice(0, 16);
+}
+
+/** Render one signal node (and its lineage) as indented plain text with the
+ *  full envelope expanded. */
+function sigToText(node: SigNode, depth: number, out: string[]): void {
+  const pad = "  ".repeat(depth);
+  const s = node.sig;
+  out.push(`${pad}- ${s.type}  ${s.directed?.id || "\u2014"}  ${safeTime(s.ts)}`);
+  const json = JSON.stringify(s, null, 2)
+    .split("\n")
+    .map((l) => `${pad}    ${l}`)
+    .join("\n");
+  out.push(json);
+  for (const c of node.children) sigToText(c, depth + 1, out);
+}
+
+/** Full plain-text dump of a task subtree: every signal, every envelope. */
+function taskToText(task: TaskGroup, depth: number, out: string[]): void {
+  const pad = "  ".repeat(depth);
+  const label = depth > 0 || task.depth > 0 ? "SUBTASK" : "TASK";
+  out.push("");
+  out.push(`${pad}${"=".repeat(72 - pad.length)}`);
+  out.push(`${pad}${label}: ${taskTitle(task)}`);
+  out.push(`${pad}trace:    ${task.trace}`);
+  out.push(`${pad}status:   ${taskStatus(task)}`);
+  out.push(`${pad}duration: ${fmtMs(taskDuration(task))}`);
+  out.push(`${pad}signals:  ${task.count} own / ${task.subtreeCount} subtree`);
+  out.push(`${pad}${"=".repeat(72 - pad.length)}`);
+  // The TASK envelope itself — the tree view peels it off (it *is* the header),
+  // but an export that drops it loses the run's root and its dispatch metadata.
+  if (task.taskSig) sigToText({ sig: task.taskSig, children: [] }, depth + 1, out);
+  for (const n of ownSignalForest(task)) sigToText(n, depth + 1, out);
+  for (const c of task.children) taskToText(c, depth + 1, out);
+}
+
+function slugify(s: string): string {
+  return (
+    s
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 48) || "task"
+  );
+}
+
+function downloadTask(task: TaskGroup): void {
+  const out: string[] = [
+    `Cosmonapse \u00b7 Prism signal trace`,
+    `exported: ${new Date().toISOString()}`,
+  ];
+  taskToText(task, 0, out);
+  const blob = new Blob([out.join("\n") + "\n"], { type: "text/plain;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `${slugify(taskTitle(task))}-${task.trace.slice(0, 8)}.txt`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
 export function SignalList({ signals }: Props) {
   const grouped = useMemo(() => groupSignals(signals), [signals]);
   // Collapsed group keys (default expanded). Full-envelope keys (default off).
@@ -189,6 +260,27 @@ export function SignalList({ signals }: Props) {
             <Badge>{task.children.length} child{task.children.length === 1 ? "" : "ren"}</Badge>
           )}
           <span style={{ fontFamily: MONO, fontSize: 13, color: statusColor, flexShrink: 0 }}>● {status}</span>
+          <span
+            title="Download this task's full trace as text"
+            onClick={(e) => {
+              e.stopPropagation();
+              downloadTask(task);
+            }}
+            style={{
+              fontFamily: MONO,
+              fontSize: 12.5,
+              color: C.textFaint,
+              border: "1px solid " + C.border,
+              background: "rgba(var(--fg-rgb), 0.04)",
+              borderRadius: 5,
+              padding: "1px 7px",
+              flexShrink: 0,
+              cursor: "pointer",
+              whiteSpace: "nowrap",
+            }}
+          >
+            ↓ txt
+          </span>
         </div>
 
         {open && (

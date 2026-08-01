@@ -14,7 +14,7 @@ Usage
     cosmo genesis --port=8080
 
 The heavy lifting (SPA + local API for folder browsing and scaffolding)
-lives in cosmo/commands/_genesis.py, the same split doppler/_prism.py uses.
+lives in cosmo/commands/_genesis.py, the same split prism/_prism.py uses.
 """
 
 from __future__ import annotations

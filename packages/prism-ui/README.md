@@ -1,8 +1,8 @@
 # Prism UI
 
-The browser visualization for the Cosmonapse Doppler. A Vite + React + TypeScript
+The browser visualization for a Cosmonapse Synapse. A Vite + React + TypeScript
 single-page app. The built static bundle is shipped inside the `cosmonapse`
-Python wheel and served by `cosmo doppler --prism`.
+Python wheel and served by `cosmo prism`.
 
 ## How it fits together
 
@@ -13,7 +13,7 @@ packages/prism-ui/            ← this app (source of truth for the UI)
         ▼
 packages/python-sdk/cosmo/commands/prism_dist/   ← bundled into the wheel
         ▲
-   cosmo doppler --prism      → aiohttp serves prism_dist/ + the /ws bridge
+   cosmo prism                → aiohttp serves prism_dist/ + the /ws bridge
 ```
 
 The Python side never templates HTML. It serves the static files and exposes a
@@ -26,7 +26,7 @@ entire API between the CLI bridge and this app.
 1. Start a Prism bridge from the SDK so the WS endpoint is live:
 
    ```bash
-   cosmo doppler --prism            # serves on http://127.0.0.1:7071
+   cosmo prism                      # serves on http://127.0.0.1:7071
    ```
 
 2. In another terminal, run the Vite dev server (it proxies `/ws` to 7071):

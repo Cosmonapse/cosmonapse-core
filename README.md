@@ -7,9 +7,7 @@
 **Event-driven Agent-to-Agent protocol - agents are plain functions, coordination is messages, there is no orchestrator**
 
 [![Python](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)](https://www.python.org/)
-[![TypeScript](https://img.shields.io/badge/TypeScript-SDK-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![PyPI](https://img.shields.io/pypi/v/cosmonapse?color=8B5CF6&label=PyPI&logo=pypi&logoColor=white)](https://pypi.org/project/cosmonapse/)
-[![npm](https://img.shields.io/npm/v/@cosmonapse/sdk?color=CB3837&label=npm&logo=npm&logoColor=white)](https://www.npmjs.com/package/@cosmonapse/sdk)
 [![License](https://img.shields.io/badge/license-Apache%202.0-D946EF.svg)](LICENSE)
 [![Transports](https://img.shields.io/badge/transports-in--memory%20%7C%20TCP%20%7C%20NATS%20%7C%20Kafka-7C3AED)](#synapse-transports)
 
@@ -19,7 +17,7 @@
 
 ---
 
-Cosmonapse is an event-driven **Agent-to-Agent (A2A) protocol** with a Python SDK, a TypeScript SDK, and a developer CLI (`cosmo`). It models multi-agent systems on a nervous system instead of a supervisor: agents are pure functions that emit and react to messages on a shared bus, so you grow a system by adding nodes - not by editing a central orchestrator.
+Cosmonapse is an event-driven **Agent-to-Agent (A2A) protocol** with a Python SDK and a developer CLI (`cosmo`). It models multi-agent systems on a nervous system instead of a supervisor: agents are pure functions that emit and react to messages on a shared bus, so you grow a system by adding nodes - not by editing a central orchestrator.
 
 [PyPI](https://pypi.org/project/cosmonapse/) · [Envelope Spec](design/ENVELOPE_SPEC.md) · [SDK Design](design/SDK_DESIGN.md) · [Roadmap](design/ROADMAP.md) · [Contributing](CONTRIBUTING.md) · [Changelog](CHANGELOG.md)
 
@@ -120,7 +118,7 @@ Cosmonapse removes the orchestrator and makes responsibilities explicit:
 
 ## What You Can Do Today
 
-- Define agents as plain Python (or TypeScript) functions and attach them with a single Axon
+- Define agents as plain Python functions and attach them with a single Axon
 - Dispatch and react to work from any node - no central orchestrator class required
 - Run the same code across in-memory, local TCP, NATS, and Kafka transports
 - Pause an agent to request a clarification or permission and have a peer answer it
@@ -135,8 +133,7 @@ Choose the shortest path that matches how you want to use Cosmonapse.
 | Surface | Best for | Start |
 | --- | --- | --- |
 | Python SDK | Building and running agents | `pip install cosmonapse` |
-| TypeScript SDK | Node / browser agents | `npm install @cosmonapse/sdk` |
-| CLI | Terminal-first workflows | one build; `pip install cosmonapse` or `npm i -g @cosmonapse/sdk` |
+| CLI | Terminal-first workflows | `pip install cosmonapse` |
 
 ### Install (Python)
 
@@ -171,47 +168,11 @@ cosmo synapse start memory --namespace=demo
 SYNAPSE_URL=cosmo://127.0.0.1:7070 python demo.py
 ```
 
-### Install (TypeScript)
-
-```bash
-npm install @cosmonapse/sdk
-```
-
-The `cosmo` CLI has a single implementation, shipped in the Python package -
-there is exactly one CLI build, so pip and npm users always run identical
-tooling. The npm package includes a `cosmo` launcher that installs and runs
-it for you:
-
-```bash
-npm install -g @cosmonapse/sdk
-cosmo --help
-```
-
-On first run the launcher looks for a Python that already has `cosmonapse`
-installed and delegates to it (`python -m cosmo`). If none is found, it
-bootstraps automatically: it creates a private environment under
-`~/.cosmonapse/cli-venv` and pip-installs `cosmonapse` pinned to the npm
-package's version, so the two stay in lockstep. The only requirement is a
-Python 3.11+ interpreter on PATH (`$COSMO_PYTHON` overrides discovery). If
-you already `pip install cosmonapse`, its own `cosmo` entry point is the same
-code and the launcher simply defers to it.
-
-To work against a local checkout of the SDK:
-
-```bash
-cd packages/ts-sdk
-npm install
-npm run build   # builds dist/index.{js,cjs,d.ts}
-```
-
-See [`packages/ts-sdk/README.md`](packages/ts-sdk/README.md) for full SDK documentation.
-
 ## Repository Map
 
 | Path | Purpose |
 | --- | --- |
 | `packages/python-sdk/` | The `cosmonapse` SDK and bundled `cosmo` CLI |
-| `packages/ts-sdk/` | TypeScript SDK (+ `cosmo` launcher for npm installs) |
 | `packages/prism-ui/` | Prism UI |
 | `examples/` | Runnable end-to-end examples |
 | `design/SDK_DESIGN.md` | Design rationale |
@@ -223,7 +184,6 @@ See [`packages/ts-sdk/README.md`](packages/ts-sdk/README.md) for full SDK docume
 ## Documentation
 
 - [Python SDK README](packages/python-sdk/README.md) - install, quick start, API, CLI
-- [TypeScript SDK README](packages/ts-sdk/README.md) - install, quick start, API, CLI
 - [SDK_DESIGN.md](design/SDK_DESIGN.md) - design rationale
 - [ENVELOPE_SPEC.md](design/ENVELOPE_SPEC.md) - the Signal wire format
 - [ENGRAM_DESIGN.md](design/ENGRAM_DESIGN.md) - shared memory design

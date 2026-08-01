@@ -10,8 +10,8 @@ Covered:
   * the trio: send / wait / stream all reach the same Neuron
   * input shaping (input_key, @on_input) and result shaping (@on_result)
   * @on_signal progress hooks fire on the intermediate Signals
-  * ERROR -> ReceptorError, deadline -> ReceptorTimeout, no target ->
-    ReceptorUnbound
+  * ERROR -> ReceptorError, deadline -> ReceptorTimeout, no Dendrite ->
+    ReceptorUnbound, no target -> an open call
   * CliReceptor builds argparse from the command signature, routes a bare
     goal to the default command, and answers local commands without
     dispatching
@@ -246,8 +246,9 @@ async def test_on_failure_can_swallow(stack):
 
 async def test_on_failure_never_swallows_a_wiring_mistake(stack):
     # ReceptorUnbound is a bug in the caller's wiring, not a runtime
-    # failure - a hook must not be able to hide it.
-    rx = _Rx(dendrite=stack.orch)
+    # failure - a hook must not be able to hide it. An unbound *Dendrite*
+    # is that mistake; an unset target is not (see the open-call tests).
+    rx = _Rx(neuron="echo")
 
     @rx.on_failure
     def caught(exc):
@@ -257,10 +258,31 @@ async def test_on_failure_never_swallows_a_wiring_mistake(stack):
         await rx.ask("nowhere")
 
 
-async def test_no_target_raises_unbound(stack):
+async def test_no_target_is_an_open_call(stack):
+    # Neither neuron= nor capabilities= is legal: the TASK goes out
+    # unaddressed rather than raising. The stack's Axon is an ordinary one,
+    # so nothing answers and the deadline is what surfaces.
     rx = _Rx(dendrite=stack.orch)
-    with pytest.raises(ReceptorUnbound):
-        await rx.send("nowhere")
+    sig = await rx.send("to whoever wants it")
+    assert sig.type is SignalType.TASK
+    assert sig.directed is None
+    assert not (sig.payload.get("capabilities") or [])
+
+    with pytest.raises(ReceptorTimeout):
+        await rx.ask("to whoever wants it", timeout_s=0.3)
+
+
+async def test_open_call_reaches_a_catch_all_axon(stack):
+    # ...and with an Axon that opted in, the same untargeted ask resolves.
+    async def anyone(payload: dict, context: dict | None = None) -> dict:
+        return {"reply": "caught"}
+
+    await stack.worker.add_axon(Axon(
+        neuron_id="sponge", neuron_fn=anyone, catch_all=True, version="0.0.1",
+    ))
+
+    rx = _Rx(dendrite=stack.orch)
+    assert (await rx.ask("to whoever wants it", timeout_s=5))["reply"] == "caught"
 
 
 async def test_per_call_target_overrides_the_constructor(stack):
@@ -674,8 +696,13 @@ async def test_run_returns_the_finishing_receptors_exit_code(stack):
     assert await rx.run(["hello"]) == 0
 
 
-async def test_first_to_finish_cancels_the_rest(stack):
-    """`:quit` in a foreground terminal must bring the whole process down."""
+async def test_a_finished_interface_does_not_end_the_brain(stack):
+    """Rule 2: `:quit` closes a REPL, it does not kill the brain.
+
+    The Receptor is one of four attachments, so one of them finishing must
+    leave its siblings serving and the process up. Only a signal ends it,
+    which from in here looks like cancellation - hence the wait_for.
+    """
     from cosmonapse.receptor.runner import run_receptors
 
     cancelled = []
@@ -693,10 +720,75 @@ async def test_first_to_finish_cancels_the_rest(stack):
                 raise
             return 0
 
-    code = await run_receptors(_Quick(dendrite=stack.orch),
+    with pytest.raises(asyncio.TimeoutError):
+        await asyncio.wait_for(
+            run_receptors(_Quick(dendrite=stack.orch),
+                          _Forever(dendrite=stack.orch)),
+            timeout=0.3,
+        )
+    # the sibling was still serving when the deadline hit, and only then
+    # was it cancelled - not by _Quick returning 7
+    assert cancelled == [True]
+
+
+async def test_every_interface_finishing_idles_rather_than_exiting(stack):
+    """Rule 4: nothing left to serve is a headless node, not an exit."""
+    from cosmonapse.receptor.runner import run_receptors
+
+    class _Quick(_Rx):
+        async def run(self) -> int:
+            return 0
+
+    with pytest.raises(asyncio.TimeoutError):
+        await asyncio.wait_for(
+            run_receptors(_Quick(dendrite=stack.orch),
+                          _Quick(dendrite=stack.orch)),
+            timeout=0.3,
+        )
+
+
+async def test_a_one_shot_invocation_does_end_the_brain(stack):
+    """The exception to rule 2: the interface *is* the invocation."""
+    from cosmonapse.receptor.runner import run_receptors
+
+    class _OneShot(_Rx):
+        async def run(self) -> int:
+            self.ends_process = True
+            return 7
+
+    class _Forever(_Rx):
+        async def run(self) -> int:
+            await asyncio.Event().wait()
+            return 0
+
+    code = await run_receptors(_OneShot(dendrite=stack.orch),
                                _Forever(dendrite=stack.orch))
     assert code == 7
-    assert cancelled == [True]
+
+
+async def test_cli_marks_a_command_as_ending_the_process_but_not_a_repl(stack):
+    """Which of the two a CliReceptor is depends only on argv."""
+    rx = CliReceptor(dendrite=stack.orch, neuron="echo", prog="t")
+
+    @rx.command()
+    def ask(prompt: str):
+        return {"prompt": prompt}
+
+    assert rx.ends_process is False
+    assert await rx.run(["ask", "hi"]) == 0
+    assert rx.ends_process is True          # one-shot: invocation over
+
+    # --help is a command-line invocation too, so it ends the process
+    helped = CliReceptor(dendrite=stack.orch, neuron="echo", prog="t2")
+    helped.command()(ask)
+    assert await helped.run(["--help"]) == 0
+    assert helped.ends_process is True
+
+    # A REPL is the other branch and never sets it. Not exercised here:
+    # repl() reads with input() in an executor, which has no stdin under
+    # pytest's capture. Rule 2 for long-lived interfaces is covered at the
+    # runner level by test_a_finished_interface_does_not_end_the_brain.
+    assert CliReceptor(dendrite=stack.orch, neuron="echo").ends_process is False
 
 
 async def test_a_crashing_receptor_surfaces_not_the_exit_code(stack):
@@ -780,3 +872,80 @@ async def test_receptor_names_are_exported():
                  "ReceptorError", "ReceptorTimeout", "ReceptorUnbound"):
         assert name in cosmonapse.__all__
         assert getattr(cosmonapse, name) is not None
+
+
+# ---------------------------------------------------------------------------
+# run_brain: the brain-level entry
+# ---------------------------------------------------------------------------
+
+
+async def test_run_brain_starts_every_node_and_serves_their_interfaces():
+    """One Dendrite per node, and the brain is what runs.
+
+    Dendrite.run() is Dendrite-scoped, so using it as an entry makes one node
+    the thing the process exists for - and with a node per component there is
+    no single one to call it on. Note neither node is started by hand here:
+    run_brain owns that, and starts every node before serving any interface,
+    which is what lets the interface below reach an Axon on the *other* node.
+    """
+    from cosmonapse import MemoryRegistryStore, run_brain
+
+    synapse = MemorySynapse()
+    await synapse.connect()
+
+    worker = Dendrite(synapse=synapse, namespace="brain",
+                      dendrite_id="hello-node", role="worker")
+    worker.attach_axon(Axon(neuron_id="echo", neuron_fn=echo_neuron,
+                            capabilities=["chat"], version="0.0.1"))
+
+    edge = Dendrite(synapse=synapse, namespace="brain",
+                    dendrite_id="terminal-node", heartbeat_s=0,
+                    registry_store=MemoryRegistryStore())
+
+    seen = []
+
+    class _Probe(_Rx):
+        async def run(self) -> int:
+            seen.append(await self.ask("hi", timeout_s=5))
+            self.ends_process = True
+            return 3
+
+    edge.attach_receptor(_Probe(dendrite=edge, neuron="echo"))
+    try:
+        assert await run_brain(worker, edge) == 3
+        assert seen[0]["reply"] == "echo: hi"
+    finally:
+        await synapse.close()
+
+
+async def test_run_brain_with_no_interfaces_is_a_headless_brain(stack):
+    """Nodes hosting only Axons/Engrams/Effectors mount nothing to serve."""
+    from cosmonapse import run_brain
+
+    synapse = MemorySynapse()
+    await synapse.connect()
+    worker = Dendrite(synapse=synapse, namespace="brain2",
+                      dendrite_id="n", role="worker")
+    worker.attach_axon(Axon(neuron_id="e", neuron_fn=echo_neuron))
+    try:
+        with pytest.raises(asyncio.TimeoutError):
+            await asyncio.wait_for(run_brain(worker), timeout=0.3)
+    finally:
+        await synapse.close()
+
+
+async def test_two_terminal_receptors_warn_about_stdin(stack, caplog):
+    """Adding a second CLI interface is a one-click mistake in Genesis."""
+    import logging
+    from cosmonapse.receptor.runner import _warn_on_contended_stdin
+
+    a = CliReceptor(dendrite=stack.orch, neuron="echo", prog="a")
+    b = CliReceptor(dendrite=stack.orch, neuron="echo", prog="b")
+    with caplog.at_level(logging.WARNING):
+        _warn_on_contended_stdin((a, b))
+    assert "race for your input" in caplog.text
+
+    caplog.clear()
+    with caplog.at_level(logging.WARNING):
+        _warn_on_contended_stdin((a,))
+    assert caplog.text == ""

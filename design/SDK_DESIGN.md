@@ -19,7 +19,6 @@ The SDK is the ergonomic skin over the **Cosmonapse Protocol**. Anything an appl
 - Be synapse-agnostic. The application should not know whether the runtime is backed by NATS, Kafka, or a local dev TCP broker.
 - Be model-agnostic. The SDK does not know or care which LLM is producing thought.
 - Make peer-to-peer and centralised orchestration equally first-class.
-- Match the Python and TypeScript surfaces 1:1 wherever the language allows.
 
 ### 1.2 Non-goals
 
@@ -274,8 +273,6 @@ axon = Axon(
 | `"huggingface"` / `"hf"` | `endpoint` *(required)*, `model`, `use_chat_api`, `temperature`, `max_new_tokens`, `api_key`, `timeout` | LLM. Uses `/generate` (native TGI) or `/v1/chat/completions` (OpenAI compat). Needs `httpx`. |
 | `"mcp"` | `command`+`args` **or** `server`+`args`, plus `env`, `cwd`, `tool` | MCP server. Spawns any stdio MCP server and exposes its tools; input is `{tool, arguments}` (or `{"__list_tools__": True}`). Returns `{response, result, is_error, content, meta}`. Wrapper only  -  does not implement a server. Needs `mcp`. Standard launch presets in `STANDARD_MCP_SERVERS`. |
 
-**TypeScript:** the same sources are available as `mcpNeuron(opts)`, `ollamaNeuron(opts)`, `huggingFaceNeuron(opts)`, plus a unified `neuron(source, opts)` dispatcher and `standardMcpServers`. The MCP client uses `@modelcontextprotocol/sdk` (an optional peer dependency, imported lazily). (There is no `expressNeuron`  -  an HTTP API is not a Neuron.)
-
 **Input dict keys** (passed via `dispatch_task(input=...)`):
 
 - `prompt` (str)  -  plain-text single-turn.
@@ -382,7 +379,7 @@ synapse = await connect_synapse("cosmo://127.0.0.1:7070")
 **Doppler (passive watcher)**
 
 ```bash
-cosmo doppler --url=cosmo://127.0.0.1:7070 --namespace=dev
+cosmo prism --tail --url=cosmo://127.0.0.1:7070 --namespace=dev
 ```
 
 **Envelope validation**
@@ -508,15 +505,13 @@ Envelope `v="1"`. SemVer-major changes are protocol-breaking; minor additions (n
 - WebAssembly synapse for in-browser Neurons.
 - Built-in fine-tuning data export.
 
-The TypeScript SDK is **shipping at v0.2** with full envelope/codec, all signal builders, `MemorySynapse`, `NatsSynapse`, in-memory `RegistryStore`, `Neuron`/`Axon`/`Dendrite` ports. Still to port in a future release: `KafkaSynapse`, `SqliteRegistryStore` / `PostgresRegistryStore`, and provider-backed `Neuron` factories.
-
 ---
 
 ## 10. Roadmap
 
-**v0.2 (this release)**  -  Axon / Dendrite / Cortex alias; Neuron provider factories (Ollama, HuggingFace); RegistryStore + memory/sqlite/postgres; memory/dev/NATS/Kafka synapses; `cosmo synapse start|view|stop`, `cosmo doppler`, `cosmo validate`; lifecycle hooks; `connect_synapse` URL helper. TypeScript SDK: envelope, builders, MemorySynapse, NatsSynapse, RegistryStore mirror, Axon, Dendrite, Neuron contract.
+**v0.2 (this release)**  -  Axon / Dendrite / Cortex alias; Neuron provider factories (Ollama, HuggingFace); RegistryStore + memory/sqlite/postgres; memory/dev/NATS/Kafka synapses; `cosmo synapse start|view|stop`, `cosmo prism`, `cosmo validate`; lifecycle hooks; `connect_synapse` URL helper.
 
-**v0.3**  -  Axon as MCP server; `cosmo dev cortex` and `cosmo dev dendrite` scaffold subcommands; durable REGISTER replay on join; TypeScript: KafkaSynapse, SqliteRegistryStore/PostgresRegistryStore, provider-backed Neuron factories.
+**v0.3**  -  Axon as MCP server; `cosmo dev cortex` and `cosmo dev dendrite` scaffold subcommands; durable REGISTER replay on join.
 
 **v0.4**  -  declarative router DSL on top of Dendrite primitives.
 

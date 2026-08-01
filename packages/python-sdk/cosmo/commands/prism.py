@@ -1,18 +1,17 @@
 """
-cosmo doppler
-~~~~~~~~~~~~~
-Attach a read-only Doppler to a running Synapse, streaming Signals to stdout
-or to **Prism**  -  the live browser visualization.
+cosmo prism
+~~~~~~~~~~~
+Attach a read-only observer to a running Synapse and visualize its Signals  - 
+in **Prism**, the live browser view, or as a plain stream in your terminal.
 
 Usage
 -----
-    cosmo doppler --url=cosmo://127.0.0.1:7070 --namespace=dev
-    cosmo doppler --url=nats://localhost:4222   -n prod
-    cosmo doppler --prism                                          # opens Prism, enter URL in form
-    cosmo doppler --prism --port=8080
-    cosmo doppler --prism --url=cosmo://127.0.0.1:7070 -n dev      # skip the form
-    cosmo doppler --url=cosmo://127.0.0.1:7070 -n dev --type TASK
-    cosmo doppler --url=cosmo://127.0.0.1:7070 -n dev --json
+    cosmo prism                                                 # opens Prism, enter URL in the form
+    cosmo prism --port=8080
+    cosmo prism --url=cosmo://127.0.0.1:7070 -n dev             # skip the form
+    cosmo prism --tail --url=cosmo://127.0.0.1:7070 -n dev      # stream to stdout instead
+    cosmo prism --tail --url=cosmo://127.0.0.1:7070 -n dev --type TASK
+    cosmo prism --tail --url=cosmo://127.0.0.1:7070 -n dev --json
 
 Synapse URL + namespace
 -----------------------
@@ -48,10 +47,10 @@ from cosmonapse import Signal, SignalType, discover_signal
 from cosmo.commands._shared import _HAS_RICH, _TYPE_COLOURS
 
 # The Prism browser visualization (hero + animated view + WS bridge) lives in
-# its own module so the doppler CLI file stays small.
+# its own module so this CLI file stays small.
 from cosmo.commands._prism import run_prism as _run_prism
 
-# doppler renders signals with its own payload-aware formatter, so it keeps a
+# --tail renders signals with its own payload-aware formatter, so it keeps a
 # Console + Text handle here when rich is available.
 if _HAS_RICH:
     from rich.console import Console
@@ -86,15 +85,15 @@ def _resolve_target(
     required: bool = True,
 ) -> tuple[str | None, str | None]:
     """
-    Work out the (base_url, namespace) the doppler should attach to.
+    Work out the (base_url, namespace) the observer should attach to.
 
     Accepts either the modern ``--url`` + ``--namespace`` form (matching
     ``cosmo synapse``) or the legacy ``--synapse=<url>/<namespace>`` form that
     encodes the namespace in the URL path. When both a path namespace and an
     explicit ``--namespace`` are supplied, ``--namespace`` wins.
 
-    When ``required`` is False (Prism mode) the URL may be omitted  -  the user
-    will enter it through the browser form.
+    When ``required`` is False (browser mode) the URL may be omitted  -  the
+    user will enter it through the browser form.
     """
     raw = url or synapse_arg
     if raw is None:
@@ -158,72 +157,62 @@ def _render_signal(subject: str, sig: Signal, show_payload: bool = False) -> Non
 # CLI command
 # ---------------------------------------------------------------------------
 
-@click.command()
-@click.option(
-    "--url", "url", default=None, metavar="URL",
-    help="Synapse URL, e.g. cosmo://127.0.0.1:7070  (use with --namespace).",
-)
-@click.option("--namespace", "-n", default=None, metavar="NS",
-              help="Namespace to observe. Defaults to 'dev'.")
-@click.option(
-    "--synapse", "synapse_arg", default=None, metavar="URL[/NAMESPACE]",
-    help="Legacy combined form, e.g. cosmo://127.0.0.1:7070/dev. "
-         "Prefer --url + --namespace.",
-)
-@click.option("--prism", "show_prism", is_flag=True, default=False,
-              help="Launch the Prism browser visualization instead of streaming to stdout.")
-@click.option("--port", default=7071, show_default=True,
-              help="Local port for the Prism server (--prism mode).")
-@click.option(
-    "--type", "filter_types", multiple=True,
-    type=click.Choice([t.value for t in SignalType], case_sensitive=False),
-    help="Filter to specific signal types (repeatable, CLI mode only).",
-)
-@click.option("--trace", default=None,
-              help="Filter to a specific trace_id (CLI mode only).")
-@click.option("--neuron", default=None,
-              help="Filter to a specific neuron ID (CLI mode only).")
-@click.option("--json", "output_json", is_flag=True,
-              help="Output one JSON object per line (CLI mode only).")
-@click.option("--payload", is_flag=True,
-              help="Show payload preview alongside each signal (CLI mode only).")
-def doppler(
+_TARGET_OPTIONS = [
+    click.option(
+        "--url", "url", default=None, metavar="URL",
+        help="Synapse URL, e.g. cosmo://127.0.0.1:7070  (use with --namespace).",
+    ),
+    click.option("--namespace", "-n", default=None, metavar="NS",
+                 help="Namespace to observe. Defaults to 'dev'."),
+    click.option(
+        "--synapse", "synapse_arg", default=None, metavar="URL[/NAMESPACE]",
+        help="Legacy combined form, e.g. cosmo://127.0.0.1:7070/dev. "
+             "Prefer --url + --namespace.",
+    ),
+    click.option("--port", default=7071, show_default=True,
+                 help="Local port for the Prism server (browser mode)."),
+    click.option("--tail", "tail", is_flag=True, default=False,
+                 help="Stream Signals to stdout instead of opening the browser view."),
+    click.option(
+        "--type", "filter_types", multiple=True,
+        type=click.Choice([t.value for t in SignalType], case_sensitive=False),
+        help="Filter to specific signal types (repeatable, --tail only).",
+    ),
+    click.option("--trace", default=None,
+                 help="Filter to a specific trace_id (--tail only)."),
+    click.option("--neuron", default=None,
+                 help="Filter to a specific neuron ID (--tail only)."),
+    click.option("--json", "output_json", is_flag=True,
+                 help="Output one JSON object per line (--tail only)."),
+    click.option("--payload", is_flag=True,
+                 help="Show payload preview alongside each signal (--tail only)."),
+    # Accepted and ignored: in the old `cosmo doppler` this flag selected the
+    # browser view, which is now the default. Kept so existing scripts and the
+    # deprecated `cosmo doppler` alias keep working.
+    click.option("--prism", "show_prism", is_flag=True, default=False, hidden=True),
+]
+
+
+def _target_options(fn):
+    for opt in reversed(_TARGET_OPTIONS):
+        fn = opt(fn)
+    return fn
+
+
+def _run(
     url: Optional[str],
     namespace: Optional[str],
     synapse_arg: Optional[str],
-    show_prism: bool,
     port: int,
+    tail: bool,
     filter_types: tuple[str, ...],
     trace: Optional[str],
     neuron: Optional[str],
     output_json: bool,
     payload: bool,
+    show_prism: bool,
 ) -> None:
-    """Attach a read-only Doppler to a Synapse namespace.
-
-    \b
-    Stream to stdout:
-      cosmo doppler --url=cosmo://127.0.0.1:7070 --namespace=dev
-
-    Launch Prism (browser visualization):
-      cosmo doppler --prism
-      cosmo doppler --prism --port=8080
-      cosmo doppler --prism --url=cosmo://127.0.0.1:7070 -n dev
-
-    Filter by type:
-      cosmo doppler --url=cosmo://127.0.0.1:7070 -n dev --type TASK --type ERROR
-
-    Legacy combined form (still supported):
-      cosmo doppler --synapse=cosmo://127.0.0.1:7070/dev
-    """
-    if show_prism:
-        base_url, namespace = _resolve_target(
-            synapse_arg, url, namespace, required=False,
-        )
-        asyncio.run(_run_prism(
-            initial_base_url=base_url, initial_namespace=namespace, port=port,
-        ))
-    else:
+    if tail:
         base_url, namespace = _resolve_target(synapse_arg, url, namespace)
         asyncio.run(_run_cli(
             base_url=base_url,
@@ -234,6 +223,53 @@ def doppler(
             output_json=output_json,
             show_payload=payload,
         ))
+    else:
+        base_url, namespace = _resolve_target(
+            synapse_arg, url, namespace, required=False,
+        )
+        asyncio.run(_run_prism(
+            initial_base_url=base_url, initial_namespace=namespace, port=port,
+        ))
+
+
+@click.command()
+@_target_options
+def prism(**kwargs) -> None:
+    """Open Prism, the live browser view onto a Synapse namespace.
+
+    \b
+    Launch Prism (browser visualization):
+      cosmo prism
+      cosmo prism --port=8080
+      cosmo prism --url=cosmo://127.0.0.1:7070 -n dev
+
+    Stream to stdout instead:
+      cosmo prism --tail --url=cosmo://127.0.0.1:7070 --namespace=dev
+
+    Filter by type:
+      cosmo prism --tail --url=cosmo://127.0.0.1:7070 -n dev --type TASK --type ERROR
+
+    Legacy combined form (still supported):
+      cosmo prism --synapse=cosmo://127.0.0.1:7070/dev
+    """
+    _run(**kwargs)
+
+
+@click.command("doppler", hidden=True)
+@_target_options
+def doppler(**kwargs) -> None:
+    """Deprecated alias for `cosmo prism`."""
+    click.echo(
+        "  Warning: `cosmo doppler` is deprecated and will be removed in a "
+        "future release. Use `cosmo prism` (add --tail for the stdout stream).",
+        err=True,
+    )
+    # Preserve the old defaults exactly: bare `cosmo doppler` streamed to
+    # stdout and only `--prism` opened the browser. `cosmo prism` inverts
+    # that, so the alias re-inverts it for callers that never migrated.
+    if not kwargs["tail"] and not kwargs["show_prism"]:
+        kwargs["tail"] = True
+    _run(**kwargs)
 
 
 # ---------------------------------------------------------------------------
@@ -267,7 +303,7 @@ async def _run_cli(
     if not output_json:
         if _HAS_RICH:
             console.print()
-            console.print(f"  [bold cyan]cosmo doppler[/bold cyan]  "
+            console.print(f"  [bold cyan]cosmo prism[/bold cyan] [dim]--tail[/dim]  "
                           f"[cyan]{base_url}[/cyan][dim]/{namespace}[/dim]")
             if filter_types:
                 console.print(f"  Filtering: {', '.join(sorted(filter_types))}")
@@ -280,7 +316,7 @@ async def _run_cli(
             console.print("  " + "─" * 60)
             console.print()
         else:
-            print(f"\n  cosmo doppler  {base_url}/{namespace}")
+            print(f"\n  cosmo prism --tail  {base_url}/{namespace}")
             print("  Observing  -  Ctrl-C to detach")
             print("  " + "─" * 60 + "\n")
 
@@ -304,7 +340,7 @@ async def _run_cli(
     subject = f"cosmonapse.{namespace}.>"
     # Broadcast DISCOVER once before the wildcard subscribe so every
     # Dendrite with attached Axons replies with a REGISTER snapshot  - 
-    # the Doppler immediately sees the current namespace state instead
+    # the observer immediately sees the current namespace state instead
     # of waiting for the next heartbeat tick.
     try:
         await syn.publish(
@@ -312,8 +348,8 @@ async def _run_cli(
             discover_signal(),
         )
     except Exception as exc:
-        # Doppler is best-effort; a backend that doesn't support publish
-        # (or transient failure) shouldn't block the subscribe path.
+        # The DISCOVER probe is best-effort; a backend that doesn't support
+        # publish (or transient failure) shouldn't block the subscribe path.
         if not output_json:
             click.echo(f"  (DISCOVER probe skipped: {exc})", err=True)
     await syn.subscribe(subject, handle, queue_group=None)
@@ -335,8 +371,8 @@ async def _run_cli(
         if not output_json:
             if _HAS_RICH:
                 console.print()
-                console.print(f"  [dim]Doppler detached.  {signal_count} signals observed.[/dim]")
+                console.print(f"  [dim]Detached.  {signal_count} signals observed.[/dim]")
                 console.print()
             else:
-                print(f"\n  Doppler detached.  {signal_count} signals observed.\n")
+                print(f"\n  Detached.  {signal_count} signals observed.\n")
 

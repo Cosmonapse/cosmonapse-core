@@ -14,7 +14,7 @@ which are the three that Dendrite already offers:
     stream  -> dispatch_and_subscribe   live event stream
 
 Nothing new crosses the wire. A Receptor emits the same TASK an
-orchestrator Dendrite always emitted, so `cosmo doppler` sees no new
+orchestrator Dendrite always emitted, so `cosmo prism` sees no new
 signal types and an existing brain needs no changes to grow an interface.
 
 Public surface:
@@ -23,6 +23,7 @@ Public surface:
   CliReceptor          terminal: a command becomes a TASK
   ApiReceptor          HTTP: one endpoint, all three shapes
   ChatReceptor         conversation: one turn, one dispatch (+ voice)
+  run_brain            run a whole brain: every Dendrite, every interface
   run_receptors        run several Receptors at once (Dendrite.run uses it)
   idle                 block forever - a brain with no interface still runs
   DispatchMode         "send" | "wait" | "stream"
@@ -47,7 +48,7 @@ from cosmonapse.receptor.base import (
     signal_to_jsonable,
 )
 from cosmonapse.receptor.cli import CliReceptor, Command
-from cosmonapse.receptor.runner import idle, run_receptors
+from cosmonapse.receptor.runner import idle, run_brain, run_receptors
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from cosmonapse.receptor.api import ApiReceptor
@@ -65,6 +66,7 @@ __all__ = [
     "ReceptorTimeout",
     "ReceptorUnbound",
     "idle",
+    "run_brain",
     "run_receptors",
     "signal_to_jsonable",
 ]

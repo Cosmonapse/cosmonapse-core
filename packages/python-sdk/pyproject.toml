@@ -20,7 +20,7 @@ dependencies = [
     # These ship in the core dependency set because `pip install cosmonapse`
     # also installs the `cosmo` command, and the CLI imports them eagerly
     # (rich for output, click for the command tree, aiohttp for `cosmo
-    # doppler`'s web server).
+    # prism`'s web server).
     "click>=8.1",
     "rich>=13.0",
     "aiohttp>=3.9",

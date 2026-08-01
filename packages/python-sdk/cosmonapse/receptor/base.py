@@ -21,7 +21,7 @@ exists on Dendrite::
 Every backend (CLI, API, chat) does exactly this and differs only in how
 it collects ``input`` and renders the result. Nothing new crosses the
 wire: a Receptor emits the same TASK an orchestrator Dendrite always
-emitted, so `cosmo doppler` sees no new signal types.
+emitted, so `cosmo prism` sees no new signal types.
 
 This module defines:
 
@@ -29,7 +29,7 @@ This module defines:
   DispatchMode         "send" | "wait" | "stream"
   ReceptorError        terminal ERROR signal surfaced to the caller
   ReceptorTimeout      no terminal Signal inside the deadline
-  ReceptorUnbound      no neuron= / capabilities= target to dispatch to
+  ReceptorUnbound      no Dendrite bound to dispatch from
 
 Shaping hooks (all optional, all decorators)::
 
@@ -96,7 +96,13 @@ class ReceptorTimeout(TimeoutError):
 
 
 class ReceptorUnbound(ValueError):
-    """The Receptor has no dispatch target (neuron= or capabilities=)."""
+    """The Receptor has no Dendrite to dispatch from.
+
+    Not about *targets*: a Receptor with neither ``neuron=`` nor
+    ``capabilities=`` makes an open call (see :class:`Receptor`). This is
+    the harder failure - nothing to dispatch *from* at all, which an ASGI
+    app hits when it serves a request before ``bind()`` ran.
+    """
 
 
 InputHook = Callable[[Any], Any]
@@ -125,10 +131,15 @@ class Receptor(ABC):
 
         rx = CliReceptor(dendrite=orch, neuron="assistant")        # addressed
         rx = CliReceptor(dendrite=orch, capabilities=["chat"])     # routed
-        rx = CliReceptor(dendrite=orch)                            # decide per call
+        rx = CliReceptor(dendrite=orch)                            # open call
         await rx.ask("hi", capabilities=["chat"])
 
-    A call with neither raises :class:`ReceptorUnbound`.
+    A call with neither is an *open call*: the TASK goes out unaddressed on
+    the broadcast subject and is answered by any ``catch_all=True`` Axon in
+    the namespace (plus unfiltered ``@on_task_signal`` observers). Nothing
+    answers if nothing opted in, so an open call into a namespace of ordinary
+    Axons resolves as a dispatch timeout rather than an error - name a
+    ``neuron=`` or ``capabilities=`` when you meant to address someone.
 
     Example::
 
@@ -141,6 +152,24 @@ class Receptor(ABC):
 
     #: Default mode when a backend does not say otherwise.
     default_mode: DispatchMode = "wait"
+
+    #: Does this interface finishing mean the whole *invocation* is over?
+    #: False for a REPL or a server - the brain outlives them, and the
+    #: runner keeps going (see cosmonapse.receptor.runner, rule 2). A
+    #: one-shot CLI command sets it True on itself before returning,
+    #: because there the interface *is* the invocation.
+    ends_process: bool = False
+
+    def owns_terminal(self) -> bool:
+        """Will this interface hold the terminal for the process's lifetime?
+
+        True only for an interactive REPL. The runner asks so it can quiet
+        an HTTP sibling's access log, which would otherwise land in the
+        middle of the prompt (see ``runner._stdout_is_contended``). A
+        one-shot command is not terminal-owning: it prints once and the
+        invocation ends, so there is nothing for a log line to interrupt.
+        """
+        return False
 
     def __init__(
         self,
@@ -244,8 +273,8 @@ class Receptor(ABC):
         (as :class:`ReceptorError`), a deadline (:class:`ReceptorTimeout`),
         and anything an ``on_input`` / ``on_result`` hook raised. Returning
         a value swallows the exception; re-raise inside the hook to
-        propagate. :class:`ReceptorUnbound` is never routed here - a
-        missing dispatch target is a wiring mistake, not a runtime failure.
+        propagate. :class:`ReceptorUnbound` is never routed here - an
+        unbound Dendrite is a wiring mistake, not a runtime failure.
         """
         self._failure_hook = fn
         return fn
@@ -338,7 +367,7 @@ class Receptor(ABC):
             timeout.__cause__ = exc
             return await self.fail(timeout)
         except ReceptorUnbound:
-            # A missing dispatch target is a wiring mistake, not a runtime
+            # An unbound Dendrite is a wiring mistake, not a runtime
             # failure - it must not be swallowed by an on_failure hook.
             raise
         except Exception as exc:  # noqa: BLE001 - the hook decides
@@ -423,8 +452,15 @@ class Receptor(ABC):
         A plain trace ends on the worker's AGENT_OUTPUT. A ``finalize``
         trace promotes that to FINAL, so AGENT_OUTPUT is mid-flight there
         and the stream must keep reading.
+
+        ``scope="terminal"`` says the same thing from the other side: the
+        Pathway will not resolve on an AGENT_OUTPUT, so a stream reading
+        the same trace must not stop on one either. That is the shape a
+        choreographed brain has - some *other* node emits FINAL, so the
+        Receptor cannot set ``finalize`` (that would promote the first
+        worker's output) and yet AGENT_OUTPUT is still mid-flight.
         """
-        if self._finalize:
+        if self._finalize or self._scope == "terminal":
             return frozenset(TERMINAL_TYPES - {SignalType.AGENT_OUTPUT})
         return TERMINAL_TYPES
 
@@ -474,12 +510,10 @@ class Receptor(ABC):
     def _dispatch_kwargs(self, overrides: dict[str, Any]) -> dict[str, Any]:
         neuron = overrides.pop("neuron", self._neuron)
         capabilities = overrides.pop("capabilities", self._capabilities)
-        if not neuron and not capabilities:
-            raise ReceptorUnbound(
-                f"{type(self).__name__} has no dispatch target - pass "
-                f"neuron='...' or capabilities=[...] to the constructor "
-                f"or to this call"
-            )
+        # Neither is legal: an open call. See the class docstring for what
+        # answers it, and why silence rather than an exception is the
+        # honest outcome - the Receptor cannot know from here whether the
+        # namespace has a catch_all Axon in it.
         meta = {**self._meta, **(overrides.pop("meta", None) or {})}
         meta.setdefault("receptor", self.receptor_id)
         kw: dict[str, Any] = {

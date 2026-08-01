@@ -14,7 +14,7 @@ A **Receptor** is an interface. It is the edge where something outside the fabri
 - It turns that input into a **TASK**.
 - It hands the resulting trace back in whichever of the three dispatch shapes the transport wants.
 
-That is the entire primitive. It adds **no signal types, no subjects, and no wire format**. A Receptor emits exactly the TASK an orchestrator Dendrite has always emitted; `cosmo doppler` cannot tell a Receptor-originated trace from a hand-written `dispatch_and_wait`, except by the optional `meta.receptor` tag the Receptor stamps on for attribution.
+That is the entire primitive. It adds **no signal types, no subjects, and no wire format**. A Receptor emits exactly the TASK an orchestrator Dendrite has always emitted; `cosmo prism --tail` cannot tell a Receptor-originated trace from a hand-written `dispatch_and_wait`, except by the optional `meta.receptor` tag the Receptor stamps on for attribution.
 
 Neurons think, Engrams remember, Effectors act, **Receptors listen**.
 

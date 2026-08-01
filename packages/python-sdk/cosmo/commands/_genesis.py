@@ -681,7 +681,7 @@ Built with no dendrite= on purpose; brain.py binds it when it attaches.
 from cosmonapse import CliReceptor
 
 RECEPTOR = CliReceptor(
-    neuron="",                     # addressed; or capabilities=["..."]
+    __TARGET__
     prog="__NAME__",
     description="Talk to this brain from a terminal.",
     timeout_s=30.0,
@@ -716,7 +716,7 @@ loop exists, so brain.py binds it in the lifespan when it attaches.
 from cosmonapse import ApiReceptor
 
 RECEPTOR = ApiReceptor(
-    neuron="",                     # addressed; or capabilities=["..."]
+    __TARGET__
     path="__PATH__",
     port=8000,
     timeout_s=60.0,
@@ -751,7 +751,7 @@ Needs the optional extra:  pip install 'cosmonapse[receptor]'
 from cosmonapse import ChatReceptor
 
 RECEPTOR = ChatReceptor(
-    neuron="",                     # addressed; or capabilities=["..."]
+    __TARGET__
     path="__PATH__",
     title="__NAME__",
     greeting="Ask me something.",
@@ -766,6 +766,33 @@ def render(sig):
     """Terminal Signal -> what the page shows."""
     return sig.payload["output"]
 '''
+
+
+def _receptor_target(target: Path) -> str:
+    """The dispatch target a newly written Receptor is born with.
+
+    A convenience, not a requirement. All three targeting shapes are legal:
+    ``neuron=`` addresses one, ``capabilities=[...]`` routes to whoever covers
+    them, and *neither* is an open call - broadcast, answered by any
+    ``catch_all=True`` Axon or unfiltered ``@on_task_signal`` observer in the
+    namespace.
+
+    Which makes this purely about the first run. The scaffold's ``hello`` Axon
+    is an ordinary one, so an open call from a freshly generated Receptor
+    would be heard by nobody and surface as a dispatch timeout. Pointing the
+    module at a Neuron the project actually has means it answers the moment it
+    is attached, and the two other shapes are a one-line edit away - which the
+    generated comment says.
+    """
+    neurons = _module_nodes(target / "neurons", _NEURON_ID_RE)
+    ids = [n["id"] for n in neurons if n["id"]]
+    if ids:
+        return (f'neuron="{ids[0]}",'.ljust(31)
+                + '# addressed; or capabilities=["..."]')
+    # No Neuron to point at: leave it an open call and name the three shapes,
+    # since which one is wanted is a design choice Genesis cannot make.
+    return ("neuron=None,".ljust(31)
+            + '# open call; or neuron="<id>" / capabilities=[...]')
 
 
 _KIND_TEMPLATE = {
@@ -831,12 +858,175 @@ def _validate(kind: str, name: str, shape: str = "") -> tuple[str, str]:
 
 # A wiring line already in build_worker, e.g. "    worker.attach_axon(...)".
 # Matching an existing one is how the wiring learns the receiver variable
-# and indentation actually used, instead of assuming "worker".
+# and indentation actually used, instead of assuming "worker". The attach
+# verb is captured too, because *which* Dendrite a component belongs on
+# depends on its kind - see _anchor_for.
 _ATTACH_RE = re.compile(
-    r"^(\s*)(\w+)\.attach_(?:axon|effector|engram|receptor)\(", re.MULTILINE,
+    r"^(\s*)(\w+)\.attach_(axon|effector|engram|receptor)\(", re.MULTILINE,
 )
 _RETURN_RE = re.compile(r"^(\s+)return (\w+)\s*$", re.MULTILINE)
 _IMPORT_RE = re.compile(r"^(?:from [\w.]+ import .+|import [\w.]+)$", re.MULTILINE)
+_DEF_RE = re.compile(r"^def (\w+)\s*\(", re.MULTILINE)
+_WORKER_ROLE_RE = re.compile(r"""role\s*=\s*['"]worker['"]""")
+
+#: Axons, Effectors and Engrams are hosted; Receptors dispatch. A
+#: ``role="worker"`` Dendrite is explicitly not allowed to dispatch
+#: (``Dendrite._require_orchestrator``), so mounting a Receptor on one
+#: produces a brain that raises on its first turn. The two families
+#: therefore want different receivers, which is the whole point of
+#: _anchor_for.
+_INTERFACE_KINDS = {"receptor"}
+
+
+def _builders(src: str) -> list[dict]:
+    """Every top-level ``def`` in brain.py that returns a named Dendrite.
+
+    Line-based like the rest of _wire_brain: brain.py is the one file in the
+    skeleton people hand-edit, so this reads the shape that is there rather
+    than assuming the scaffold's. ``worker`` is taken from the literal
+    ``role="worker"`` in the constructor, which is also how a reader of the
+    file tells the two sides apart.
+    """
+    out: list[dict] = []
+    defs = list(_DEF_RE.finditer(src))
+    for i, m in enumerate(defs):
+        start = m.start()
+        end = defs[i + 1].start() if i + 1 < len(defs) else len(src)
+        body = src[start:end]
+        ret = _RETURN_RE.search(body)
+        if ret is None:          # main(), helpers - not a builder
+            continue
+        out.append({
+            "name": m.group(1),
+            "indent": ret.group(1),
+            "var": ret.group(2),
+            "at": start + ret.start(),
+            "worker": bool(_WORKER_ROLE_RE.search(body)),
+        })
+    return out
+
+
+def _anchor_for(src: str, kind: str) -> tuple[str, str, int] | None:
+    """Where to insert the attach line for ``kind``: (indent, receiver, offset).
+
+    Preference order, and why:
+
+    1. **The last attach of the same family.** A project that already hosts
+       Axons on ``worker`` and Receptors on ``edge`` has answered the question
+       itself; copy its answer. Family, not "last attach anywhere", is the fix
+       for the scaffold - its final attach is ``edge.attach_receptor(...)``,
+       so last-wins put every new Neuron on the orchestrator.
+    2. **A builder of the right side.** Nothing of this family attached yet,
+       so fall back to the Dendrite whose role fits: the ``role="worker"`` one
+       for Axons/Effectors/Engrams, a non-worker one for Receptors.
+    3. **Nothing.** Better to hand the user a module and tell them to wire it
+       than to write a line that makes brain.py raise at runtime.
+    """
+    want_interface = kind in _INTERFACE_KINDS
+
+    family = [m for m in _ATTACH_RE.finditer(src)
+              if (m.group(3) == "receptor") is want_interface]
+    if family:
+        last = family[-1]
+        return last.group(1), last.group(2), src.index("\n", last.end()) + 1
+
+    builders = _builders(src)
+    fitting = [b for b in builders if b["worker"] is not want_interface]
+    if not fitting:
+        return None
+    b = fitting[0]
+    return b["indent"], b["var"], b["at"]
+
+
+#: A brain.py written by the current scaffolder runs a *brain*, not a
+#: Dendrite: one node per component, all handed to run_brain. Adding a
+#: component there means a new builder plus a new argument - not a line
+#: inserted into somebody else's builder, which is what _anchor_for does
+#: and which would silently host the new component on an unrelated node.
+_RUN_BRAIN_RE = re.compile(r"\brun_brain\(", re.MULTILINE)
+_BUILDER_ARG_RE = re.compile(r"^(\s*)build_(\w+)\(synapse\),[ \t]*$", re.MULTILINE)
+_ENTRY_DEF_RE = re.compile(r"^(?:def _stop_on_signals|async def main)\b", re.MULTILINE)
+
+#: role= and the attach call differ per kind; everything else is shared.
+#: Receptors get the orchestrator role (attach_receptor refuses a worker)
+#: and a registry_store, so find_neurons - a CliReceptor's `ping` - works.
+_NODE_BUILDER = {
+    "neuron": ('        dendrite_id="{mod}-node", role="worker",\n',
+               "attach_axon", "AXON", "thinks"),
+    "engram": ('        dendrite_id="{mod}-node", role="worker",\n',
+               "attach_engram", "ENGRAM", "remembers"),
+    "effector": ('        dendrite_id="{mod}-node", role="worker",\n',
+                 "attach_effector", "EFFECTOR", "acts"),
+    "receptor": ('        dendrite_id="{mod}-node", heartbeat_s=0,\n'
+                 "        registry_store=MemoryRegistryStore(),\n",
+                 "attach_receptor", "RECEPTOR", "listens"),
+}
+
+
+def _imports(src: str, pkg: str, module: str):
+    return re.search(
+        rf"^from {re.escape(pkg)} import .*\b{re.escape(module)}\b",
+        src, re.MULTILINE,
+    )
+
+
+def _add_import(src: str, pkg: str, module: str, import_line: str):
+    """Insert ``import_line`` if absent. Returns the source, or None if
+    brain.py has no import block to sit in."""
+    if _imports(src, pkg, module):
+        return src
+    # Sit next to the sibling imports from the same package when there are
+    # any, otherwise after the last import in the header block.
+    anchor = None
+    for m in re.finditer(rf"^from {re.escape(pkg)} import .+$", src, re.MULTILINE):
+        anchor = m
+    if anchor is None:
+        for m in _IMPORT_RE.finditer(src):
+            anchor = m
+    if anchor is None:
+        return None
+    at = src.index("\n", anchor.end()) + 1
+    return src[:at] + import_line + "\n" + src[at:]
+
+
+def _wire_node(src: str, kind: str, module: str) -> tuple[str, str] | None:
+    """Add a builder for ``module`` and pass it to run_brain. (src, note)."""
+    spec = _NODE_BUILDER.get(kind)
+    if spec is None:
+        return None
+    ident, attach, export, verb = spec
+
+    args = list(_BUILDER_ARG_RE.finditer(src))
+    if not args:
+        return None
+    if re.search(rf"^def build_{re.escape(module)}\b", src, re.MULTILINE):
+        return src, "already wired"
+
+    builder = (
+        f"def build_{module}(synapse) -> Dendrite:\n"
+        f'    """The node {module} {verb} on."""\n'
+        f"    node = Dendrite(\n"
+        f"        synapse=synapse, namespace=NAMESPACE,\n"
+        f"{ident.format(mod=module)}"
+        f"    )\n"
+        f"    node.{attach}({module}.{export})\n"
+        f"    return node\n\n\n"
+    )
+
+    # The builder goes above the entry points, with the other builders.
+    entry = _ENTRY_DEF_RE.search(src)
+    at = entry.start() if entry else len(src)
+    src = src[:at] + builder + src[at:]
+
+    # ...and its argument after the last existing one. Re-find: the insert
+    # above shifted every offset.
+    args = list(_BUILDER_ARG_RE.finditer(src))
+    last = args[-1]
+    line_end = src.index("\n", last.end()) + 1
+    src = (src[:line_end]
+           + f"{last.group(1)}build_{module}(synapse),\n"
+           + src[line_end:])
+    return src, "wired into brain.py as its own node"
 
 
 def _wire_brain(target: Path, kind: str, module: str) -> tuple[bool, str]:
@@ -845,9 +1035,11 @@ def _wire_brain(target: Path, kind: str, module: str) -> tuple[bool, str]:
     Line-based on purpose: brain.py is the one file in the skeleton people
     hand-edit, so this reads the shape that's actually there (the receiver
     variable and indent of the existing attach calls) rather than rewriting
-    the file from a template. Returns (wired, note); a False just means the
-    caller should tell the user to wire it themselves - never an error, the
-    module on disk is the real deliverable.
+    the file from a template. Which receiver is _anchor_for's job, and it is
+    kind-aware: hosted components go on the worker, Receptors on the
+    dispatching side. Returns (wired, note); a False just means the caller
+    should tell the user to wire it themselves - never an error, the module
+    on disk is the real deliverable.
     """
     brain = target / "brain.py"
     if not brain.is_file():
@@ -862,45 +1054,44 @@ def _wire_brain(target: Path, kind: str, module: str) -> tuple[bool, str]:
     import_line = f"from {pkg} import {module}"
     export = _KIND_EXPORT[kind]
 
-    attaches = list(_ATTACH_RE.finditer(src))
-    if attaches:
-        last = attaches[-1]
-        indent, receiver = last.group(1), last.group(2)
-        insert_at = src.index("\n", last.end()) + 1
-    else:
-        ret = _RETURN_RE.search(src)
-        if not ret:
-            return False, "couldn't find where to attach it in brain.py"
-        indent, receiver = ret.group(1), ret.group(2)
-        insert_at = ret.start()
+    # A per-node brain (run_brain + build_* arguments) needs a whole builder,
+    # not a line inside one. Older projects - a shared worker and edge, or a
+    # hand-rolled shape - fall through to _anchor_for below.
+    if _RUN_BRAIN_RE.search(src):
+        wired = _wire_node(src, kind, module)
+        if wired is not None:
+            src, note = wired
+            if note != "already wired":
+                src = _add_import(src, pkg, module, import_line)
+            try:
+                brain.write_text(src, encoding="utf-8")
+            except OSError as e:
+                return False, str(e)
+            return True, note
+
+    anchor = _anchor_for(src, kind)
+    if anchor is None:
+        return False, (
+            "brain.py has no Dendrite to mount a Receptor on - Receptors "
+            "dispatch, so they need the orchestrator side, not a "
+            'role="worker" one. Attach it yourself.'
+            if kind in _INTERFACE_KINDS else
+            "couldn't find where to attach it in brain.py"
+        )
+    indent, receiver, insert_at = anchor
 
     attach_line = f"{indent}{receiver}.{_KIND_ATTACH[kind]}({module}.{export})\n"
 
-    already_imported = re.search(
-        rf"^from {re.escape(pkg)} import .*\b{re.escape(module)}\b", src, re.MULTILINE,
-    )
     already_attached = attach_line.strip() in src
-
-    if already_attached and already_imported:
+    if already_attached and _imports(src, pkg, module):
         return True, "already wired"
 
     if not already_attached:
         src = src[:insert_at] + attach_line + src[insert_at:]
 
-    if not already_imported:
-        # Sit next to the sibling imports from the same package when there
-        # are any, otherwise after the last import in the header block.
-        sibling = None
-        for m in re.finditer(rf"^from {re.escape(pkg)} import .+$", src, re.MULTILINE):
-            sibling = m
-        anchor = sibling
-        if anchor is None:
-            for m in _IMPORT_RE.finditer(src):
-                anchor = m
-        if anchor is None:
-            return False, "couldn't find the import block in brain.py"
-        at = src.index("\n", anchor.end()) + 1
-        src = src[:at] + import_line + "\n" + src[at:]
+    src = _add_import(src, pkg, module, import_line)
+    if src is None:
+        return False, "couldn't find the import block in brain.py"
 
     try:
         brain.write_text(src, encoding="utf-8")
@@ -946,6 +1137,7 @@ def _create_component(raw_path: str, kind: str, raw_name: str, force: bool = Fal
         .replace("__NAME__", name)
         .replace("__MODULE__", module)
         .replace("__PATH__", _RECEPTOR_PATH.get(shape, f"/{module}"))
+        .replace("__TARGET__", _receptor_target(target))
     )
     dest.write_text(body, encoding="utf-8")
 
@@ -1199,6 +1391,7 @@ def _component_model(raw_path: str, rel: str) -> dict:
         model["catalogue"] = _gp.catalogue(
             model["kind"], model["shape"] or "",
             decl.get("callee", ""), decl.get("source", ""),
+            (model["backend"] or {}).get("callee", ""),
         )
     else:
         model["catalogue"] = None
@@ -1487,9 +1680,19 @@ def build_app(dist: Path | None):
         if not raw_path:
             return web.json_response({"error": "path is required"}, status=400)
         try:
-            return web.json_response(await _gr.start(raw_path))
+            return web.json_response(
+                await _gr.start(raw_path, synapse_url=body.get("synapse_url")),
+            )
         except FileNotFoundError as e:
             return web.json_response({"error": str(e)}, status=404)
+        except _gr.BrainExited as e:
+            # 409, not 500: the spawn worked, the brain refused to stay up.
+            # exit_code and output travel as fields as well as in the message
+            # so the Test tab can show the traceback in its terminal panel.
+            return web.json_response(
+                {"error": str(e), "exit_code": e.code, "output": e.output},
+                status=409,
+            )
         except OSError as e:
             return web.json_response({"error": str(e)}, status=400)
 

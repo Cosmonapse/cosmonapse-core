@@ -41,9 +41,11 @@ def test_a_scaffolded_project_opens(tmp_path):
     assert verdict["is_project"]
     assert verdict["scaffolded"]
     assert verdict["reason"] is None
-    # cosmo init scaffolds receptors/terminal.py too, and Genesis reads it.
+    # cosmo init scaffolds one of every primitive, and Genesis reads all
+    # four folders - including engram/, which it used to be blind to
+    # because the scaffolder did not write one.
     assert verdict["counts"] == {
-        "neurons": 1, "engrams": 0, "effectors": 1, "receptors": 1,
+        "neurons": 1, "engrams": 1, "effectors": 1, "receptors": 1,
     }
     assert "brain.py" in verdict["markers"]
     assert verdict["warnings"] == []
@@ -292,7 +294,11 @@ def test_the_corpus_is_mostly_configurable():
                 elif not model["defines"]:
                     dead_ends += 1
     assert dead_ends == 0
-    assert configurable >= 55, f"only {configurable} components yield a config form"
+    # A floor, not a count - it moves only when the corpus itself does.
+    # Dropped from 62 when 14-agent-cli was folded into 14-agent (its CLI
+    # became a CliReceptor there, so the duplicate copy of the agent's eight
+    # components went away).
+    assert configurable >= 54, f"only {configurable} components yield a config form"
 
 
 @pytestmark_examples

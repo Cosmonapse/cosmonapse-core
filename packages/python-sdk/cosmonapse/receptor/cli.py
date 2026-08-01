@@ -228,6 +228,16 @@ class CliReceptor(Receptor):
             cmd.add_to(sp)
         return ap
 
+    def owns_terminal(self, argv: list[str] | None = None) -> bool:
+        """No command on argv -> ``run()`` drops into the REPL.
+
+        Deliberately the same "first non-flag token" test ``run()`` makes,
+        so the runner's view of this Receptor and the Receptor's own view
+        cannot drift.
+        """
+        argv = list(sys.argv[1:] if argv is None else argv)
+        return next((a for a in argv if not a.startswith("-")), None) is None
+
     async def run(self, argv: list[str] | None = None) -> int:
         """Parse argv and either run one command or drop into the REPL."""
         argv = list(sys.argv[1:] if argv is None else argv)
@@ -241,14 +251,22 @@ class CliReceptor(Receptor):
         try:
             ns = ap.parse_args(argv)
         except SystemExit as exc:
+            # --help, or a usage error. argparse has already printed; this
+            # was a command-line invocation, so the process is done.
+            self.ends_process = True
             return int(exc.code or 0)
 
         mode: DispatchMode = ("stream" if ns.stream
                               else "send" if ns.send else self.default_mode)
         name = getattr(ns, "_command", None)
         if not name:
+            # No command on argv: this is the interactive REPL, a long-lived
+            # interface. `:quit` closes it and leaves the brain running.
             return await self.repl(mode=mode, timeout_s=ns.timeout,
                                    as_json=ns.json)
+        # A named command: one shot, print, done. The invocation ends with
+        # it, so tell the runner not to fall through to idling.
+        self.ends_process = True
         cmd = self._commands[name]
         return await self._run_command(cmd, cmd.kwargs_from(ns), mode=mode,
                                        timeout_s=ns.timeout, as_json=ns.json)

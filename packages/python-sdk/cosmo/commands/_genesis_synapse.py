@@ -34,6 +34,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import os
 import socket
 import subprocess
 import sys
@@ -44,8 +45,20 @@ from urllib.parse import urlencode, urlparse
 #: Where `cosmo synapse start memory` binds by default, and therefore the
 #: port the form offers first.
 DEFAULT_SYNAPSE_PORT = 7070
-#: Where `cosmo doppler --prism` binds by default.
+#: Where `cosmo prism` binds by default.
 DEFAULT_PRISM_PORT = 7071
+
+#: How long to wait for a spawned synapse to answer for its namespace.
+#:
+#: `python -m cosmo` imports the whole CLI  -  and through it pydantic,
+#: aiohttp and rich  -  before `_start_memory` binds anything. Warm, that is
+#: about a second. Cold, on a first run or a cloud-synced project folder or
+#: behind a virus scanner that wants to read every file in site-packages, it
+#: can be tens of seconds, and none of that is a failure  -  it is just slow.
+#: A budget tight enough to trip on it turns a slow start into a red error
+#: the user cannot act on, so the default is generous and the machine that
+#: needs more can say so.
+DEFAULT_START_TIMEOUT = 45.0
 
 #: Synapse child processes this Genesis started, keyed "url|namespace".
 #: Only used to reap them  -  never to answer "is it live?", which is
@@ -85,6 +98,34 @@ def _port_is_open(host: str, port: int, timeout: float = 0.35) -> bool:
     with contextlib.closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as s:
         s.settimeout(timeout)
         return s.connect_ex((host, port)) == 0
+
+
+def _resolve_timeout(explicit: float | None) -> float:
+    """The start budget: what the caller asked for, the env, or the default."""
+    if explicit is not None and explicit > 0:
+        return explicit
+    raw = os.environ.get("COSMO_SYNAPSE_START_TIMEOUT", "").strip()
+    if raw:
+        with contextlib.suppress(TypeError, ValueError):
+            val = float(raw)
+            if val > 0:
+                return val
+    return DEFAULT_START_TIMEOUT
+
+
+def _drain_stderr(proc: subprocess.Popen) -> str:
+    """Everything the child wrote to stderr, or "" if it is still writing.
+
+    `proc.stderr.read()` blocks until the pipe closes, so this is only safe
+    once the process is gone. Every caller here kills first and reads second:
+    a child being given up on has nothing left to say that is worth waiting
+    for, and its traceback is usually the whole answer.
+    """
+    if proc.stderr is None:
+        return ""
+    with contextlib.suppress(Exception):
+        return (proc.stderr.read() or b"").decode("utf-8", "replace").strip()
+    return ""
 
 
 # ---------------------------------------------------------------------------
@@ -209,7 +250,7 @@ def _spawn(args: list[str]) -> subprocess.Popen:
 
 async def start_dev_synapse(
     namespace: str, port: int, host: str = "127.0.0.1",
-    timeout: float = 12.0,
+    timeout: float | None = None,
 ) -> dict:
     """Spawn a dev synapse and wait until it actually answers for `namespace`.
 
@@ -223,6 +264,7 @@ async def start_dev_synapse(
     if not (0 < port < 65536):
         raise ValueError(f"{port} is not a usable port")
 
+    timeout = _resolve_timeout(timeout)
     url = f"cosmo://{host}:{port}"
 
     # Already serving this namespace? Then there is nothing to start, and
@@ -244,27 +286,72 @@ async def start_dev_synapse(
     ])
     _CHILDREN[_key(url, namespace)] = proc
 
+    # Keep the last probe: its `reason` is the difference between "the port
+    # never opened" and "the port opened and answered for someone else", and
+    # those have different fixes. Throwing it away is what makes a timeout
+    # here unactionable.
+    last = offline(url, namespace, "the synapse had not started yet")
+
     deadline = asyncio.get_event_loop().time() + timeout
     while asyncio.get_event_loop().time() < deadline:
         if proc.poll() is not None:
             _CHILDREN.pop(_key(url, namespace), None)
-            err = ""
-            with contextlib.suppress(Exception):
-                err = (proc.stderr.read() or b"").decode("utf-8", "replace").strip()
+            err = _drain_stderr(proc)
             raise RuntimeError(
-                f"The synapse exited immediately.{(' ' + err) if err else ''}"
+                f"The synapse exited immediately (exit code {proc.returncode})."
+                f"{(' ' + err) if err else ''}"
             )
-        status = await probe(url, namespace)
-        if status["live"]:
-            status["managed"] = True
-            return status
+        last = await probe(url, namespace)
+        if last["live"]:
+            last["managed"] = True
+            return last
         await asyncio.sleep(0.25)
 
+    # Timed out. Read the port *before* killing the child, or the answer is
+    # always "nothing there" - we just closed it.
+    port_open = _port_is_open(host, port)
     stop_child(url, namespace)
+    err = _drain_stderr(proc)
+
+    if port_open:
+        hint = (
+            f"Something on port {port} is answering, but it is not serving "
+            f"{namespace!r}  -  most likely another synapse, or a leftover "
+            f"one from an earlier run. Stop it, or pick another port."
+        )
+    else:
+        hint = (
+            f"Nothing ever bound port {port}. `python -m cosmo` loads the "
+            f"whole SDK before it binds, so a cold first run can take longer "
+            f"than {timeout:.0f}s; try again now that the caches are warm, or "
+            f"raise COSMO_SYNAPSE_START_TIMEOUT. If it never binds, run the "
+            f"same command by hand to see why:\n"
+            f"    python -m cosmo synapse start memory "
+            f"--namespace={namespace} --host={host} --port={port}"
+        )
+
     raise RuntimeError(
         f"Started a synapse on {url} but namespace {namespace!r} never "
-        f"registered within {timeout:.0f}s."
+        f"registered within {timeout:.0f}s. {hint}"
+        f"{(chr(10) + err) if err else ''}"
     )
+
+
+def managed_urls() -> dict[str, str]:
+    """``{namespace: url}`` for the synapses this Genesis started and still owns.
+
+    Used by ``_genesis_run`` to hand a spawned ``brain.py`` the SYNAPSE_URL of
+    the synapse the user just started from the same window. Only *managed*
+    children are offered: a synapse Genesis merely probed belongs to someone
+    else, and silently binding a brain to it would be a surprise.
+    """
+    out: dict[str, str] = {}
+    for key, proc in _CHILDREN.items():
+        if proc.poll() is not None:
+            continue
+        url, _, namespace = key.rpartition("|")
+        out.setdefault(namespace, url)
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -355,17 +442,18 @@ async def launch_prism(
     # No --url/--namespace here on purpose: those make _prism.py redirect the
     # bare path to its own seeded query string, which would fight the query
     # string we hand the browser. The SPA reads the target from the URL.
-    proc = _spawn(["doppler", "--prism", f"--port={port}"])
+    proc = _spawn(["prism", f"--port={port}"])
     _PRISM[port] = proc
 
     deadline = asyncio.get_event_loop().time() + timeout
     while asyncio.get_event_loop().time() < deadline:
         if proc.poll() is not None:
             _PRISM.pop(port, None)
-            err = ""
-            with contextlib.suppress(Exception):
-                err = (proc.stderr.read() or b"").decode("utf-8", "replace").strip()
-            raise RuntimeError(f"Prism exited immediately.{(' ' + err) if err else ''}")
+            err = _drain_stderr(proc)
+            raise RuntimeError(
+                f"Prism exited immediately (exit code {proc.returncode})."
+                f"{(' ' + err) if err else ''}"
+            )
         if _port_is_open("127.0.0.1", port):
             return {"url": target, "port": port, "started": True,
                     "reused": False, "namespace": namespace,
@@ -374,8 +462,14 @@ async def launch_prism(
 
     with contextlib.suppress(Exception):
         proc.terminate()
+    with contextlib.suppress(Exception):
+        proc.wait(timeout=5)
     _PRISM.pop(port, None)
-    raise RuntimeError(f"Prism didn't come up on port {port} within {timeout:.0f}s.")
+    err = _drain_stderr(proc)
+    raise RuntimeError(
+        f"Prism didn't come up on port {port} within {timeout:.0f}s."
+        f"{(chr(10) + err) if err else ''}"
+    )
 
 
 # ---------------------------------------------------------------------------

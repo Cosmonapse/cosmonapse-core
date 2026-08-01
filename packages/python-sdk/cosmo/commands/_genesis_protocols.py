@@ -451,19 +451,25 @@ def _own_empty_reason(kind: str, shape: str) -> str | None:
 
 
 def catalogue(kind: str, shape: str, callee: str = "",
-              source: str = "") -> dict[str, Any]:
+              source: str = "", backend_callee: str = "") -> dict[str, Any]:
     """The full "what can this node do" answer for one component.
 
     ``source`` is the Neuron provider behind an Axon, which the declaration
     carries because ``Axon.from_source`` names it positionally. It selects
     the provider kwargs the config form offers; it has no bearing on which
     decorators the component can host.
+
+    ``backend_callee`` is the delegated storage a served Engram forwards to.
+    It takes its own keywords - ``PostgresEngram`` needs a ``dsn`` that
+    ``Engram.serve`` has never heard of - so the storage form gets its own
+    table rather than being shown the declaration's.
     """
     own = _own_for(kind, shape)
     return {
         "kind": kind,
         "shape": shape,
         "declaration_fields": declaration_fields(callee, source),
+        "backend_fields": declaration_fields(backend_callee) if backend_callee else [],
         "own": [{"title": "This component", "protocols": own}] if own else [],
         # A Receptor subscribes to nothing. The host decorators exist to
         # service signals a Dendrite routes to a component; a Receptor is
@@ -488,10 +494,18 @@ def catalogue(kind: str, shape: str, callee: str = "",
 _F = dict
 
 
-def _field(name, type_, blurb, *, required=False, suggest=None, placeholder=""):
+def _field(name, type_, blurb, *, required=False, suggest=None, placeholder="",
+           secret=False):
+    """One row of a config form.
+
+    ``secret`` marks a value that shouldn't be legible on screen - the form
+    masks it and offers a reveal toggle. It is a property of the keyword, not
+    of the widget, so it is declared here next to the type rather than
+    guessed from the name in the UI.
+    """
     return {
         "name": name, "type": type_, "blurb": blurb, "required": required,
-        "suggest": suggest or [], "placeholder": placeholder,
+        "suggest": suggest or [], "placeholder": placeholder, "secret": secret,
     }
 
 # --- Axon -----------------------------------------------------------------
@@ -546,7 +560,8 @@ _AXON_EXPLICIT = [
 
 
 def _api_key(env: str) -> dict[str, Any]:
-    return _field("api_key", "string", f"Bearer token. Falls back to ${env}.")
+    return _field("api_key", "string", f"Bearer token. Falls back to ${env}.",
+                  secret=True)
 
 
 _TEMP = _field("temperature", "number", "Sampling temperature.")

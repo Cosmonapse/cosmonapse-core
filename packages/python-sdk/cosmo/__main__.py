@@ -1,4 +1,4 @@
-"""Allow `python -m cosmo` - the entry the npm `cosmo` launcher delegates to."""
+"""Allow `python -m cosmo` as an alternative to the `cosmo` console script."""
 
 from cosmo.main import cli
 

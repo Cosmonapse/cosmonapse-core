@@ -34,6 +34,27 @@ One brain per project
 Keyed by resolved project path. Starting a brain that is already running is
 idempotent and returns the running one, which keeps the button honest when
 two tabs are open on the same project.
+
+Reporting a brain that died on the way up
+-----------------------------------------
+``create_subprocess_exec`` returning is not the same as a brain running: an
+``ImportError``, or a ``brain.py`` from an older skeleton that has ``build_*``
+helpers but no ``if __name__ == "__main__"`` block, exits in milliseconds.
+Returning ``running: True`` for that hands the UI a green light it then has to
+walk back, and the traceback only ever exists in the WebSocket scrollback -
+which nobody is attached to yet. So ``start`` holds the spawn for
+``_FAST_EXIT_GRACE_S``, and a brain that is already gone by then is raised as
+``BrainExited`` with its exit code and whatever it printed. Same shape as
+``_genesis_synapse.start_dev_synapse``, for the same reason.
+
+Which synapse the brain talks to
+--------------------------------
+The scaffold's ``config.py`` reads ``SYNAPSE_URL`` from the environment and
+falls back to an in-process ``MemorySynapse``. Inheriting Genesis's env
+verbatim therefore means the Run button boots a brain on a private bus even
+when the synapse pill next to it is green - invisible to that synapse, and to
+Prism. So ``start`` passes the URL of the Genesis-managed synapse serving this
+project's namespace, unless the caller named one explicitly.
 """
 
 from __future__ import annotations
@@ -46,6 +67,8 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
+from cosmo.commands import _genesis_synapse as _gs
+
 #: How much of the child's output to keep, so a client connecting late still
 #: sees the banner and prompt it missed rather than an empty screen.
 SCROLLBACK_CHARS = 60_000
@@ -53,13 +76,47 @@ SCROLLBACK_CHARS = 60_000
 #: Grace period between asking a brain to stop and killing it.
 _TERM_GRACE_S = 3.0
 
+#: How long ``start`` waits before believing a brain is actually up. Long
+#: enough for an import-time failure to unwind, short enough that the Run
+#: button still feels instant.
+_FAST_EXIT_GRACE_S = 1.0
+
+
+class BrainExited(RuntimeError):
+    """``brain.py`` was spawned but exited before it could serve anything."""
+
+    def __init__(self, code: int, output: str) -> None:
+        self.code = code
+        # _read_forever annotates the scrollback with its own "[genesis] ..."
+        # lines. They are always present by the time a failure is reported, so
+        # counting them as child output would suppress the hint below on
+        # exactly the case it exists for: a brain that printed nothing.
+        self.output = "\n".join(
+            line for line in output.strip().splitlines()
+            if not line.lstrip().startswith("[genesis]")
+        ).strip()
+        detail = (
+            f" It printed:\n{self.output}" if self.output else
+            " It printed nothing, which usually means brain.py has no entry "
+            "point: a module of build_* helpers with no `if __name__ == "
+            '"__main__"` block imports its parts and returns without starting '
+            "anything. `cosmo init` writes that block - a project scaffolded "
+            "before it did needs it added."
+        )
+        super().__init__(f"brain.py exited immediately with code {code}.{detail}")
+
 
 class Brain:
     """One running ``brain.py``, plus everyone watching its output."""
 
-    def __init__(self, project: Path, proc: asyncio.subprocess.Process) -> None:
+    def __init__(self, project: Path, proc: asyncio.subprocess.Process,
+                 synapse_url: str = "") -> None:
         self.project = project
         self.proc = proc
+        #: "" when the brain is running on its own in-process MemorySynapse.
+        #: Reported so the Test tab can say which bus it is talking to rather
+        #: than leaving the user to guess from the synapse pill.
+        self.synapse_url = synapse_url
         self.started_at = time.time()
         self.scrollback = ""
         #: Called with each chunk of child output. WebSocket clients register
@@ -104,6 +161,19 @@ class Brain:
     def start_pump(self) -> None:
         self._pump = asyncio.ensure_future(self._read_forever())
 
+    async def drain(self, timeout: float = 1.0) -> None:
+        """Wait for the pump to reach EOF, so ``scrollback`` is complete.
+
+        A dead child's output is still in flight when ``wait()`` returns;
+        reporting the failure before this has run yields an empty traceback.
+        Shielded, because the caller may be on a timeout of its own and
+        cancelling the pump would truncate exactly what it came for.
+        """
+        if self._pump is None:
+            return
+        with contextlib.suppress(Exception):
+            await asyncio.wait_for(asyncio.shield(self._pump), timeout)
+
     # -- input ----------------------------------------------------------
 
     def write(self, text: str) -> None:
@@ -137,6 +207,7 @@ class Brain:
             "exit_code": self.proc.returncode,
             "started_at": self.started_at,
             "uptime_s": round(time.time() - self.started_at, 1),
+            "synapse_url": self.synapse_url,
         }
 
     async def stop(self) -> None:
@@ -181,12 +252,30 @@ def status(raw_path: str) -> dict[str, Any]:
     brain = get(raw_path)
     if brain is None:
         return {"running": False, "path": raw_path, "pid": None,
-                "exit_code": None, "started_at": None, "uptime_s": None}
+                "exit_code": None, "started_at": None, "uptime_s": None,
+                "synapse_url": ""}
     return brain.status()
 
 
-async def start(raw_path: str) -> dict[str, Any]:
-    """Spawn ``python -u brain.py`` for a project. Idempotent."""
+def _managed_synapse_url(project: Path) -> str:
+    """The Genesis-started synapse serving this project's namespace, if any.
+
+    Keyed on the namespace in the project's ``config.py``, because that is
+    what the brain will register under: a synapse on another namespace is a
+    different bus as far as this project is concerned, however green its pill.
+    """
+    namespace = _gs.read_namespace(project)
+    if not namespace:
+        return ""
+    return _gs.managed_urls().get(namespace, "")
+
+
+async def start(raw_path: str, *, synapse_url: str | None = None) -> dict[str, Any]:
+    """Spawn ``python -u brain.py`` for a project. Idempotent.
+
+    Raises :class:`BrainExited` when the child is gone within
+    ``_FAST_EXIT_GRACE_S`` - see the module docstring.
+    """
     project = Path(raw_path).expanduser().resolve()
     if not project.is_dir():
         raise FileNotFoundError(f"{project} is not a directory")
@@ -206,6 +295,14 @@ async def start(raw_path: str) -> dict[str, Any]:
     env["PYTHONUNBUFFERED"] = "1"
     env.setdefault("PYTHONIOENCODING", "utf-8")
 
+    url = (synapse_url or "").strip() or _managed_synapse_url(project)
+    if url:
+        env["SYNAPSE_URL"] = url
+    else:
+        # An inherited SYNAPSE_URL from whatever shell launched Genesis would
+        # silently override config.py's in-process default for every project.
+        env.pop("SYNAPSE_URL", None)
+
     proc = await asyncio.create_subprocess_exec(
         sys.executable, "-u", "brain.py",
         cwd=str(project),
@@ -216,8 +313,18 @@ async def start(raw_path: str) -> dict[str, Any]:
         stderr=asyncio.subprocess.STDOUT,
         env=env,
     )
-    brain = Brain(project, proc)
+    brain = Brain(project, proc, synapse_url=url)
     brain.start_pump()
+
+    # Did it survive its own imports? See "Reporting a brain that died on the
+    # way up" in the module docstring.
+    with contextlib.suppress(asyncio.TimeoutError):
+        await asyncio.wait_for(asyncio.shield(proc.wait()),
+                               timeout=_FAST_EXIT_GRACE_S)
+    if proc.returncode is not None:
+        await brain.drain()
+        raise BrainExited(proc.returncode, brain.scrollback)
+
     _BRAINS[_key(project)] = brain
     return brain.status()
 
@@ -227,7 +334,8 @@ async def stop(raw_path: str) -> dict[str, Any]:
     brain = _BRAINS.pop(_key(project), None)
     if brain is None:
         return {"running": False, "path": str(project), "pid": None,
-                "exit_code": None, "started_at": None, "uptime_s": None}
+                "exit_code": None, "started_at": None, "uptime_s": None,
+                "synapse_url": ""}
     await brain.stop()
     out = brain.status()
     out["stopped"] = True

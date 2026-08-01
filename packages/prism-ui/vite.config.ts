@@ -1,13 +1,13 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
-// Prism is served by the `cosmo doppler --prism` aiohttp server out of the
+// Prism is served by the `cosmo prism` aiohttp server out of the
 // packaged `dist/` directory. Two consequences shape this config:
 //
 //   * `base: "./"`  -  assets are referenced relatively so the bundle works no
 //     matter what path the SPA is mounted under (root today, /prism later if
 //     it ever moves onto the landing site).
-//   * the dev server proxies `/ws` to a running `cosmo doppler --prism`
+//   * the dev server proxies `/ws` to a running `cosmo prism`
 //     instance so `npm run dev` gives full HMR against live signals. Start the
 //     CLI first (default port 7071), then `npm run dev`.
 export default defineConfig({

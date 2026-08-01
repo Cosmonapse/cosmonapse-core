@@ -335,7 +335,7 @@ class DevSynapseServer:
             if ns in self._namespaces:
                 self._namespaces[ns]["signal_count"] += 1
 
-        # Notify observer (e.g. cosmo synapse start stdout doppler)
+        # Notify observer (e.g. cosmo synapse start stdout tail)
         if self.on_signal is not None:
             try:
                 self.on_signal(subject, frame)
