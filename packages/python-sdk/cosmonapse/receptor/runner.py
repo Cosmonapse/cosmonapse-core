@@ -195,7 +195,7 @@ def _warn_on_contended_stdin(receptors: tuple[Receptor, ...]) -> None:
         )
 
 
-async def _stop(tasks: Iterable[asyncio.Future]) -> None:
+async def _stop(tasks: Iterable[asyncio.Future[Any]]) -> None:
     """Cancel every still-running interface and wait for it to unwind.
 
     Waiting is the point: a Receptor's cancellation is where it gets to shut
@@ -254,7 +254,7 @@ async def _serve_group(host: str, port: int,
     by the runner instead, before any of this is scheduled.
     """
     try:
-        import uvicorn
+        import uvicorn  # type: ignore[import-not-found]
         from fastapi import FastAPI
     except ModuleNotFoundError as exc:  # pragma: no cover - env dependent
         raise ModuleNotFoundError(_UVICORN_HINT) from exc
