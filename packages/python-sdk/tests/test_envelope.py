@@ -36,7 +36,7 @@ def test_event_ids_are_unique():
 
 def test_signal_round_trips_json():
     """A Signal encodes to JSON and decodes back to an identical object."""
-    from cosmonapse import Signal, SignalType, Directed, new_trace_id
+    from cosmonapse import Directed, Signal, SignalType, new_trace_id
 
     original = Signal(
         type=SignalType.TASK,
@@ -57,7 +57,7 @@ def test_signal_round_trips_json():
 
 def test_task_signal_constructor():
     """task_signal() produces a well-formed TASK envelope."""
-    from cosmonapse import task_signal, SignalType
+    from cosmonapse import SignalType, task_signal
 
     sig = task_signal(input={"task": "build a website"})
     assert sig.type == SignalType.TASK
@@ -68,7 +68,7 @@ def test_task_signal_constructor():
 
 def test_agent_output_signal_constructor():
     """agent_output_signal() wraps output in a neutral AGENT_OUTPUT envelope."""
-    from cosmonapse import agent_output_signal, SignalType, Directed, new_trace_id, new_event_id
+    from cosmonapse import Directed, SignalType, agent_output_signal, new_event_id, new_trace_id
 
     trace = new_trace_id()
     parent = new_event_id()
@@ -87,7 +87,7 @@ def test_agent_output_signal_constructor():
 
 def test_clarification_signal():
     """clarification_signal() produces a CLARIFICATION with question field."""
-    from cosmonapse import clarification_signal, SignalType, Directed, new_trace_id, new_event_id
+    from cosmonapse import Directed, SignalType, clarification_signal, new_event_id, new_trace_id
 
     sig = clarification_signal(
         trace_id=new_trace_id(),
@@ -103,7 +103,7 @@ def test_clarification_signal():
 
 def test_signal_reply():
     """Signal.reply() produces a child signal that inherits trace_id and sets parent_id."""
-    from cosmonapse import task_signal, SignalType
+    from cosmonapse import SignalType, task_signal
 
     parent = task_signal(input={"x": 1})
     reply = parent.reply(type=SignalType.AGENT_OUTPUT, payload={"output": {}})
@@ -115,7 +115,7 @@ def test_signal_reply():
 
 def test_register_signal_has_own_trace():
     """Management signals (REGISTER) get their own trace_id, not a workflow trace."""
-    from cosmonapse import register_signal, SignalType, Directed, new_trace_id
+    from cosmonapse import Directed, SignalType, new_trace_id, register_signal
 
     workflow_trace = new_trace_id()
     sig = register_signal(directed=Directed(id="my-agent"), capabilities=["nlp"])
@@ -138,7 +138,7 @@ def test_axon_type_set():
         SignalType.DEREGISTER,
         SignalType.HEARTBEAT,
     }
-    assert AXON_TYPES == expected
+    assert expected == AXON_TYPES
 
 
 def test_synapse_types_dont_overlap_with_axon_exclusive():
@@ -160,7 +160,8 @@ def test_synapse_types_dont_overlap_with_axon_exclusive():
 def test_memory_synapse_publish_subscribe():
     """MemorySynapse delivers signals to all subscribers on a matching subject."""
     import asyncio
-    from cosmonapse import MemorySynapse, task_signal, SignalType
+
+    from cosmonapse import MemorySynapse, SignalType, task_signal
 
     received = []
 
@@ -185,6 +186,7 @@ def test_memory_synapse_publish_subscribe():
 def test_memory_synapse_wildcard_star():
     """* wildcard matches exactly one subject token."""
     import asyncio
+
     from cosmonapse import MemorySynapse, task_signal
 
     received_subjects = []
@@ -214,6 +216,7 @@ def test_memory_synapse_wildcard_star():
 def test_memory_synapse_queue_group_load_balancing():
     """With a queue_group, only one subscriber in the group receives each message."""
     import asyncio
+
     from cosmonapse import MemorySynapse, task_signal
 
     counts = [0, 0]
@@ -247,6 +250,7 @@ def test_memory_synapse_queue_group_load_balancing():
 def test_memory_synapse_doppler_receives_all():
     """A Doppler (no queue_group) receives every message even alongside queue-grouped subscribers."""
     import asyncio
+
     from cosmonapse import MemorySynapse, task_signal
 
     doppler_seen = []
@@ -280,6 +284,7 @@ def test_memory_synapse_doppler_receives_all():
 def test_dendrite_emits_register_and_deregister_for_its_axons():
     """A Dendrite emits REGISTER on start and DEREGISTER on stop for each attached Axon."""
     import asyncio
+
     from cosmonapse import Axon, Dendrite, MemorySynapse, SignalType
 
     received = []
@@ -312,6 +317,7 @@ def test_dendrite_emits_register_and_deregister_for_its_axons():
 def test_dendrite_routes_task_and_publishes_agent_output():
     """A TASK on the Synapse is routed to the matching Axon; the result is published as AGENT_OUTPUT."""
     import asyncio
+
     from cosmonapse import Axon, Dendrite, Directed, MemorySynapse, SignalType, task_signal
 
     outputs = []
@@ -348,6 +354,7 @@ def test_dendrite_routes_task_and_publishes_agent_output():
 def test_axon_emits_clarification_when_neuron_signals_it():
     """When the Neuron returns {'__clarification__': True, ...} the Dendrite publishes CLARIFICATION."""
     import asyncio
+
     from cosmonapse import Axon, Dendrite, Directed, MemorySynapse, SignalType, task_signal
 
     clarifications = []
@@ -390,6 +397,7 @@ def test_axon_emits_clarification_when_neuron_signals_it():
 def test_axon_emits_error_on_neuron_exception():
     """If the Neuron raises, the Axon returns an ERROR Signal and the Dendrite publishes it."""
     import asyncio
+
     from cosmonapse import Axon, Dendrite, Directed, MemorySynapse, SignalType, task_signal
 
     errors = []

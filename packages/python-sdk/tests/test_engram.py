@@ -16,6 +16,7 @@ The test matrix:
 from __future__ import annotations
 
 import os
+
 import pytest
 import pytest_asyncio
 
@@ -41,7 +42,6 @@ from cosmonapse import (
     recall_signal,
     recalled_signal,
 )
-
 
 # ---------------------------------------------------------------------------
 # Envelope: builder validation

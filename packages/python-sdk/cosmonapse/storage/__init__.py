@@ -21,13 +21,13 @@ Backends shipped:
 
 from cosmonapse.storage.base import NeuronRecord, RegistryStore
 from cosmonapse.storage.memory import MemoryRegistryStore
-from cosmonapse.storage.sqlite import SqliteRegistryStore
 from cosmonapse.storage.postgres import PostgresRegistryStore
+from cosmonapse.storage.sqlite import SqliteRegistryStore
 
 __all__ = [
-    "NeuronRecord",
-    "RegistryStore",
     "MemoryRegistryStore",
-    "SqliteRegistryStore",
+    "NeuronRecord",
     "PostgresRegistryStore",
+    "RegistryStore",
+    "SqliteRegistryStore",
 ]

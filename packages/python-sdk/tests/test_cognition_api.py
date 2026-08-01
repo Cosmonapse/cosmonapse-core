@@ -527,7 +527,7 @@ def test_respond_to_clarification_neuron_override():
 
 def test_respond_to_clarification_wrong_type_raises():
     """Non-CLARIFICATION signals are rejected with DendriteProtocolError."""
-    from cosmonapse import agent_output_signal, DendriteProtocolError
+    from cosmonapse import DendriteProtocolError, agent_output_signal
 
     async def run():
         synapse, orch = await _make_orch()
@@ -613,7 +613,7 @@ def test_respond_to_escalation_neuron_and_input_override():
 
 def test_respond_to_escalation_missing_target_raises():
     """No payload.target and no neuron= override -> DendriteProtocolError."""
-    from cosmonapse import escalation_signal, DendriteProtocolError
+    from cosmonapse import DendriteProtocolError, escalation_signal
 
     async def run():
         synapse, orch = await _make_orch()
@@ -630,7 +630,7 @@ def test_respond_to_escalation_missing_target_raises():
 
 
 def test_respond_to_escalation_wrong_type_raises():
-    from cosmonapse import agent_output_signal, DendriteProtocolError
+    from cosmonapse import DendriteProtocolError, agent_output_signal
 
     async def run():
         synapse, orch = await _make_orch()

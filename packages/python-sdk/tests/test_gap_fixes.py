@@ -19,7 +19,7 @@ Covers:
 """
 
 import asyncio
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -539,7 +539,7 @@ def test_sweep_marks_stale_neurons_deregistered():
                      heartbeat_s=30.0)  # stale_after defaults to 90s
         try:
             await store.connect()
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             await store.upsert(NeuronRecord(
                 neuron_id="ghost",
                 last_heartbeat=now - timedelta(seconds=600),
@@ -564,7 +564,7 @@ def test_find_neurons_max_age_filter():
                      heartbeat_s=0)
         try:
             await store.connect()
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             await store.upsert(NeuronRecord(
                 neuron_id="old", last_heartbeat=now - timedelta(seconds=120),
             ))

@@ -10,10 +10,9 @@ Adapters translate these into whatever the underlying broker requires.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Awaitable
+from collections.abc import Awaitable, Callable
 
 from cosmonapse.envelope import Signal
-
 
 # A subscriber callback receives each Signal as it arrives
 MessageHandler = Callable[[Signal], Awaitable[None]]
@@ -58,7 +57,7 @@ class Synapse(ABC):
         handler: MessageHandler,
         *,
         queue_group: str | None = None,
-    ) -> "Subscription":
+    ) -> Subscription:
         """
         Subscribe to a subject pattern.
 

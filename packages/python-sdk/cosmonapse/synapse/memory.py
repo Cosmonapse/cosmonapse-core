@@ -17,16 +17,16 @@ Wildcard matching supports two forms (same as NATS):
 
 from __future__ import annotations
 
-from typing import Any
 import asyncio
 from collections import defaultdict
+from typing import Any
 
 from cosmonapse.envelope import Signal
 from cosmonapse.synapse.base import MessageHandler, Subscription, Synapse
 
 
 class MemorySubscription(Subscription):
-    def __init__(self, synapse: "MemorySynapse", subject: str, handler_id: int) -> None:
+    def __init__(self, synapse: MemorySynapse, subject: str, handler_id: int) -> None:
         self._synapse = synapse
         self._subject = subject
         self._handler_id = handler_id
@@ -59,11 +59,17 @@ class MemorySynapse(Synapse):
         self._connected: bool = False
         # Per-group round-robin counters for deterministic load balancing
         self._rr_counters: dict[str, int] = defaultdict(int)
+        # Strong refs to in-flight delivery tasks. asyncio only holds a weak
+        # reference, so an untracked task can be collected mid-delivery.
+        self._deliver_tasks: set[asyncio.Task[None]] = set()
 
     async def connect(self) -> None:
         self._connected = True
 
     async def close(self) -> None:
+        for task in list(self._deliver_tasks):
+            task.cancel()
+        self._deliver_tasks.clear()
         self._subs.clear()
         self._connected = False
 
@@ -112,7 +118,9 @@ class MemorySynapse(Synapse):
 
     async def publish(self, subject: str, signal: Signal) -> None:
         assert self._connected, "Synapse not connected"
-        asyncio.create_task(self._deliver(subject, signal))
+        task = asyncio.create_task(self._deliver(subject, signal))
+        self._deliver_tasks.add(task)
+        task.add_done_callback(self._deliver_tasks.discard)
 
     async def _deliver(self, subject: str, signal: Signal) -> None:
         """Fan out signal to all matching subscribers, respecting queue groups."""

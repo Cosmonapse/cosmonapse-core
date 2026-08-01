@@ -177,8 +177,8 @@ __all__ = [
     "_rule_char",
     "_stdout_is_console",
     "_TYPE_COLOURS",
-    "_print_signal",
-    "_hr",
     "_banner_line",
     "_err",
+    "_hr",
+    "_print_signal",
 ]

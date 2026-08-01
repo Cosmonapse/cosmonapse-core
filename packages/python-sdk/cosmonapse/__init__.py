@@ -99,74 +99,31 @@ entire surface is opt-in additive sugar over the existing
 ``dispatch_task`` / ``on_agent_output`` API.
 """
 
+# Single source of truth for the version is the installed distribution
+# metadata, which hatch-vcs derives from the `vX.Y.Z` git tag at build time
+# (see pyproject.toml). Nothing here is hand-edited per release.
+from importlib.metadata import PackageNotFoundError as _PkgNotFound
+from importlib.metadata import version as _dist_version
+
+from cosmonapse._url import connect_synapse, synapse_from_url
 from cosmonapse.axon import (
-    Axon,
-    NeuronFn,
-    ContextFetcher,
     COSMO_INTENT_SYSTEM_PROMPT,
+    Axon,
+    ContextFetcher,
+    NeuronFn,
 )
-from cosmonapse.neuron import Neuron, STANDARD_MCP_SERVERS
 from cosmonapse.dendrite import (
-    Dendrite,
-    DendriteProtocolError,
     Cortex,
     CortexProtocolError,
-)
-from cosmonapse.pathway import PATHWAY_TYPES, Pathway, PathwayClosedError
-from cosmonapse.retry import RetryStrategy, default_retry_on
-from cosmonapse.storage import (
-    NeuronRecord,
-    RegistryStore,
-    MemoryRegistryStore,
-    SqliteRegistryStore,
-    PostgresRegistryStore,
-)
-from cosmonapse.envelope import (
-    Signal,
-    SignalType,
-    Directed,
-    directed_to,
-    AXON_TYPES,
-    SYNAPSE_TYPES,
-    new_event_id,
-    new_trace_id,
-    new_engram_id,
-    task_signal,
-    agent_output_signal,
-    clarification_signal,
-    clarification_answer_signal,
-    permission_signal,
-    permission_decision_signal,
-    final_signal,
-    error_signal,
-    register_signal,
-    deregister_signal,
-    heartbeat_signal,
-    memory_append_signal,
-    task_offer_signal,
-    bid_signal,
-    critique_signal,
-    discover_signal,
-    plan_signal,
-    thought_delta_signal,
-    tool_call_signal,
-    tool_result_signal,
-    escalation_signal,
-    consensus_signal,
-    context_sync_signal,
-    recall_signal,
-    recalled_signal,
-    imprint_signal,
-    imprinted_signal,
-    stop_signal,
-    stopped_signal,
+    Dendrite,
+    DendriteProtocolError,
 )
 from cosmonapse.effector import (
+    TOOL_STANDARDS,
     Effector,
     EffectorBinding,
-    EffectorClient,
-    TOOL_STANDARDS,
     EffectorCancelled,
+    EffectorClient,
     EffectorError,
     EffectorNotBound,
     EffectorOverloaded,
@@ -199,21 +156,64 @@ from cosmonapse.engram import (
     RecallResult,
     SqliteEngram,
 )
+from cosmonapse.envelope import (
+    AXON_TYPES,
+    SYNAPSE_TYPES,
+    Directed,
+    Signal,
+    SignalType,
+    agent_output_signal,
+    bid_signal,
+    clarification_answer_signal,
+    clarification_signal,
+    consensus_signal,
+    context_sync_signal,
+    critique_signal,
+    deregister_signal,
+    directed_to,
+    discover_signal,
+    error_signal,
+    escalation_signal,
+    final_signal,
+    heartbeat_signal,
+    imprint_signal,
+    imprinted_signal,
+    memory_append_signal,
+    new_engram_id,
+    new_event_id,
+    new_trace_id,
+    permission_decision_signal,
+    permission_signal,
+    plan_signal,
+    recall_signal,
+    recalled_signal,
+    register_signal,
+    stop_signal,
+    stopped_signal,
+    task_offer_signal,
+    task_signal,
+    thought_delta_signal,
+    tool_call_signal,
+    tool_result_signal,
+)
+from cosmonapse.neuron import STANDARD_MCP_SERVERS, Neuron
+from cosmonapse.pathway import PATHWAY_TYPES, Pathway, PathwayClosedError
+from cosmonapse.retry import RetryStrategy, default_retry_on
+from cosmonapse.storage import (
+    MemoryRegistryStore,
+    NeuronRecord,
+    PostgresRegistryStore,
+    RegistryStore,
+    SqliteRegistryStore,
+)
 from cosmonapse.synapse import (
-    Synapse,
-    MemorySynapse,
     DevSynapse,
     DevSynapseServer,
-    NatsSynapse,
     KafkaSynapse,
+    MemorySynapse,
+    NatsSynapse,
+    Synapse,
 )
-from cosmonapse._url import synapse_from_url, connect_synapse
-
-# Single source of truth for the version is the installed distribution
-# metadata, which hatch-vcs derives from the `vX.Y.Z` git tag at build time
-# (see pyproject.toml). Nothing here is hand-edited per release.
-from importlib.metadata import PackageNotFoundError as _PkgNotFound
-from importlib.metadata import version as _dist_version
 
 try:
     __version__ = _dist_version("cosmonapse")
@@ -222,7 +222,9 @@ except _PkgNotFound:  # running from a source tree that isn't installed
 
 del _PkgNotFound, _dist_version
 
-__all__ = [
+# Grouped by concept rather than alphabetically  -  this list doubles as the
+# public API map.
+__all__ = [  # noqa: RUF022
     "Signal",
     "SignalType",
     "Directed",

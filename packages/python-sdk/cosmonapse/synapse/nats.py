@@ -36,7 +36,7 @@ logger = logging.getLogger(__name__)
 
 
 class _NatsSubscription(Subscription):
-    def __init__(self, nats_sub: "NATSSubscription") -> None:
+    def __init__(self, nats_sub: NATSSubscription) -> None:
         self._nats_sub = nats_sub
         self._active = True
 
@@ -75,7 +75,7 @@ class NatsSynapse(Synapse):
     ) -> None:
         self._url = url
         self._connect_options: dict[str, Any] = connect_options or {}
-        self._nc: "NATSClient | None" = None
+        self._nc: NATSClient | None = None
         self._connected = False
 
     async def connect(self) -> None:

@@ -25,13 +25,12 @@ from __future__ import annotations
 from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
 from ulid import ULID
-
 
 # ---------------------------------------------------------------------------
 # ULID helpers
@@ -62,12 +61,12 @@ def new_trace_id() -> str:
 # ``dendrite.imprint`` - inherits the task's trace instead of minting a fresh
 # one. Async-safe: each asyncio task sees its own binding.
 
-_AMBIENT_TRACE: ContextVar["tuple[str, str] | None"] = ContextVar(
+_AMBIENT_TRACE: ContextVar[tuple[str, str] | None] = ContextVar(
     "cosmonapse_ambient_trace", default=None
 )
 
 
-def ambient_trace() -> "tuple[str, str] | None":
+def ambient_trace() -> tuple[str, str] | None:
     """Return the ambient (trace_id, parent_id) of the task being handled,
     or None when called outside any task context."""
     return _AMBIENT_TRACE.get()
@@ -95,7 +94,7 @@ def new_engram_id() -> str:
 
 
 def _now_utc() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 # ---------------------------------------------------------------------------
@@ -310,7 +309,7 @@ class Signal(BaseModel):
         return self.model_dump_json(exclude_none=False).encode("utf-8")
 
     @classmethod
-    def decode(cls, data: bytes | str) -> "Signal":
+    def decode(cls, data: bytes | str) -> Signal:
         if isinstance(data, bytes):
             data = data.decode("utf-8")
         return cls.model_validate_json(data)
@@ -321,7 +320,7 @@ class Signal(BaseModel):
         payload: dict[str, Any] | None = None,
         directed: Directed | None = None,
         meta: dict[str, Any] | None = None,
-    ) -> "Signal":
+    ) -> Signal:
         """Build a child Signal sharing this one's trace, parented to its id.
 
         ``directed`` propagates: when not overridden, the reply carries this

@@ -19,9 +19,8 @@ import json
 
 import click
 
-from cosmonapse import Dendrite, SignalType, connect_synapse
-
 from cosmo.commands._shared import _HAS_RICH
+from cosmonapse import Dendrite, SignalType, connect_synapse
 
 if _HAS_RICH:
     from rich.console import Console

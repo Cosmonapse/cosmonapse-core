@@ -15,18 +15,18 @@ connect() raises a clear ImportError if the dep is missing.
 """
 
 from cosmonapse.synapse.base import MessageHandler, Subscription, Synapse
-from cosmonapse.synapse.memory import MemorySynapse
 from cosmonapse.synapse.dev import DevSynapse, DevSynapseServer
-from cosmonapse.synapse.nats import NatsSynapse
 from cosmonapse.synapse.kafka import KafkaSynapse
+from cosmonapse.synapse.memory import MemorySynapse
+from cosmonapse.synapse.nats import NatsSynapse
 
 __all__ = [
-    "Synapse",
-    "Subscription",
-    "MessageHandler",
-    "MemorySynapse",
     "DevSynapse",
     "DevSynapseServer",
-    "NatsSynapse",
     "KafkaSynapse",
+    "MemorySynapse",
+    "MessageHandler",
+    "NatsSynapse",
+    "Subscription",
+    "Synapse",
 ]

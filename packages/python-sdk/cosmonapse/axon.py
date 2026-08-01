@@ -112,7 +112,7 @@ class _HostProxy:
     #: Dendrite ``on_*`` methods with a non-standard registration shape.
     _UNSUPPORTED: frozenset[str] = frozenset({"on_discover", "on_trace"})
 
-    def __init__(self, axon: "Axon") -> None:
+    def __init__(self, axon: Axon) -> None:
         self._axon = axon
 
     @staticmethod
@@ -180,7 +180,7 @@ class Axon(LifecycleHooks):
         self._fn = neuron_fn
         self._context_fetcher = context_fetcher or _noop_context_fetcher
         self._output_parser = output_parser
-        self._dendrite: "Dendrite | None" = None
+        self._dendrite: Dendrite | None = None
 
         # Deferred host-side registrations (@axon.host.on_<signal>), replayed
         # onto the hosting Dendrite when it announces this Axon.
@@ -202,7 +202,7 @@ class Axon(LifecycleHooks):
         # TASK input before the Neuron runs.
         self._before_task_hooks: list[Callable[[dict[str, Any]], Any]] = []
 
-        # Engram bindings the Neuron may address. Keyed by binding.name  - 
+        # Engram bindings the Neuron may address. Keyed by binding.name  -
         # the Neuron passes that name to recall(...) / imprint(...). The
         # Axon enforces the whitelist so a Neuron cannot hit an Engram it
         # was not declared to depend on.
@@ -298,7 +298,7 @@ class Axon(LifecycleHooks):
         recognize: bool = True,
         teach_intents: bool | None = None,
         **source_kwargs: Any,
-    ) -> "Axon":
+    ) -> Axon:
         """Build an Axon around ``Neuron(source=source, **source_kwargs)``.
 
         Works for every registered source (``ollama``, ``huggingface``/``hf``,
@@ -362,13 +362,13 @@ class Axon(LifecycleHooks):
         )
 
     @classmethod
-    def ollama(cls, neuron_id: str, **kw: Any) -> "Axon":
+    def ollama(cls, neuron_id: str, **kw: Any) -> Axon:
         """Axon paired with a local Ollama daemon. kwargs: ``model`` (required),
         ``endpoint``, ``system``, ``temperature``, ``max_tokens``, ``timeout``."""
         return cls.from_source("ollama", neuron_id=neuron_id, **kw)
 
     @classmethod
-    def huggingface(cls, neuron_id: str, **kw: Any) -> "Axon":
+    def huggingface(cls, neuron_id: str, **kw: Any) -> Axon:
         """Axon paired with a HuggingFace TGI / OpenAI-compatible endpoint.
         kwargs: ``endpoint`` (required), ``model``, ``use_chat_api``,
         ``temperature``, ``max_new_tokens``, ``api_key``, ``timeout``."""
@@ -378,21 +378,21 @@ class Axon(LifecycleHooks):
     hf = huggingface
 
     @classmethod
-    def openai(cls, neuron_id: str, **kw: Any) -> "Axon":
+    def openai(cls, neuron_id: str, **kw: Any) -> Axon:
         """Axon paired with the OpenAI Chat Completions API. kwargs: ``model``
         (required), ``api_key`` (or ``OPENAI_API_KEY``), ``endpoint``,
         ``temperature``, ``max_tokens``, ``system``, ``timeout``."""
         return cls.from_source("openai", neuron_id=neuron_id, **kw)
 
     @classmethod
-    def anthropic(cls, neuron_id: str, **kw: Any) -> "Axon":
+    def anthropic(cls, neuron_id: str, **kw: Any) -> Axon:
         """Axon paired with the Anthropic Messages API. kwargs: ``model``
         (required), ``api_key`` (or ``ANTHROPIC_API_KEY``), ``system``,
         ``max_tokens``, ``temperature``, ``timeout``."""
         return cls.from_source("anthropic", neuron_id=neuron_id, **kw)
 
     @classmethod
-    def mcp(cls, neuron_id: str, **kw: Any) -> "Axon":
+    def mcp(cls, neuron_id: str, **kw: Any) -> Axon:
         """Axon paired with a stdio MCP server. kwargs: ``command`` + ``args``
         or ``server`` (preset) + ``args``, plus ``env``, ``cwd``, ``tool``."""
         return cls.from_source("mcp", neuron_id=neuron_id, **kw)
@@ -492,7 +492,7 @@ class Axon(LifecycleHooks):
     # -- attachment ----------------------------------------------------
 
     @property
-    def dendrite(self) -> "Dendrite | None":
+    def dendrite(self) -> Dendrite | None:
         return self._dendrite
 
     @property
@@ -500,7 +500,7 @@ class Axon(LifecycleHooks):
         """Deferred Dendrite decorators - see :class:`_HostProxy`."""
         return _HostProxy(self)
 
-    def attach_to(self, dendrite: "Dendrite") -> None:
+    def attach_to(self, dendrite: Dendrite) -> None:
         if self._dendrite is not None and self._dendrite is not dendrite:
             raise RuntimeError(
                 f"Axon {self.neuron_id!r} is already attached to a different Dendrite"
@@ -519,7 +519,7 @@ class Axon(LifecycleHooks):
         if self._host_regs and not self._host_regs_applied:
             self._host_regs_applied = True
             assert self._dendrite is not None
-            for name, st, filters, fn in self._host_regs:
+            for name, _st, filters, fn in self._host_regs:
                 getattr(self._dendrite, name)(fn, **filters)
             await self._dendrite.ensure_subscribed(
                 *{st for _, st, _, _ in self._host_regs})
@@ -541,7 +541,7 @@ class Axon(LifecycleHooks):
         if callable(aclose):
             try:
                 await aclose()
-            except Exception:  # noqa: BLE001  -  teardown must not raise
+            except Exception:
                 logger.warning("Axon %s: neuron aclose() failed", self.neuron_id, exc_info=True)
 
     # -- core: handle one TASK ----------------------------------------
@@ -887,7 +887,7 @@ class Axon(LifecycleHooks):
             )
         except EffectorError as exc:
             out["error"] = f"{type(exc).__name__}: {exc}"
-        except Exception as exc:  # noqa: BLE001 - tools never kill TASKs
+        except Exception as exc:
             logger.exception(
                 "Axon %s: tool dispatch for %r raised", self.neuron_id, tool,
             )

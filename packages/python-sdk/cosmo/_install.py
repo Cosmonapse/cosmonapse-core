@@ -6,7 +6,7 @@ Helpers that make `pip install -e <cosmonapse>` feel like a "real" install
 on a fresh machine by also putting the Python Scripts/bin directory on the
 user's persistent PATH so the `cosmo` command is callable from any shell.
 
-This lives in the ``cosmo`` CLI package  -  not in the ``cosmonapse`` SDK  - 
+This lives in the ``cosmo`` CLI package  -  not in the ``cosmonapse`` SDK  -
 because manipulating the user's shell configuration is CLI/installer
 behaviour, not something an imported library should ever do.
 
@@ -31,10 +31,10 @@ import argparse
 import os
 import sys
 import sysconfig
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable
 
-__all__ = ["update_path", "scripts_dir", "main"]
+__all__ = ["main", "scripts_dir", "update_path"]
 
 
 # ---------------------------------------------------------------------------
@@ -63,8 +63,8 @@ def scripts_dir() -> Path:
 # ---------------------------------------------------------------------------
 def _update_path_windows(target: Path) -> bool:
     """Append *target* to HKCU\\Environment\\Path and broadcast the change."""
-    import winreg  # type: ignore[import-not-found]
     import ctypes
+    import winreg  # type: ignore[import-not-found]
     from ctypes import wintypes
 
     key = winreg.OpenKey(
@@ -82,7 +82,7 @@ def _update_path_windows(target: Path) -> bool:
             print(f"[cosmonapse] PATH already contains {target_str}")
             return False
 
-        new_value = os.pathsep.join(entries + [target_str])
+        new_value = os.pathsep.join([*entries, target_str])
         # REG_EXPAND_SZ preserves things like %USERPROFILE% in the user's PATH.
         winreg.SetValueEx(key, "Path", 0, winreg.REG_EXPAND_SZ, new_value)
     finally:

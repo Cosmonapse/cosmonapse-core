@@ -669,6 +669,25 @@ def init(name: str, namespace: str, force: bool) -> None:
         raise click.ClickException(str(e))
 
     project = target.name
+
+    if target.exists() and any(target.iterdir()) and not force:
+        existing = [p.name for p in _files_present(target)]
+        if existing:
+            raise click.ClickException(
+                f"{target} already contains {', '.join(existing)}. "
+                "Re-run with --force to overwrite, or choose a new directory."
+            )
+
+    target.mkdir(parents=True, exist_ok=True)
+
+    written: list[str] = []
+    for filename, template in _FILES.items():
+        dest = target / filename
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text(_render(template, namespace=namespace, project=project),
+                        encoding="utf-8")
+        written.append(filename)
+
     click.echo(f"Scaffolded {project} in {target}")
     for filename in written:
         click.echo(f"  + {filename}")
@@ -684,6 +703,6 @@ def init(name: str, namespace: str, force: bool) -> None:
     click.echo("  SYNAPSE_URL=cosmo://127.0.0.1:7070 python brain.py")
 
 
-def _FILES_present(target: Path) -> list[Path]:
+def _files_present(target: Path) -> list[Path]:
     """Return any scaffold files that already exist in the target directory."""
     return [target / f for f in _FILES if (target / f).exists()]

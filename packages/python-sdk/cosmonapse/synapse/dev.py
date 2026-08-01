@@ -53,7 +53,7 @@ import logging
 import uuid
 from collections import defaultdict
 from collections.abc import Callable
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from cosmonapse.envelope import Signal
@@ -93,7 +93,7 @@ def _matches(pattern: str, subject: str) -> bool:
 class _ClientSession:
     """One connected TCP client. Owns its writer + its subscriptions."""
 
-    def __init__(self, server: "DevSynapseServer", writer: asyncio.StreamWriter,
+    def __init__(self, server: DevSynapseServer, writer: asyncio.StreamWriter,
                  peer: str) -> None:
         self.server = server
         self.writer = writer
@@ -278,7 +278,7 @@ class DevSynapseServer:
                 return
             self._namespaces[namespace] = {
                 "transport": transport,
-                "started_at": datetime.now(timezone.utc).isoformat(),
+                "started_at": datetime.now(UTC).isoformat(),
                 "signal_count": 0,
                 "owner": session,
             }
@@ -318,7 +318,7 @@ class DevSynapseServer:
                                     "message": f"namespace {namespace!r} not found"})
                 return
             info = self._namespaces.pop(namespace)
-            owner: "_ClientSession | None" = info.get("owner")
+            owner: _ClientSession | None = info.get("owner")
             if owner and owner._alive:
                 await owner.send({"op": "ns_stopping", "namespace": namespace})
             await session.send({"op": "mgmt_stop_ack", "namespace": namespace})
@@ -373,7 +373,7 @@ class DevSynapseServer:
 # ---------------------------------------------------------------------------
 
 class _DevSubscription(Subscription):
-    def __init__(self, synapse: "DevSynapse", sub_id: str) -> None:
+    def __init__(self, synapse: DevSynapse, sub_id: str) -> None:
         self._synapse = synapse
         self._sub_id = sub_id
         self._active = True

@@ -36,21 +36,19 @@ from __future__ import annotations
 import asyncio
 import json
 import signal as _signal
-from typing import Optional
 from urllib.parse import urlparse
 
 import click
-
-from cosmonapse import Signal, SignalType, discover_signal
-
-# The signal-type colour map is shared across the CLI (see _shared.py).
-from cosmo.commands._shared import _HAS_RICH, _TYPE_COLOURS
 
 # The Prism browser visualization (hero + animated view + WS bridge) lives in
 # its own module so this CLI file stays small.
 from cosmo.commands._prism import run_prism as _run_prism
 
-# --tail renders signals with its own payload-aware formatter, so it keeps a
+# The signal-type colour map is shared across the CLI (see _shared.py).
+from cosmo.commands._shared import _HAS_RICH, _TYPE_COLOURS
+from cosmonapse import Signal, SignalType, discover_signal
+
+# doppler renders signals with its own payload-aware formatter, so it keeps a
 # Console + Text handle here when rich is available.
 if _HAS_RICH:
     from rich.console import Console
@@ -117,18 +115,17 @@ def _make_synapse(base_url: str):
     if scheme == "cosmo":
         from cosmonapse.synapse.dev import DevSynapse
         return DevSynapse(url=base_url)
-    elif scheme == "nats":
+    if scheme == "nats":
         from cosmonapse.synapse.nats import NatsSynapse
         return NatsSynapse(url=base_url)
-    elif scheme == "kafka":
+    if scheme == "kafka":
         from cosmonapse.synapse.kafka import KafkaSynapse
         broker = base_url.replace("kafka://", "")
         return KafkaSynapse(bootstrap_servers=broker)
-    else:
-        raise click.ClickException(
-            f"Unknown synapse scheme {scheme!r}. "
-            "Use cosmo://, nats://, or kafka://."
-        )
+    raise click.ClickException(
+        f"Unknown synapse scheme {scheme!r}. "
+        "Use cosmo://, nats://, or kafka://."
+    )
 
 
 def _render_signal(subject: str, sig: Signal, show_payload: bool = False) -> None:
@@ -157,57 +154,45 @@ def _render_signal(subject: str, sig: Signal, show_payload: bool = False) -> Non
 # CLI command
 # ---------------------------------------------------------------------------
 
-_TARGET_OPTIONS = [
-    click.option(
-        "--url", "url", default=None, metavar="URL",
-        help="Synapse URL, e.g. cosmo://127.0.0.1:7070  (use with --namespace).",
-    ),
-    click.option("--namespace", "-n", default=None, metavar="NS",
-                 help="Namespace to observe. Defaults to 'dev'."),
-    click.option(
-        "--synapse", "synapse_arg", default=None, metavar="URL[/NAMESPACE]",
-        help="Legacy combined form, e.g. cosmo://127.0.0.1:7070/dev. "
-             "Prefer --url + --namespace.",
-    ),
-    click.option("--port", default=7071, show_default=True,
-                 help="Local port for the Prism server (browser mode)."),
-    click.option("--tail", "tail", is_flag=True, default=False,
-                 help="Stream Signals to stdout instead of opening the browser view."),
-    click.option(
-        "--type", "filter_types", multiple=True,
-        type=click.Choice([t.value for t in SignalType], case_sensitive=False),
-        help="Filter to specific signal types (repeatable, --tail only).",
-    ),
-    click.option("--trace", default=None,
-                 help="Filter to a specific trace_id (--tail only)."),
-    click.option("--neuron", default=None,
-                 help="Filter to a specific neuron ID (--tail only)."),
-    click.option("--json", "output_json", is_flag=True,
-                 help="Output one JSON object per line (--tail only)."),
-    click.option("--payload", is_flag=True,
-                 help="Show payload preview alongside each signal (--tail only)."),
-    # Accepted and ignored: in the old `cosmo doppler` this flag selected the
-    # browser view, which is now the default. Kept so existing scripts and the
-    # deprecated `cosmo doppler` alias keep working.
-    click.option("--prism", "show_prism", is_flag=True, default=False, hidden=True),
-]
-
-
-def _target_options(fn):
-    for opt in reversed(_TARGET_OPTIONS):
-        fn = opt(fn)
-    return fn
-
-
-def _run(
-    url: Optional[str],
-    namespace: Optional[str],
-    synapse_arg: Optional[str],
+@click.command()
+@click.option(
+    "--url", "url", default=None, metavar="URL",
+    help="Synapse URL, e.g. cosmo://127.0.0.1:7070  (use with --namespace).",
+)
+@click.option("--namespace", "-n", default=None, metavar="NS",
+              help="Namespace to observe. Defaults to 'dev'.")
+@click.option(
+    "--synapse", "synapse_arg", default=None, metavar="URL[/NAMESPACE]",
+    help="Legacy combined form, e.g. cosmo://127.0.0.1:7070/dev. "
+         "Prefer --url + --namespace.",
+)
+@click.option("--prism", "show_prism", is_flag=True, default=False,
+              help="Launch the Prism browser visualization instead of streaming to stdout.")
+@click.option("--port", default=7071, show_default=True,
+              help="Local port for the Prism server (--prism mode).")
+@click.option(
+    "--type", "filter_types", multiple=True,
+    type=click.Choice([t.value for t in SignalType], case_sensitive=False),
+    help="Filter to specific signal types (repeatable, CLI mode only).",
+)
+@click.option("--trace", default=None,
+              help="Filter to a specific trace_id (CLI mode only).")
+@click.option("--neuron", default=None,
+              help="Filter to a specific neuron ID (CLI mode only).")
+@click.option("--json", "output_json", is_flag=True,
+              help="Output one JSON object per line (CLI mode only).")
+@click.option("--payload", is_flag=True,
+              help="Show payload preview alongside each signal (CLI mode only).")
+def doppler(
+    url: str | None,
+    namespace: str | None,
+    synapse_arg: str | None,
+    show_prism: bool,
     port: int,
     tail: bool,
     filter_types: tuple[str, ...],
-    trace: Optional[str],
-    neuron: Optional[str],
+    trace: str | None,
+    neuron: str | None,
     output_json: bool,
     payload: bool,
     show_prism: bool,
@@ -339,8 +324,8 @@ async def _run_cli(
 
     subject = f"cosmonapse.{namespace}.>"
     # Broadcast DISCOVER once before the wildcard subscribe so every
-    # Dendrite with attached Axons replies with a REGISTER snapshot  - 
-    # the observer immediately sees the current namespace state instead
+    # Dendrite with attached Axons replies with a REGISTER snapshot  -
+    # the Doppler immediately sees the current namespace state instead
     # of waiting for the next heartbeat tick.
     try:
         await syn.publish(
