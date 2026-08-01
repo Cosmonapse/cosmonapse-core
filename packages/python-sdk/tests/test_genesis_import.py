@@ -26,7 +26,7 @@ from pathlib import Path
 
 import pytest
 
-from cosmo.commands import _genesis as G
+from cosmo.commands import _genesis as G  # noqa: N812 - `g` is used pervasively below as a loop var
 from cosmo.commands import _genesis_ast as ga
 from cosmo.commands.init import scaffold_project
 
@@ -194,7 +194,7 @@ def test_editing_a_factory_keeps_it_inside_the_def(tmp_path):
 
 
 def test_behaviours_are_refused_on_a_factory_with_a_reason():
-    with pytest.raises(ga.EditError, match="no\n?\\s*module-level object|module-level object"):
+    with pytest.raises(ga.EditError, match=r"no\n?\s*module-level object|module-level object"):
         ga.upsert_behavior(FACTORY_MODULE, behavior_id=None, scope="own",
                            protocol="before_task", fn_name="validate",
                            signature="input", body="return input")

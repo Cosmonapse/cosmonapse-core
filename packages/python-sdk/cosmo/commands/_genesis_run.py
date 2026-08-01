@@ -162,7 +162,7 @@ class Brain:
     def start_pump(self) -> None:
         self._pump = asyncio.ensure_future(self._read_forever())
 
-    async def drain(self, timeout: float = 1.0) -> None:
+    async def drain(self, timeout: float = 1.0) -> None:  # noqa: ASYNC109 - wraps asyncio.wait_for, not a cancel scope
         """Wait for the pump to reach EOF, so ``scrollback`` is complete.
 
         A dead child's output is still in flight when ``wait()`` returns;
@@ -277,7 +277,7 @@ async def start(raw_path: str, *, synapse_url: str | None = None) -> dict[str, A
     Raises :class:`BrainExited` when the child is gone within
     ``_FAST_EXIT_GRACE_S`` - see the module docstring.
     """
-    project = Path(raw_path).expanduser().resolve()
+    project = Path(raw_path).expanduser().resolve()  # noqa: ASYNC240 - local FS stat, fast
     if not project.is_dir():
         raise FileNotFoundError(f"{project} is not a directory")
     entry = project / "brain.py"
@@ -331,7 +331,7 @@ async def start(raw_path: str, *, synapse_url: str | None = None) -> dict[str, A
 
 
 async def stop(raw_path: str) -> dict[str, Any]:
-    project = Path(raw_path).expanduser().resolve()
+    project = Path(raw_path).expanduser().resolve()  # noqa: ASYNC240 - local FS stat, fast
     brain = _BRAINS.pop(_key(project), None)
     if brain is None:
         return {"running": False, "path": str(project), "pid": None,

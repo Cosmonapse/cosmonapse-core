@@ -861,7 +861,7 @@ async def test_cli_receptor_is_not_http_mounted(stack):
 async def test_importing_cosmonapse_does_not_import_fastapi():
     import subprocess
 
-    out = subprocess.run(
+    out = subprocess.run(  # noqa: ASYNC221 - one-shot packaging check, no other task shares this loop
         [sys.executable, "-c",
          "import sys, cosmonapse; print('fastapi' in sys.modules)"],
         capture_output=True, text=True, check=True,

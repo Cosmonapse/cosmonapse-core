@@ -118,7 +118,7 @@ async def _maybe_await(value: Any) -> Any:
     return value
 
 
-class Receptor(ABC):
+class Receptor(ABC):  # noqa: B024 - no method needs overriding; ABC only blocks direct instantiation
     """Interface primitive: outside world -> TASK -> outside world.
 
     ``dendrite`` must be orchestrator-role; it may be omitted here and

@@ -957,9 +957,11 @@ _NODE_BUILDER = {
                "attach_engram", "ENGRAM", "remembers"),
     "effector": ('        dendrite_id="{mod}-node", role="worker",\n',
                  "attach_effector", "EFFECTOR", "acts"),
-    "receptor": ('        dendrite_id="{mod}-node", heartbeat_s=0,\n'
-                 "        registry_store=MemoryRegistryStore(),\n",
-                 "attach_receptor", "RECEPTOR", "listens"),
+    "receptor": (
+        ('        dendrite_id="{mod}-node", heartbeat_s=0,\n'
+         "        registry_store=MemoryRegistryStore(),\n"),
+        "attach_receptor", "RECEPTOR", "listens",
+    ),
 }
 
 
@@ -1193,7 +1195,7 @@ def _command_params(signature: str) -> list[dict]:
     # defaults align to the tail of the positional list
     pad = [None] * (len(args) - len(defaults))
     out = []
-    for arg, default in zip(args, pad + defaults):
+    for arg, default in zip(args, pad + defaults, strict=True):
         if arg.arg == "self":
             continue
         annotation = ast.unparse(arg.annotation) if arg.annotation else ""
@@ -1207,7 +1209,7 @@ def _command_params(signature: str) -> list[dict]:
             "required": not has_default,
             "form": "positional" if not has_default else "flag" if not is_bool else "switch",
         })
-    for kwarg, default in zip(fn.args.kwonlyargs, fn.args.kw_defaults):
+    for kwarg, default in zip(fn.args.kwonlyargs, fn.args.kw_defaults, strict=True):
         annotation = ast.unparse(kwarg.annotation) if kwarg.annotation else ""
         rendered = ast.unparse(default) if default is not None else ""
         is_bool = annotation == "bool" or rendered in ("True", "False")
@@ -1295,7 +1297,7 @@ def _receptor_base_url(entry: dict) -> str:
     cfg = entry.get("config", {})
     host = str(cfg.get("host") or "127.0.0.1")
     # 0.0.0.0 means "every interface" to a server and nothing to a client.
-    if host in ("0.0.0.0", "::"):
+    if host in ("0.0.0.0", "::"):  # noqa: S104 - detecting it, not binding to it
         host = "127.0.0.1"
     return f"http://{host}:{int(cfg.get('port') or 8000)}"
 
@@ -1450,7 +1452,7 @@ def build_app(dist: Path | None):
         if not folder:
             return web.json_response({"error": "path is required"}, status=400)
 
-        target_path = str(Path(folder).expanduser() / name)
+        target_path = str(Path(folder).expanduser() / name)  # noqa: ASYNC240 - local path math, no I/O
         try:
             target, written = scaffold_project(
                 target_path, namespace=namespace, force=force,
@@ -1787,7 +1789,9 @@ def build_app(dist: Path | None):
                 {"error": "path and file are required"}, status=400)
 
         try:
-            entry = _receptor_entry(Path(raw_path).expanduser().resolve(), file)
+            entry = _receptor_entry(
+                Path(raw_path).expanduser().resolve(), file,  # noqa: ASYNC240 - local FS stat, fast
+            )
         except (OSError, ValueError) as e:
             return web.json_response({"error": str(e)}, status=400)
         if entry is None:
@@ -1806,26 +1810,28 @@ def build_app(dist: Path | None):
 
         started = time.monotonic()
         try:
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.request(
+            async with (
+                aiohttp.ClientSession(timeout=timeout) as session,
+                session.request(
                     method, url,
                     json=payload if method not in ("GET", "HEAD") else None,
-                ) as resp:
-                    text = await resp.text()
-                    elapsed = round((time.monotonic() - started) * 1000)
-                    try:
-                        parsed = json.loads(text)
-                    except ValueError:
-                        parsed = None
-                    return web.json_response({
-                        "ok": True,
-                        "url": url,
-                        "status": resp.status,
-                        "content_type": resp.headers.get("content-type", ""),
-                        "elapsed_ms": elapsed,
-                        "text": text,
-                        "json": parsed,
-                    })
+                ) as resp,
+            ):
+                text = await resp.text()
+                elapsed = round((time.monotonic() - started) * 1000)
+                try:
+                    parsed = json.loads(text)
+                except ValueError:
+                    parsed = None
+                return web.json_response({
+                    "ok": True,
+                    "url": url,
+                    "status": resp.status,
+                    "content_type": resp.headers.get("content-type", ""),
+                    "elapsed_ms": elapsed,
+                    "text": text,
+                    "json": parsed,
+                })
         except asyncio.TimeoutError:
             return web.json_response({
                 "ok": False, "url": url,

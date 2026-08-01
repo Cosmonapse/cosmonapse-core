@@ -132,8 +132,10 @@ def _drain_stderr(proc: subprocess.Popen) -> str:
 # Probing
 # ---------------------------------------------------------------------------
 
-async def _mgmt(host: str, port: int, payload: dict[str, Any],
-                timeout: float = 3.0) -> dict[str, Any]:
+async def _mgmt(
+    host: str, port: int, payload: dict[str, Any],
+    timeout: float = 3.0,  # noqa: ASYNC109 - wraps asyncio.wait_for, not a cancel scope
+) -> dict[str, Any]:
     """One management round-trip against a DevSynapseServer.
 
     Mirrors cosmo.commands.synapse._mgmt_send_recv, kept separate so the
@@ -245,12 +247,14 @@ def _spawn(args: list[str]) -> subprocess.Popen:
         kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
     else:
         kwargs["start_new_session"] = True
-    return subprocess.Popen([sys.executable, "-m", "cosmo", *args], **kwargs)
+    # List-form argv (no shell=True), sys.executable is this interpreter, and
+    # `args` is built by us above - not shell input.
+    return subprocess.Popen([sys.executable, "-m", "cosmo", *args], **kwargs)  # noqa: S603
 
 
 async def start_dev_synapse(
     namespace: str, port: int, host: str = "127.0.0.1",
-    timeout: float | None = None,
+    timeout: float | None = None,  # noqa: ASYNC109 - wraps asyncio.wait_for, not a cancel scope
 ) -> dict:
     """Spawn a dev synapse and wait until it actually answers for `namespace`.
 
@@ -417,7 +421,7 @@ def prism_url(port: int, synapse_url: str, namespace: str) -> str:
 
 async def launch_prism(
     synapse_url: str, namespace: str, port: int = DEFAULT_PRISM_PORT,
-    timeout: float = 15.0,
+    timeout: float = 15.0,  # noqa: ASYNC109 - wraps asyncio.wait_for, not a cancel scope
 ) -> dict:
     """Open Prism on this synapse + namespace, starting a server if needed.
 

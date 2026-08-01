@@ -554,7 +554,8 @@ _AXON_EXPLICIT = [
     _AXON_IDENTITY[0],
     _field("neuron_fn", "name", "The async function this Axon wraps. Defined in this module.",
            required=True),
-] + _AXON_IDENTITY[1:] + _AXON_WIRING + [
+    *_AXON_IDENTITY[1:],
+    *_AXON_WIRING,
     _field("output_parser", "expr", "Normalises this Neuron's native output before wrapping."),
 ]
 
@@ -739,11 +740,12 @@ DECLARATION_FIELDS: dict[str, list[dict[str, Any]]] = {
     "SqliteEngram": [
         _field("path", "string", "Database file. ':memory:' keeps it in-process.",
                placeholder=":memory:"),
-    ] + _ENGRAM_COMMON,
+        *_ENGRAM_COMMON,
+    ],
     "PostgresEngram": [
         _field("dsn", "string", "Connection string.", required=True,
                placeholder="postgresql://localhost/cosmonapse"),
-    ] + _ENGRAM_COMMON + [
+        *_ENGRAM_COMMON,
         _field("min_size", "number", "Minimum pool size."),
         _field("max_size", "number", "Maximum pool size."),
         _field("pool_kwargs", "expr", "Extra kwargs passed to the pool."),
@@ -753,7 +755,7 @@ DECLARATION_FIELDS: dict[str, list[dict[str, Any]]] = {
                placeholder="myproject"),
         _field("description", "string", "One line under the usage in --help."),
         _MODE,
-    ] + _RECEPTOR_COMMON + [
+        *_RECEPTOR_COMMON,
         _field("banner", "string", "Printed once when the REPL starts."),
         _field("prompt", "string", "The REPL prompt.", placeholder="> "),
     ],
@@ -761,12 +763,13 @@ DECLARATION_FIELDS: dict[str, list[dict[str, Any]]] = {
         _field("path", "string", "Route the dispatch endpoint is mounted at.",
                placeholder="/dispatch"),
         _MODE,
-    ] + _RECEPTOR_COMMON + [
+        *_RECEPTOR_COMMON,
         _field("allowed_modes", "expr",
                "The set of modes a request body may ask for. Defaults to all three."),
         _field("max_timeout_s", "number",
                "Ceiling on the deadline a request may ask for. Defaults to 600."),
-    ] + _HTTP_DEPLOY,
+        *_HTTP_DEPLOY,
+    ],
     "ChatReceptor": [
         _field("path", "string", "Route the chat page and its endpoint are mounted at.",
                placeholder="/chat"),
@@ -779,7 +782,9 @@ DECLARATION_FIELDS: dict[str, list[dict[str, Any]]] = {
         _field("history_turns", "number",
                "Prior turns carried per session. 0 makes every turn independent."),
         _MODE,
-    ] + _RECEPTOR_COMMON + _HTTP_DEPLOY,
+        *_RECEPTOR_COMMON,
+        *_HTTP_DEPLOY,
+    ],
 }
 
 

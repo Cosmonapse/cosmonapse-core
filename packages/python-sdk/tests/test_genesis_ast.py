@@ -22,7 +22,7 @@ import textwrap
 
 import pytest
 
-from cosmo.commands import _genesis as G
+from cosmo.commands import _genesis as G  # noqa: N812 - `g` is used pervasively below as a loop var
 from cosmo.commands import _genesis_ast as ga
 from cosmo.commands import _genesis_protocols as gp
 from cosmo.commands.init import scaffold_project
@@ -208,7 +208,7 @@ def test_full_shape_cycle(project):
 
 
 def _cosmonapse_import(src: str) -> list[str]:
-    line = next(l for l in src.splitlines() if l.startswith("from cosmonapse import"))
+    line = next(ln for ln in src.splitlines() if ln.startswith("from cosmonapse import"))
     return [n.strip() for n in line.split("import", 1)[1].split(",")]
 
 
@@ -447,8 +447,8 @@ _HEAD = "from cosmonapse import Axon\n\n\n"
 
 @pytest.mark.parametrize("label,src,source,form", [
     ("explicit",
-     'async def f(input, context) -> dict:\n    return {}\n\n\n'
-     'AXON = Axon(neuron_id="n", neuron_fn=f)\n', "custom", "explicit"),
+     ('async def f(input, context) -> dict:\n    return {}\n\n\n'
+      'AXON = Axon(neuron_id="n", neuron_fn=f)\n'), "custom", "explicit"),
     ("paired", 'AXON = Axon.ollama(neuron_id="n", model="llama3")\n',
      "ollama", "paired"),
     ("paired alias", 'AXON = Axon.hf(neuron_id="n", endpoint="http://x")\n',

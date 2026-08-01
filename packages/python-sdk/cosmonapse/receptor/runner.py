@@ -162,14 +162,15 @@ async def run_receptors(*receptors: Receptor) -> int:
                     "receptor %s finished; the brain keeps running",
                     getattr(owner, "receptor_id", "http"),
                 )
-        # Rule 4: every interface has finished and none of them owned the
-        # invocation. Same state as a brain with no Receptors at all.
-        await idle()
-        return 0
     except asyncio.CancelledError:
         # A signal, almost always. Take the interfaces down with us.
         await _stop(tasks)
         raise
+    else:
+        # Rule 4: every interface has finished and none of them owned the
+        # invocation. Same state as a brain with no Receptors at all.
+        await idle()
+        return 0
 
 
 def _warn_on_contended_stdin(receptors: tuple[Receptor, ...]) -> None:

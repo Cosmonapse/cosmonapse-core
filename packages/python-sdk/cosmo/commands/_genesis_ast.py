@@ -208,8 +208,8 @@ def _lines(text: str) -> list[str]:
 def _span(text: str, node: ast.AST) -> tuple[int, int]:
     """Character offsets [start, end) of a node's full lines."""
     lines = _lines(text)
-    start = sum(len(l) for l in lines[: node.lineno - 1])
-    end = sum(len(l) for l in lines[: node.end_lineno])
+    start = sum(len(ln) for ln in lines[: node.lineno - 1])
+    end = sum(len(ln) for ln in lines[: node.end_lineno])
     return start, end
 
 
@@ -348,8 +348,8 @@ def _body_text(text: str, fn: ast.FunctionDef | ast.AsyncFunctionDef) -> tuple[s
     if not stripped:
         return "", False
     body_lines = stripped.split("\n")
-    if all(not l.strip() or l.startswith("    ") for l in body_lines):
-        return "\n".join(l[4:] if l.strip() else "" for l in body_lines), True
+    if all(not ln.strip() or ln.startswith("    ") for ln in body_lines):
+        return "\n".join(ln[4:] if ln.strip() else "" for ln in body_lines), True
     return stripped, False
 
 
@@ -674,8 +674,8 @@ def _validate(text: str) -> str:
 
 def _replace_span(text: str, lineno: int, end_lineno: int, replacement: str) -> str:
     lines = _lines(text)
-    start = sum(len(l) for l in lines[: lineno - 1])
-    end = sum(len(l) for l in lines[:end_lineno])
+    start = sum(len(ln) for ln in lines[: lineno - 1])
+    end = sum(len(ln) for ln in lines[:end_lineno])
     if not replacement.endswith("\n"):
         replacement += "\n"
     return text[:start] + replacement + text[end:]
@@ -774,15 +774,12 @@ def _render_behavior(
     rest = [a for a in args if a is not lead]
     parts = ([_render_value(lead)] if lead is not None else [])
     parts += [f"{a['name']}={_render_value(a)}" for a in rest]
-    if parts:
-        deco = f"@{path}({', '.join(parts)})"
-    else:
-        deco = f"@{path}"
+    deco = f"@{path}({', '.join(parts)})" if parts else f"@{path}"
 
     lines = (body or "").rstrip("\n").split("\n")
     if indent:
-        lines = ["    " + l if l.strip() else "" for l in lines]
-    if not any(l.strip() for l in lines):
+        lines = ["    " + ln if ln.strip() else "" for ln in lines]
+    if not any(ln.strip() for ln in lines):
         lines = ["    ..."]
     kw = "async def" if is_async else "def"
     return f"{deco}\n{kw} {fn_name}({signature}):\n" + "\n".join(lines) + "\n"
