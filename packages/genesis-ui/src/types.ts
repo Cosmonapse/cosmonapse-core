@@ -69,6 +69,63 @@ export interface ComponentResult {
   note: string;
 }
 
+// ── removing a component ──────────────────────────────────────────────────
+// Two modes over one endpoint, because they differ only in the last step.
+// Archive is the reversible one: the module moves to _archive/<its original
+// path>, which is in the backend's skip list, so it leaves the canvas, the
+// Code tab, the project counts and the import warnings at once. Delete is
+// the same journey without the copy at the end.
+//
+// Both unwire brain.py first. A module gone from disk but still imported and
+// attached is a project that won't start - a worse place than the one you
+// asked to leave.
+
+export type RemoveMode = "archive" | "delete";
+
+export interface RemoveResult {
+  ok: boolean;
+  mode: RemoveMode;
+  /** What was removed, project-relative. */
+  file: string;
+  id: string;
+  kind: ComponentKind | "";
+  /** Where it landed in _archive/, or null for a delete. */
+  archived_to: string | null;
+  /** False when brain.py held no reference to it - a note, never an error. */
+  unwired: boolean;
+  note: string;
+}
+
+export interface RestoreResult {
+  ok: boolean;
+  /** Where it went back to, project-relative. */
+  file: string;
+  kind: ComponentKind;
+  id: string;
+  wired: boolean;
+  note: string;
+}
+
+export interface ArchivedEntry {
+  /** Where it is now: "_archive/neurons/hello.py". */
+  file: string;
+  /** Where it came from, and where Restore puts it back. */
+  origin: string;
+  /** Empty when the archive folder was hand-edited into an unknown shape. */
+  kind: ComponentKind | "";
+  id: string;
+  /** ISO, or empty for an entry with no manifest row. */
+  archived_at: string;
+  /** False once something else occupies `origin` - said up front rather
+   *  than discovered when Restore is pressed. */
+  restorable: boolean;
+}
+
+export interface ArchivedList {
+  path: string;
+  entries: ArchivedEntry[];
+}
+
 export interface FileResult {
   path: string;
   file: string;

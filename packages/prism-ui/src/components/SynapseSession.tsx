@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { readStoredLayout, storeLayout } from "../brainLayout";
+import type { BrainLayout } from "../brainLayout";
 import type { SynapseTab } from "../tabs";
 import { C, MONO } from "../theme";
 import { isPrismError, type Signal } from "../types";
@@ -47,6 +49,9 @@ export function SynapseSession({
   onStatus,
 }: Props) {
   const [view, setView] = useState<PrismView>("brain");
+  // The arrangement is a reading preference, not a property of this synapse,
+  // so it is remembered globally and every new session opens with it.
+  const [brainLayout, setBrainLayout] = useState<BrainLayout>(readStoredLayout);
   const [paused, setPaused] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [selected, setSelected] = useState<Signal | null>(null);
@@ -98,7 +103,12 @@ export function SynapseSession({
         activeId={activeId}
         statuses={statuses}
         view={view}
+        brainLayout={brainLayout}
         onSelectView={setView}
+        onSelectBrainLayout={(l) => {
+          setBrainLayout(l);
+          storeLayout(l);
+        }}
         onSelectTab={onSelectTab}
         onAddTab={onAddTab}
         onCloseTab={onCloseTab}
@@ -118,6 +128,7 @@ export function SynapseSession({
           neurons={neurons}
           namespace={tab.namespace}
           sidebarOffset={sidebarOpen ? SIDEBAR_WIDTH : 0}
+          layout={brainLayout}
           onHover={setHover}
         />
 

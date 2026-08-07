@@ -221,11 +221,10 @@ A server-side STT/TTS Receptor is a plausible future backend for telephony or a 
 
 ## 7. Open questions
 
-1. **TS SDK parity.** The Effector reached parity on 2026-07-17. A `Receptor` in the TS SDK has an obvious CLI/HTTP shape but the chat page would need to be shared or duplicated. Worth deciding before the surface hardens.
-2. **`retry=` on `ask`.** Deliberately omitted (it lives on `dispatch_and_wait`, which the Receptor bypasses to keep the Pathway). If retries turn out to be wanted at the edge, the honest fix is a `retry=` on `dispatch` itself rather than a re-implementation inside the Receptor.
-3. **CLARIFICATION / PERMISSION at the edge.** Both are terminal for `wait`, so a Receptor currently *reports* them and stops. A chat interface is the natural place to answer one (`respond_to_clarification` re-dispatches on the same trace) - that loop is designed but not built.
-4. **`dispatch_offer`.** The bidding shape is not in the trio. It is a fourth dispatch shape on Dendrite and arguably a fourth Receptor mode; left out until there is a use case at an edge.
-5. **Server-side voice.** See §5.6.
+1. **`retry=` on `ask`.** Deliberately omitted (it lives on `dispatch_and_wait`, which the Receptor bypasses to keep the Pathway). If retries turn out to be wanted at the edge, the honest fix is a `retry=` on `dispatch` itself rather than a re-implementation inside the Receptor.
+2. **CLARIFICATION / PERMISSION at the edge.** Both are terminal for `wait`, so a Receptor currently *reports* them and stops. A chat interface is the natural place to answer one (`respond_to_clarification` re-dispatches on the same trace) - that loop is designed but not built.
+3. **`dispatch_offer`.** The bidding shape is not in the trio. It is a fourth dispatch shape on Dendrite and arguably a fourth Receptor mode; left out until there is a use case at an edge.
+4. **Server-side voice.** See §5.6.
 
 ---
 

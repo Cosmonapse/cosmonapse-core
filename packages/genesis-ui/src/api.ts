@@ -1,4 +1,5 @@
 import type {
+  ArchivedList,
   AxonForm,
   AxonSource,
   BrowseResult,
@@ -16,6 +17,9 @@ import type {
   ProxyResult,
   ReceptorList,
   ReceptorShape,
+  RemoveMode,
+  RemoveResult,
+  RestoreResult,
   ScaffoldResult,
   SynapseStatus,
 } from "./types";
@@ -82,6 +86,35 @@ export function addComponent(args: {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(args),
   }).then((r) => asJson<ComponentResult>(r));
+}
+
+/**
+ * Unwire a component from brain.py, then archive or delete its module.
+ *
+ * One call for both modes: the difference is a single verb at the end of a
+ * journey that is otherwise identical, and two endpoints would be two ways
+ * for the unwiring to drift apart.
+ */
+export function removeComponent(args: {
+  path: string;
+  /** Project-relative: "neurons/hello.py", or an "_archive/..." path to
+   *  delete something already archived. */
+  file: string;
+  mode: RemoveMode;
+}): Promise<RemoveResult> {
+  return post<RemoveResult>("/api/component/delete", args);
+}
+
+/** Move an archived module back where it came from and re-wire brain.py. */
+export function restoreComponent(path: string, file: string): Promise<RestoreResult> {
+  return post<RestoreResult>("/api/component/restore", { path, file });
+}
+
+/** What is in this project's _archive/, newest first. */
+export function readArchived(path: string): Promise<ArchivedList> {
+  return fetch(`/api/archived?path=${encodeURIComponent(path)}`).then((r) =>
+    asJson<ArchivedList>(r),
+  );
 }
 
 /** Read one project file back as text (the Code tab). */

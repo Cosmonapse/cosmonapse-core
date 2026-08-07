@@ -10,6 +10,8 @@ import {
 import { C, MONO, colorFor } from "../theme";
 import { AXON_TYPES, SYNAPSE_NODE, TARGET_TYPES, receptorLabel, receptorRef } from "../types";
 import type { NeuronView, ParticipantKind, Signal } from "../types";
+import { brainGeometry } from "../brainLayout";
+import type { BrainLayout, Point } from "../brainLayout";
 
 
 export interface PrismCanvasHandle {
@@ -20,10 +22,11 @@ interface Props {
   neurons: Map<string, NeuronView>;
   namespace: string;
   sidebarOffset: number;
+  /** Radial soma, or a horizontal bus with receptors above it. */
+  layout: BrainLayout;
   onHover: (id: string | null) => void;
 }
 
-type Point = { x: number; y: number };
 type Particle = { id: string; from: string; via?: string; to: string; color: string };
 
 const PULSE_MS = 800;
@@ -32,7 +35,7 @@ const TWO_LEG_MS = 1800;
 const AXON_BUFFER_TTL = 5000; // ms to keep buffered axon signals waiting for a matching target
 
 export const PrismCanvas = forwardRef<PrismCanvasHandle, Props>(function PrismCanvas(
-  { neurons, namespace, sidebarOffset, onHover },
+  { neurons, namespace, sidebarOffset, layout, onHover },
   ref,
 ) {
   const [vp, setVp] = useState({ w: window.innerWidth, h: window.innerHeight - 64 });
@@ -138,20 +141,29 @@ export const PrismCanvas = forwardRef<PrismCanvasHandle, Props>(function PrismCa
     },
   }), [pulse, flash]);
 
-  const layout = useLayout(neurons, vp);
+  const geo = useMemo(
+    () => brainGeometry(neurons, vp, layout, sidebarOffset),
+    [neurons, vp, layout, sidebarOffset],
+  );
 
   const tendrils = useMemo(() => {
     const out: { id: string; from: Point; to: Point; k1: string; k2: string }[] = [];
     for (const ne of neurons.values()) {
-      const from = layout[ne.id];
+      const from = geo.pos[ne.id];
       if (!from) continue;
-      out.push({ id: ne.id, from, to: layout[SYNAPSE_NODE], k1: `${ne.id}::${SYNAPSE_NODE}`, k2: `${SYNAPSE_NODE}::${ne.id}` });
+      out.push({
+        id: ne.id,
+        from,
+        to: geo.junction(ne.id),
+        k1: `${ne.id}::${SYNAPSE_NODE}`,
+        k2: `${SYNAPSE_NODE}::${ne.id}`,
+      });
     }
     return out;
-  }, [neurons, layout]);
+  }, [neurons, geo]);
 
-  const cx = vp.w / 2;
-  const cy = vp.h / 2;
+  const soma = geo.pos[SYNAPSE_NODE];
+  const synapsePulse = pulses.has(SYNAPSE_NODE);
 
   return (
     <svg
@@ -170,31 +182,53 @@ export const PrismCanvas = forwardRef<PrismCanvasHandle, Props>(function PrismCa
           <stop offset="40%" stopColor={C.accent} stopOpacity="0.3" />
           <stop offset="100%" stopColor={C.bg} stopOpacity="1" />
         </radialGradient>
+        <linearGradient id="busFill" x1="0%" y1="0%" x2="100%" y2="0%">
+          <stop offset="0%" stopColor={C.accent} stopOpacity="0.5" />
+          <stop offset="50%" stopColor={C.accent2} stopOpacity="0.6" />
+          <stop offset="100%" stopColor={C.accent} stopOpacity="0.5" />
+        </linearGradient>
         <filter id="blur-sm"><feGaussianBlur stdDeviation="2" /></filter>
         <filter id="blur-md"><feGaussianBlur stdDeviation="5" /></filter>
         <filter id="glow-soft"><feGaussianBlur stdDeviation="3" /></filter>
       </defs>
 
-      {/* Ambient center bloom */}
-      <ellipse cx={cx} cy={cy} rx={320} ry={240} fill="url(#centerGlow)" style={{ pointerEvents: "none" }} filter="url(#blur-md)" />
+      {/* Ambient bloom - a pool around the soma, a wash along the bar */}
+      {geo.bar ? (
+        <ellipse
+          cx={(geo.bar.x0 + geo.bar.x1) / 2}
+          cy={geo.bar.y}
+          rx={(geo.bar.x1 - geo.bar.x0) / 2}
+          ry={110}
+          fill="url(#centerGlow)"
+          style={{ pointerEvents: "none" }}
+          filter="url(#blur-md)"
+        />
+      ) : (
+        <ellipse cx={soma.x} cy={soma.y} rx={320} ry={240} fill="url(#centerGlow)" style={{ pointerEvents: "none" }} filter="url(#blur-md)" />
+      )}
 
       {/* Axon lines */}
       {tendrils.map((t) => (
         <Tendril key={t.id} from={t.from} to={t.to} active={tendrilsOn.has(t.k1) || tendrilsOn.has(t.k2)} />
       ))}
 
-      {/* Central synapse soma */}
-      <SynapseNode x={layout[SYNAPSE_NODE].x} y={layout[SYNAPSE_NODE].y} pulse={pulses.has(SYNAPSE_NODE)} label="synapse" sublabel={namespace} />
+      {/* The synapse itself - central soma, or the bus every participant taps */}
+      {geo.bar ? (
+        <SynapseBar bar={geo.bar} pulse={synapsePulse} label="synapse" sublabel={namespace} />
+      ) : (
+        <SynapseNode x={soma.x} y={soma.y} pulse={synapsePulse} label="synapse" sublabel={namespace} />
+      )}
 
       {/* Neuron nodes */}
       {Array.from(neurons.values()).map((ne) => {
-        const p = layout[ne.id];
+        const p = geo.pos[ne.id];
         if (!p) return null;
         const color = ne.deregistered ? C.textFaint : colorFor(ne.lastType ?? "REGISTER");
         return (
           <NeuronNode key={ne.id} x={p.x} y={p.y} color={color} pulse={pulses.has(ne.id)}
             kind={ne.kind}
             label={shortLabel(ne)}
+            labelAbove={geo.labelAbove(ne.id)}
             sublabel={
               ne.kind === "engram" ? "engram" :
               ne.kind === "effector" ? "effector" :
@@ -209,11 +243,15 @@ export const PrismCanvas = forwardRef<PrismCanvasHandle, Props>(function PrismCa
       {/* Signal particles - drawn above nodes so the ball of light is
           visible leaving the source and arriving at the destination */}
       {particles.map((p) => (
-        <ParticleDot key={p.id} id={p.id} from={layout[p.from]} via={p.via ? layout[p.via] : undefined} to={layout[p.to]} color={p.color} onDone={dropParticle} />
+        <ParticleDot key={p.id} id={p.id} path={geo.route(p.from, p.via, p.to)} twoLeg={!!p.via} color={p.color} onDone={dropParticle} />
       ))}
 
       {neurons.size === 0 && (
-        <text x={cx} y={cy + 160} textAnchor="middle" fill={C.textFaint} fontSize="15" fontFamily={MONO}>
+        <text
+          x={geo.bar ? (geo.bar.x0 + geo.bar.x1) / 2 : soma.x}
+          y={geo.bar ? geo.bar.y + 90 : soma.y + 160}
+          textAnchor="middle" fill={C.textFaint} fontSize="15" fontFamily={MONO}
+        >
           Waiting for neurons to register…
         </text>
       )}
@@ -229,40 +267,25 @@ function shortLabel(ne: NeuronView): string {
   return name.length > 18 ? name.slice(0, 16) + "…" : name;
 }
 
-// ── layout ────────────────────────────────────────────────────────────────
-function useLayout(neurons: Map<string, NeuronView>, vp: { w: number; h: number }) {
-  return useMemo(() => {
-    const cx = vp.w / 2;
-    const cy = vp.h / 2;
-    const baseR = Math.max(180, Math.min(vp.w, vp.h) * 0.32);
-    const all = Array.from(neurons.values());
-    // Receptors are the boundary of the brain, so they get their own ring
-    // outside every neuron rather than a slot among them. Placing them on
-    // the shared ring would put the edge of the system in the middle of it.
-    const inner = all.filter((ne) => ne.kind !== "receptor");
-    const edge = all.filter((ne) => ne.kind === "receptor");
-    const out: Record<string, Point> = {};
-
-    const n = Math.max(inner.length, 1);
-    inner.forEach((ne, i) => {
-      const a = (i / n) * Math.PI * 2 - Math.PI / 2;
-      const ring = Math.floor(i / 12);
-      out[ne.id] = { x: cx + Math.cos(a) * (baseR + ring * 70), y: cy + Math.sin(a) * (baseR + ring * 70) };
-    });
-
-    const m = Math.max(edge.length, 1);
-    const edgeR = baseR + 150;
-    edge.forEach((ne, i) => {
-      // Offset by half a slot so a lone receptor doesn't sit directly on the
-      // radius of the first neuron and hide the axon line behind it.
-      const a = ((i + 0.5) / m) * Math.PI * 2 - Math.PI / 2;
-      const ring = Math.floor(i / 12);
-      out[ne.id] = { x: cx + Math.cos(a) * (edgeR + ring * 70), y: cy + Math.sin(a) * (edgeR + ring * 70) };
-    });
-
-    out[SYNAPSE_NODE] = { x: cx, y: cy };
-    return out;
-  }, [neurons, vp.w, vp.h]);
+// ── node caption ──────────────────────────────────────────────────────────
+// `ext` is how far the shape reaches from its own centre, so every silhouette
+// hangs its caption the same distance clear of its own outline. Nodes drawn
+// above the synapse caption upward, away from it.
+function NodeLabel({ ext, label, sublabel, subColor, above }: {
+  ext: number; label?: string; sublabel?: string; subColor: string; above?: boolean;
+}) {
+  return (
+    <>
+      {label && (
+        <text y={above ? -(ext + 22) : ext + 18} textAnchor="middle" fontSize="13.5" fontWeight="500"
+          fill={C.text} style={{ fontFamily: MONO }}>{label}</text>
+      )}
+      {sublabel && (
+        <text y={above ? -(ext + 8) : ext + 32} textAnchor="middle" fontSize="12"
+          fill={subColor} style={{ fontFamily: MONO }}>{sublabel}</text>
+      )}
+    </>
+  );
 }
 
 // ── central synapse soma ──────────────────────────────────────────────────
@@ -304,14 +327,62 @@ function SynapseNode({ x, y, pulse, label, sublabel }: {
   );
 }
 
+// ── the synapse as a bus ──────────────────────────────────────────────────
+// The same organ, drawn flat: one shared medium spanning the canvas, with
+// every participant tapping it from above or below. The soma's nucleus
+// becomes a charge running the length of the bar - the bus is never idle,
+// it is only sometimes quiet.
+function SynapseBar({ bar, pulse, label, sublabel }: {
+  bar: { y: number; x0: number; x1: number }; pulse: boolean; label: string; sublabel: string;
+}) {
+  const H = 16;
+  const w = bar.x1 - bar.x0;
+  const glowStr = pulse ? 20 : 10;
+  return (
+    <g transform={`translate(0,${bar.y})`}>
+      {/* Bloom under the bar */}
+      <rect x={bar.x0 - 10} y={-H * 1.6} width={w + 20} height={H * 3.2} rx={H * 1.6}
+        fill={C.accent} fillOpacity={pulse ? 0.16 : 0.07} filter="url(#blur-md)"
+        style={{ transition: "fill-opacity 0.4s" }} />
+      {/* Ripple on pulse - the bar swells rather than expanding outward, so a
+          busy brain doesn't wash the whole canvas */}
+      {pulse && (
+        <rect x={bar.x0} y={-H / 2} width={w} height={H} rx={H / 2} fill="none"
+          stroke={C.accent2} strokeOpacity="0.7" strokeWidth="2">
+          <animate attributeName="y" from={String(-H / 2)} to={String(-H * 1.5)} dur="1s" repeatCount="1" />
+          <animate attributeName="height" from={String(H)} to={String(H * 3)} dur="1s" repeatCount="1" />
+          <animate attributeName="stroke-opacity" from="0.7" to="0" dur="1s" repeatCount="1" />
+        </rect>
+      )}
+      {/* Body */}
+      <rect x={bar.x0} y={-H / 2} width={w} height={H} rx={H / 2}
+        fill="url(#busFill)" fillOpacity={pulse ? 0.32 : 0.18}
+        stroke={C.accent2} strokeWidth="1.5" strokeOpacity="0.7"
+        style={{ filter: `drop-shadow(0 0 ${glowStr}px ${C.accent})`, transition: "filter 0.4s,fill-opacity 0.4s" }} />
+      {/* Inner rail */}
+      <line x1={bar.x0 + 8} y1={0} x2={bar.x1 - 8} y2={0}
+        stroke={C.accent2} strokeWidth="1" strokeOpacity="0.3" strokeDasharray="3 7" />
+      {/* Standing charge sweeping the length of the bus */}
+      <ellipse cy={0} rx={26} ry={H / 2 - 1} fill={C.accent2} fillOpacity="0.22" filter="url(#blur-sm)">
+        <animate attributeName="cx" values={`${bar.x0 + 30};${bar.x1 - 30};${bar.x0 + 30}`}
+          dur="9s" repeatCount="indefinite" calcMode="spline" keyTimes="0;0.5;1"
+          keySplines="0.4 0 0.6 1;0.4 0 0.6 1" />
+      </ellipse>
+      {/* Caption sits at the head of the bar, clear of the participants */}
+      <text x={bar.x0} y={-H} fontSize="14.5" fontWeight="600" fill={C.text} style={{ fontFamily: MONO }}>{label}</text>
+      <text x={bar.x0} y={H + 14} fontSize="13" fill={C.textDim} style={{ fontFamily: MONO }}>{sublabel}</text>
+    </g>
+  );
+}
+
 // ── neuron / engram / effector / receptor node ──────────────────────────
 // kind="neuron"    →  circle   (axon-backed participant - Neurons think)
 // kind="engram"    →  diamond  (Engram memory backend - Engrams remember)
 // kind="effector"  →  triangle (Effector tool backend - Effectors act)
 // kind="receptor"  →  cup      (the listening edge - Receptors listen)
-function NeuronNode({ x, y, color, pulse, kind = "neuron", label, sublabel, onHover, onLeave }: {
+function NeuronNode({ x, y, color, pulse, kind = "neuron", label, sublabel, labelAbove, onHover, onLeave }: {
   x: number; y: number; color: string; pulse: boolean; kind?: ParticipantKind;
-  label?: string; sublabel?: string; onHover?: () => void; onLeave?: () => void;
+  label?: string; sublabel?: string; labelAbove?: boolean; onHover?: () => void; onLeave?: () => void;
 }) {
   const R = 18;
   const glowStr = pulse ? 14 : 7;
@@ -368,8 +439,9 @@ function NeuronNode({ x, y, color, pulse, kind = "neuron", label, sublabel, onHo
           style={{ transition: "fill-opacity 0.3s" }}>
           <animate attributeName="r" values={`${R * 0.2};${R * 0.32};${R * 0.2}`} dur="2.6s" repeatCount="indefinite" />
         </circle>
-        {label && <text y={R * 1.22 + 20} textAnchor="middle" fontSize="13.5" fontWeight="500" fill={C.text} style={{ fontFamily: MONO }}>{label}</text>}
-        {sublabel && <text y={R * 1.22 + 34} textAnchor="middle" fontSize="12" fill={nodeColor} style={{ fontFamily: MONO }}>{sublabel}</text>}
+        {/* The bowl's own reach is the arcs above it, not the cup outline, so
+            an upward caption clears those too. */}
+        <NodeLabel ext={labelAbove ? R * 2 : R * 1.22 + 2} label={label} sublabel={sublabel} subColor={nodeColor} above={labelAbove} />
       </g>
     );
   }
@@ -409,8 +481,7 @@ function NeuronNode({ x, y, color, pulse, kind = "neuron", label, sublabel, onHo
           style={{ transition: "fill-opacity 0.3s" }}>
           <animate attributeName="r" values={`${R * 0.22};${R * 0.34};${R * 0.22}`} dur="2.8s" repeatCount="indefinite" />
         </circle>
-        {label && <text y={R * 1.55 + 18} textAnchor="middle" fontSize="13.5" fontWeight="500" fill={C.text} style={{ fontFamily: MONO }}>{label}</text>}
-        {sublabel && <text y={R * 1.55 + 32} textAnchor="middle" fontSize="12" fill={nodeColor} style={{ fontFamily: MONO }}>{sublabel}</text>}
+        <NodeLabel ext={R * 1.55} label={label} sublabel={sublabel} subColor={nodeColor} above={labelAbove} />
       </g>
     );
   }
@@ -451,8 +522,7 @@ function NeuronNode({ x, y, color, pulse, kind = "neuron", label, sublabel, onHo
           style={{ transition: "fill-opacity 0.3s" }}>
           <animate attributeName="r" values={`${R * 0.22};${R * 0.34};${R * 0.22}`} dur="3.2s" repeatCount="indefinite" />
         </circle>
-        {label && <text y={D + 18} textAnchor="middle" fontSize="13.5" fontWeight="500" fill={C.text} style={{ fontFamily: MONO }}>{label}</text>}
-        {sublabel && <text y={D + 32} textAnchor="middle" fontSize="12" fill={nodeColor} style={{ fontFamily: MONO }}>{sublabel}</text>}
+        <NodeLabel ext={D} label={label} sublabel={sublabel} subColor={nodeColor} above={labelAbove} />
       </g>
     );
   }
@@ -473,8 +543,7 @@ function NeuronNode({ x, y, color, pulse, kind = "neuron", label, sublabel, onHo
       <circle r={R * 0.32} fill={C.accent3} fillOpacity={pulse ? 0.95 : 0.75} filter="url(#glow-soft)" style={{ transition: "fill-opacity 0.3s" }}>
         <animate attributeName="r" values={`${R * 0.28};${R * 0.38};${R * 0.28}`} dur="2.4s" repeatCount="indefinite" />
       </circle>
-      {label && <text y={R + 18} textAnchor="middle" fontSize="13.5" fontWeight="500" fill={C.text} style={{ fontFamily: MONO }}>{label}</text>}
-      {sublabel && <text y={R + 32} textAnchor="middle" fontSize="12" fill={C.textFaint} style={{ fontFamily: MONO }}>{sublabel}</text>}
+      <NodeLabel ext={R} label={label} sublabel={sublabel} subColor={C.textFaint} above={labelAbove} />
     </g>
   );
 }
@@ -503,10 +572,9 @@ const TAIL = [
   { delay: 0.22, r: 1.2, opacity: 0.18 },
 ];
 
-function ParticleDot({ id, from, via, to, color, onDone }: {
-  id: string; from?: Point; via?: Point; to?: Point; color: string; onDone: (id: string) => void;
+function ParticleDot({ id, path, twoLeg, color, onDone }: {
+  id: string; path: string | null; twoLeg: boolean; color: string; onDone: (id: string) => void;
 }) {
-  const twoLeg = !!via;
   const dur = twoLeg ? TWO_LEG_MS : PARTICLE_MS;
 
   useEffect(() => {
@@ -515,21 +583,7 @@ function ParticleDot({ id, from, via, to, color, onDone }: {
     return () => clearTimeout(t);
   }, [id, onDone, dur]);
 
-  if (!from || !to) return null;
-
-  let path: string;
-  if (via) {
-    // Two-leg path: from → via (synapse) → to
-    const mx1 = (from.x + via.x) / 2;
-    const my1 = (from.y + via.y) / 2;
-    const mx2 = (via.x + to.x) / 2;
-    const my2 = (via.y + to.y) / 2;
-    path = `M${from.x} ${from.y} Q${mx1} ${my1},${via.x} ${via.y} Q${mx2} ${my2},${to.x} ${to.y}`;
-  } else {
-    const mx = (from.x + to.x) / 2;
-    const my = (from.y + to.y) / 2;
-    path = `M${from.x} ${from.y} Q${mx} ${my},${to.x} ${to.y}`;
-  }
+  if (!path) return null;
 
   const durS = `${(dur / 1000).toFixed(2)}s`;
   // Ease-in-out so the ball visibly launches from the source and settles

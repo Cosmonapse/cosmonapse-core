@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
 import { detect, readScaffold } from "../api";
-import type { ComponentResult, ImportWarning, ScaffoldResult } from "../types";
+import type {
+  ComponentResult,
+  ImportWarning,
+  RemoveResult,
+  RestoreResult,
+  ScaffoldResult,
+} from "../types";
 import { C, MONO } from "../theme";
 import { Header } from "./Header";
 import type { GenesisView } from "./Header";
@@ -64,6 +70,27 @@ export function Workspace({
     load();
   }
 
+  // Removal is the same story backwards, and reported the same way: what
+  // happened to the module, then what happened to brain.py. The unwiring is
+  // the half people don't expect, so it is never left implied.
+  function onRemoved(result: RemoveResult) {
+    const what =
+      result.mode === "archive"
+        ? `Archived ${result.file} → ${result.archived_to}`
+        : `Deleted ${result.file}`;
+    setToast(`${what} · ${result.note}`);
+    load();
+  }
+
+  function onRestored(result: RestoreResult) {
+    setToast(
+      result.wired
+        ? `Restored ${result.file} · ${result.note}`
+        : `Restored ${result.file} · not wired (${result.note}) - attach it in brain.py yourself`,
+    );
+    load();
+  }
+
   return (
     <div style={{ height: "100vh", display: "flex", flexDirection: "column" }}>
       <Header
@@ -88,11 +115,17 @@ export function Workspace({
           nodes={nodes}
           onNodes={setNodes}
           onAdded={onAdded}
+          onRemoved={onRemoved}
         />
       )}
 
       {!error && scaffold && view === "code" && (
-        <CodeView scaffold={scaffold} onChanged={load} />
+        <CodeView
+          scaffold={scaffold}
+          onChanged={load}
+          onRemoved={onRemoved}
+          onRestored={onRestored}
+        />
       )}
 
       {!error && scaffold && view === "test" && <TestView scaffold={scaffold} />}

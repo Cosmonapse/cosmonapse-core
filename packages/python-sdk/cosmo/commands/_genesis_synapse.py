@@ -446,7 +446,12 @@ async def launch_prism(
     # No --url/--namespace here on purpose: those make _prism.py redirect the
     # bare path to its own seeded query string, which would fight the query
     # string we hand the browser. The SPA reads the target from the URL.
-    proc = _spawn(["prism", f"--port={port}"])
+    #
+    # --no-browser for the other half of the same reason: `cosmo prism` opens
+    # a tab of its own by default, and that tab would be the bare path - a
+    # blank Prism form next to the one Genesis opens correctly pointed. Only
+    # the caller knows the query string, so only the caller opens the tab.
+    proc = _spawn(["prism", f"--port={port}", "--no-browser"])
     _PRISM[port] = proc
 
     deadline = asyncio.get_event_loop().time() + timeout

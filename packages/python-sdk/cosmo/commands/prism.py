@@ -183,6 +183,10 @@ _TARGET_OPTIONS = [
                  help="Output one JSON object per line (--tail only)."),
     click.option("--payload", is_flag=True,
                  help="Show payload preview alongside each signal (--tail only)."),
+    click.option("--no-browser", "no_browser", is_flag=True, default=False,
+                 help="Serve Prism without opening a browser tab. For callers "
+                      "that open their own (Genesis does) and for headless or "
+                      "remote hosts."),
     # Accepted and ignored: in the old `cosmo doppler` this flag selected the
     # browser view, which is now the default. Kept so existing scripts and the
     # deprecated `cosmo doppler` alias keep working.
@@ -208,6 +212,7 @@ def _run(
     output_json: bool,
     payload: bool,
     show_prism: bool,
+    no_browser: bool,
 ) -> None:
     if tail:
         base_url, namespace = _resolve_target(synapse_arg, url, namespace)
@@ -226,6 +231,7 @@ def _run(
         )
         asyncio.run(_run_prism(
             initial_base_url=base_url, initial_namespace=namespace, port=port,
+            open_browser=not no_browser,
         ))
 
 

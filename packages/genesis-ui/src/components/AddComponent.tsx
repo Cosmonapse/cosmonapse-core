@@ -3,7 +3,7 @@ import type { CSSProperties } from "react";
 import { addComponent } from "../api";
 import { C, MONO } from "../theme";
 import type { ComponentKind, ComponentResult, InitError, ReceptorShape } from "../types";
-import { cup, kindColor } from "./CanvasNode";
+import { KIND_FOLDER, cup, kindColor } from "./CanvasNode";
 
 const KINDS: { kind: ComponentKind; label: string; blurb: string }[] = [
   { kind: "neuron", label: "Neuron", blurb: "thinks - an async fn behind an Axon" },
@@ -210,7 +210,7 @@ export function AddComponent({
             }}
           />
           <div style={{ fontSize: 13, color: C.textFaint, fontWeight: 600, margin: "6px 2px 0" }}>
-            lowercase-with-dashes · becomes {FOLDER[kind]}/{(name.trim() || "name").replace(/-/g, "_")}.py
+            lowercase-with-dashes · becomes {KIND_FOLDER[kind]}/{(name.trim() || "name").replace(/-/g, "_")}.py
           </div>
           {error && (
             <div style={{ fontSize: 13.5, color: C.accent3, margin: "8px 2px 0", lineHeight: 1.4 }}>
@@ -240,13 +240,6 @@ const PLACEHOLDER: Record<ComponentKind, string> = {
   effector: "http-tools",
   engram: "session-memory",
   receptor: "terminal",
-};
-
-const FOLDER: Record<ComponentKind, string> = {
-  neuron: "neurons",
-  effector: "effector",
-  engram: "engram",
-  receptor: "receptors",
 };
 
 /** Miniature of the canvas silhouette, so the button reads as the shape it makes. */

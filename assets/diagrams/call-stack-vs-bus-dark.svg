@@ -1,0 +1,284 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 400" width="920" height="400" role="img">
+<style>
+svg {
+  --font-sans: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace;
+
+  color-scheme: dark;
+
+  /* ── Channel triplets ──────────────────────────────────────────────
+     Every alpha-tinted colour in this sheet derives from one of these,
+     so a theme only has to restate the triplet, not the 60 rgba() calls
+     that consume it. Used as rgba(var(--fg-rgb), 0.06). */
+  --fg-rgb: 255, 255, 255;
+  --shadow-rgb: 0, 0, 0;
+  --accent-rgb: 139, 92, 246;
+  --accent2-rgb: 34, 211, 238;
+  --accent3-rgb: 244, 114, 182;
+  --engram-rgb: 167, 139, 250;
+  --warn-rgb: 251, 191, 36;
+  --ok-rgb: 74, 222, 128;
+
+  /* Surfaces */
+  --bg: #07080c;
+  --bg-elev: #0c0e15;
+  --bg-card: #0f111a;
+  --bg-card-soft: rgba(15, 17, 26, 0.5);
+  --bg-nav: rgba(7, 8, 12, 0.7);
+  --bg-mobile: rgba(7, 8, 12, 0.96);
+  --bg-menu: rgba(13, 15, 21, 0.96);
+  --bg-tooltip: #12141d;
+
+  /* Lines */
+  --border: rgba(var(--fg-rgb), 0.06);
+  --border-strong: rgba(var(--fg-rgb), 0.12);
+  --border-hover: rgba(var(--fg-rgb), 0.18);
+  --grid-line: rgba(var(--fg-rgb), 0.025);
+
+  /* Type */
+  --text: #e6e7ec;
+  --text-dim: #9097a8;
+  --text-faint: #5b6275;
+  --brand-word-color: var(--text);
+
+  /* Accents */
+  --accent: #8b5cf6;
+  --accent-2: #22d3ee;
+  --accent-3: #f472b6;
+  --accent-soft: #a78bfa;      /* accent legible as body text */
+  --accent-text: #c4b5fd;      /* accent text on an accent wash */
+  --accent2-soft: #67e8f9;
+  --on-accent: #ffffff;        /* text on a *solid* accent fill */
+  --ok: #86efac;
+  --ok-strong: #4ade80;
+  --warn: #fbbf24;
+  --glow: rgba(var(--accent-rgb), 0.35);
+
+  /* Buttons */
+  --btn-primary-bg: #ffffff;
+  --btn-primary-fg: #07080c;
+  --btn-primary-bg-hover: #e6e7ec;
+
+  /* Code surface + syntax tokens */
+  --code-bg-1: rgba(15, 17, 26, 0.9);
+  --code-bg-2: rgba(12, 14, 21, 0.9);
+  --code-text: #d4d7e0;
+  --tk-kw: #c084fc;
+  --tk-fn: #67e8f9;
+  --tk-str: #86efac;
+  --tk-cm: #5b6275;
+  --tk-num: #fbbf24;
+  --tk-op: #f472b6;
+
+  /* Gradient wordmarks */
+  --grad-1: #ffffff;
+  --grad-2: #a78bfa;
+  --grad-3: #67e8f9;
+
+  /* Elevation */
+  --shadow-lg: 0 30px 80px -20px rgba(var(--shadow-rgb), 0.6);
+  --shadow-md: 0 18px 40px rgba(var(--shadow-rgb), 0.45);
+  --shadow-sm: 0 12px 32px rgba(var(--shadow-rgb), 0.55);
+
+  /* Product + status accents. Referenced from inline styles in the page
+     components as well as from this sheet, so they must stay semantic. */
+  --p-engram: #a78bfa;
+  --p-doppler: #22d3ee;
+  --p-immune: #f87171;
+  --p-cloud: #fb923c;
+  --p-pathway: #818cf8;
+  --status-none: #6b7280;
+  --status-none-rgb: 107, 114, 128;
+  --warn-soft: #fcd34d;
+  --tag-advanced: #f9a8d4;
+  --tag-advanced-rgb: 244, 114, 182;
+
+  /* Atmosphere strength (dialled back in light mode) */
+  --glow-opacity: 0.7;
+
+}
+/* ── Figures ──────────────────────────────────────────────────────────
+   Explanatory diagrams, drawn as inline SVG so they flip with the theme
+   like everything else on the page. No literal colour is allowed in a
+   figure: a group carries a *tone* (--fig-c plus its wash), and every
+   shape and label inside reads those two variables. That is also why the
+   arrowheads are drawn as polygons rather than <marker>s - a marker is
+   resolved in the document, not in the group that points at it, so tone
+   would leak from whichever figure happened to render first.
+
+   On a narrow screen the figure scrolls rather than scaling down: SVG
+   text shrinks with the viewBox, and a diagram you cannot read is worse
+   than one you have to swipe. */
+{
+}
+svg {
+  display: block;
+  font-family: var(--font-sans), system-ui, -apple-system, sans-serif;
+  --fig-c: var(--text-faint);
+  --fig-wash: rgba(var(--fg-rgb), 0.04);
+}
+figcaption {
+  margin-top: 14px;
+  font-family: var(--font-mono), ui-monospace, monospace;
+  font-size: 12px;
+  line-height: 1.65;
+  letter-spacing: 0.02em;
+  color: var(--text-faint);
+  text-align: center;
+}
+
+/* Tones. Kept in step with the silhouette colours used on the Genesis
+   page: Neurons accent, Engrams --p-engram, Effectors accent-3,
+   Receptors accent-2. A component wears one colour across the suite. */
+.t-neutral  { --fig-c: var(--text-faint);  --fig-wash: rgba(var(--fg-rgb), 0.04); }
+.t-accent   { --fig-c: var(--accent);      --fig-wash: rgba(var(--accent-rgb), 0.10); }
+.t-accent2  { --fig-c: var(--accent-2);    --fig-wash: rgba(var(--accent2-rgb), 0.10); }
+.t-accent3  { --fig-c: var(--accent-3);    --fig-wash: rgba(var(--accent3-rgb), 0.10); }
+.t-engram   { --fig-c: var(--p-engram);    --fig-wash: rgba(var(--engram-rgb), 0.10); }
+.t-muted    { --fig-c: var(--status-none); --fig-wash: rgba(var(--status-none-rgb), 0.07); }
+
+.fig-box   { fill: var(--fig-wash); stroke: var(--fig-c); stroke-width: 1.2; }
+.fig-plain { fill: var(--bg-card);  stroke: var(--border-strong); stroke-width: 1; }
+.fig-line  { fill: none; stroke: var(--fig-c); stroke-width: 1.3; }
+.fig-hair  { fill: none; stroke: var(--border-strong); stroke-width: 1; }
+.fig-dash  { stroke-dasharray: 5 5; }
+.fig-fill  { fill: var(--fig-c); stroke: none; }
+.fig-hollow{ fill: var(--bg); stroke: var(--fig-c); stroke-width: 1.4; }
+
+.fig-title { fill: var(--text); font-size: 13.5px; font-weight: 600; }
+.fig-sub   { fill: var(--text-dim); font-size: 11.5px; }
+.fig-tag {
+  fill: var(--fig-c);
+  font-family: var(--font-mono), ui-monospace, monospace;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+}
+.fig-note  { fill: var(--text-faint); font-size: 12px; font-style: italic; }
+.fig-strike { stroke: var(--text-faint); stroke-width: 1.2; }
+
+/* ── Figure motion ────────────────────────────────────────────────────
+   A Signal on the bus is the one thing worth animating on this site, so
+   the only moving part in a figure is a spark travelling a route.
+
+   The route is passed in as custom properties rather than compiled into
+   bespoke keyframes per diagram: --x0/--y0 through --x3/--y3 are read
+   inside the keyframes, so three generic animations cover every path in
+   every figure. Paths here are orthogonal - out of a node, along the bus,
+   down into another - which is exactly what a sequence of translates
+   draws, and translate needs no transform-origin to behave.
+
+   Each spark also carries its start point as a plain inline transform, so
+   when the animation is switched off it rests at the beginning of its
+   route instead of collapsing into the top-left corner. */
+
+@keyframes fig-run2 {
+  0%   { transform: translate(var(--x0), var(--y0)); opacity: 0; }
+  12%  { opacity: 1; }
+  88%  { opacity: 1; }
+  100% { transform: translate(var(--x1), var(--y1)); opacity: 0; }
+}
+@keyframes fig-run3 {
+  0%   { transform: translate(var(--x0), var(--y0)); opacity: 0; }
+  9%   { opacity: 1; }
+  50%  { transform: translate(var(--x1), var(--y1)); }
+  91%  { opacity: 1; }
+  100% { transform: translate(var(--x2), var(--y2)); opacity: 0; }
+}
+@keyframes fig-run4 {
+  0%   { transform: translate(var(--x0), var(--y0)); opacity: 0; }
+  7%   { opacity: 1; }
+  28%  { transform: translate(var(--x1), var(--y1)); }
+  72%  { transform: translate(var(--x2), var(--y2)); }
+  93%  { opacity: 1; }
+  100% { transform: translate(var(--x3), var(--y3)); opacity: 0; }
+}
+
+/* A node acknowledging that something arrived. */
+@keyframes fig-halo {
+  0%   { transform: scale(0.55); opacity: 0.55; }
+  70%  { opacity: 0; }
+  100% { transform: scale(2.3); opacity: 0; }
+}
+
+/* A dashed edge that is carrying something rather than merely optional. */
+@keyframes fig-flow {
+  to { stroke-dashoffset: -20; }
+}
+
+.fig-spark,
+.fig-spark-halo {
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+  animation-fill-mode: both;
+}
+.fig-spark { fill: var(--fig-c); }
+.fig-spark-halo { fill: var(--fig-c); fill-opacity: 0.22; }
+
+.fig-halo {
+  fill: none;
+  stroke: var(--fig-c);
+  stroke-width: 1.2;
+  transform-box: fill-box;
+  transform-origin: center;
+  animation-name: fig-halo;
+  animation-timing-function: ease-out;
+  animation-iteration-count: infinite;
+  animation-fill-mode: both;
+}
+
+.fig-flow { animation: fig-flow 1.8s linear infinite; }
+
+/* Motion is decoration here - the figure reads perfectly still. */
+@media (prefers-reduced-motion: reduce) {
+  svg * { animation: none !important; }
+  .fig-spark-halo { opacity: 0; }
+  .fig-halo { opacity: 0; }
+}
+
+/* ── Product miniatures ───────────────────────────────────────────────
+   A few figures draw the actual tools at postage-stamp size: Genesis's
+   canvas, a terminal, Prism's brain view. They need two type scales the
+   rest of the kit does not - chrome (tab strips, window titles) and
+   terminal output - and a way to make lines arrive in order. */
+.fig-chrome {
+  font-family: var(--font-mono), ui-monospace, monospace;
+  font-size: 9px;
+  letter-spacing: 0.03em;
+  fill: var(--text-faint);
+}
+.fig-chrome.on { fill: var(--fig-c); }
+.fig-term {
+  font-family: var(--font-mono), ui-monospace, monospace;
+  font-size: 9.5px;
+  fill: var(--text-dim);
+}
+.fig-term.dim { fill: var(--text-faint); }
+.fig-term.hot { fill: var(--fig-c); }
+
+/* Output arriving a line at a time. Staggered by delay, looping with the
+   sparks, so the terminal reads as a program that is still running. */
+@keyframes fig-type {
+  0%, 4%   { opacity: 0; }
+  12%, 100% { opacity: 1; }
+}
+.fig-type {
+  animation-name: fig-type;
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+  animation-fill-mode: both;
+}
+
+@keyframes fig-blink {
+  0%, 49%   { opacity: 1; }
+  50%, 100% { opacity: 0; }
+}
+.fig-caret {
+  fill: var(--fig-c);
+  animation: fig-blink 1.1s steps(1, end) infinite;
+}
+
+
+</style>
+<rect width="100%" height="100%" fill="var(--bg)"/>
+<title>A call stack beside an event bus. On the left a supervisor calls step A, which calls step B, which calls step C; a late reply arriving from outside has no frame to return into and is struck out. On the right, three participants and a late reply all sit on one synapse bus, and the late reply enters as an ordinary Signal.</title><line x1="462" y1="24" x2="462" y2="366" class="fig-hair"></line><g class="t-muted"><text class="fig-tag" x="40" y="32" text-anchor="start">control flow</text></g><g class="t-muted" transform="translate(220,74)"><rect x="-86" y="-23" width="172" height="46" rx="10" class="fig-box"></rect><text class="fig-title" text-anchor="middle" y="-1">supervisor</text><text class="fig-sub" text-anchor="middle" y="16">holds the loop</text></g><g class="t-muted"><line x1="220" y1="97" x2="220" y2="121" class="fig-line"></line><polygon class="fig-fill" points="220,130 215,121 225,121"></polygon></g><g class="t-neutral" transform="translate(220,154)"><rect x="-72" y="-20" width="144" height="40" rx="10" class="fig-plain"></rect><text class="fig-title" text-anchor="middle" y="5">step A</text></g><g class="t-muted"><line x1="220" y1="174" x2="220" y2="198" class="fig-line"></line><polygon class="fig-fill" points="220,207 215,198 225,198"></polygon></g><g class="t-neutral" transform="translate(220,231)"><rect x="-72" y="-20" width="144" height="40" rx="10" class="fig-plain"></rect><text class="fig-title" text-anchor="middle" y="5">step B</text></g><g class="t-muted"><line x1="220" y1="251" x2="220" y2="275" class="fig-line"></line><polygon class="fig-fill" points="220,284 215,275 225,275"></polygon></g><g class="t-neutral" transform="translate(220,308)"><rect x="-72" y="-20" width="144" height="40" rx="10" class="fig-plain"></rect><text class="fig-title" text-anchor="middle" y="5">step C</text></g><g class="t-muted"><text class="fig-tag" x="44" y="216" text-anchor="start">late reply</text></g><line x1="46" y1="231" x2="124" y2="231" class="fig-hair fig-dash fig-flow"></line><g class="t-muted"><line x1="130" y1="224" x2="144" y2="238" class="fig-strike"></line><line x1="144" y1="224" x2="130" y2="238" class="fig-strike"></line></g><text class="fig-note" x="220" y="372" text-anchor="middle">no frame left to return into</text><g class="t-accent2"><text class="fig-tag" x="500" y="32" text-anchor="start">event stream</text></g><g class="t-neutral" transform="translate(694,118)"><rect x="-84" y="-22" width="168" height="44" rx="10" class="fig-plain"></rect><text class="fig-title" text-anchor="middle" y="5">late reply</text></g><g class="t-accent2"><line x1="694" y1="140" x2="694" y2="183" class="fig-line fig-dash"></line><polygon class="fig-fill" points="694,192 689,183 699,183"></polygon></g><g class="t-accent2"><rect x="500" y="195.5" width="390" height="13" rx="6.5" class="fig-box"></rect><text class="fig-tag" x="500" y="189" dominant-baseline="auto">synapse</text></g><line x1="568" y1="209" x2="568" y2="268" class="fig-hair"></line><line x1="694" y1="209" x2="694" y2="268" class="fig-hair"></line><line x1="822" y1="209" x2="822" y2="272" class="fig-hair"></line><g class="t-accent" transform="translate(568,288)"><circle r="17" class="fig-hollow"></circle><text class="fig-title" text-anchor="middle" y="36">classifier</text></g><g class="t-accent" transform="translate(694,288)"><circle r="17" class="fig-hollow"></circle><text class="fig-title" text-anchor="middle" y="36">reviewer</text></g><g class="t-accent3" transform="translate(822,288)"><polygon points="0,-19.549999999999997 16.930796569999995,9.774999999999999 -16.930796569999995,9.774999999999999" class="fig-hollow"></polygon><text class="fig-title" text-anchor="middle" y="36">policy tool</text></g><g class="t-accent" transform="translate(568,288)"><circle class="fig-halo" r="22" style="animation-duration:4.5s;animation-delay:1.6s"></circle></g><g class="t-accent3" transform="translate(822,288)"><circle class="fig-halo" r="22" style="animation-duration:4.5s;animation-delay:3.4s"></circle></g><g class="t-accent2"><circle class="fig-spark-halo" r="9.18" style="--x0:694px;--y0:142px;--x1:694px;--y1:202px;--x2:568px;--y2:202px;--x3:568px;--y3:270px;transform:translate(694px, 142px);animation-name:fig-run4;animation-duration:5.2s;animation-delay:0s"></circle><circle class="fig-spark" r="3.4" style="--x0:694px;--y0:142px;--x1:694px;--y1:202px;--x2:568px;--y2:202px;--x3:568px;--y3:270px;transform:translate(694px, 142px);animation-name:fig-run4;animation-duration:5.2s;animation-delay:0s"></circle></g><g class="t-accent3"><circle class="fig-spark-halo" r="9.18" style="--x0:568px;--y0:270px;--x1:568px;--y1:202px;--x2:822px;--y2:202px;--x3:822px;--y3:272px;transform:translate(568px, 270px);animation-name:fig-run4;animation-duration:5.2s;animation-delay:1.8s"></circle><circle class="fig-spark" r="3.4" style="--x0:568px;--y0:270px;--x1:568px;--y1:202px;--x2:822px;--y2:202px;--x3:822px;--y3:272px;transform:translate(568px, 270px);animation-name:fig-run4;animation-duration:5.2s;animation-delay:1.8s"></circle></g><g class="t-accent3"><circle class="fig-spark-halo" r="9.18" style="--x0:822px;--y0:272px;--x1:822px;--y1:202px;--x2:694px;--y2:202px;--x3:694px;--y3:270px;transform:translate(822px, 272px);animation-name:fig-run4;animation-duration:5.2s;animation-delay:3.5s"></circle><circle class="fig-spark" r="3.4" style="--x0:822px;--y0:272px;--x1:822px;--y1:202px;--x2:694px;--y2:202px;--x3:694px;--y3:270px;transform:translate(822px, 272px);animation-name:fig-run4;animation-duration:5.2s;animation-delay:3.5s"></circle></g><text class="fig-note" x="694" y="372" text-anchor="middle">arrives as a Signal, like everything else</text>
+</svg>

@@ -1,10 +1,11 @@
 import { useMemo, useState } from "react";
 import type { CSSProperties } from "react";
-import type { ComponentResult, ScaffoldResult } from "../types";
+import type { ComponentResult, RemoveResult, ScaffoldResult } from "../types";
 import { C, MONO } from "../theme";
-import { CanvasDefs, CanvasNode, cup, kindColor } from "./CanvasNode";
+import { CanvasDefs, CanvasNode, cup, fileOf, kindColor } from "./CanvasNode";
 import type { CanvasNodeData, NodeKind } from "./CanvasNode";
 import { AddComponent } from "./AddComponent";
+import { RemoveComponent } from "./RemoveComponent";
 
 const CANVAS_W = 1600;
 const CANVAS_H = 1000;
@@ -130,11 +131,13 @@ export function GenesisCanvas({
   nodes,
   onNodes,
   onAdded,
+  onRemoved,
 }: {
   scaffold: ScaffoldResult;
   nodes: CanvasNodeData[];
   onNodes: (nodes: CanvasNodeData[]) => void;
   onAdded: (result: ComponentResult) => void;
+  onRemoved: (result: RemoveResult) => void;
 }) {
   const [selected, setSelected] = useState<string | null>(null);
 
@@ -159,6 +162,11 @@ export function GenesisCanvas({
   }
 
   const selectedNode = nodes.find((n) => n.key === selected) ?? null;
+  // The synapse isn't a module, so there's nothing to archive; a node read
+  // from an older backend can arrive without one either.
+  const selectedFile = selectedNode
+    ? fileOf(selectedNode.kind, selectedNode.sublabel)
+    : null;
 
   return (
     <div style={{ flex: 1, position: "relative", overflow: "hidden" }}>
@@ -231,6 +239,23 @@ export function GenesisCanvas({
           <div style={{ color: C.text, marginBottom: 4 }}>{selectedNode.id}</div>
           {selectedNode.sublabel && (
             <div style={{ color: C.textFaint, fontWeight: 600, }}>{selectedNode.sublabel}</div>
+          )}
+
+          {/* Removal lives here rather than in the Add panel because it is
+              about *this* node: you point at the thing you mean, and the
+              confirm sentence can name it. */}
+          {selectedFile && (
+            <RemoveComponent
+              key={selectedFile}
+              projectPath={scaffold.path}
+              file={selectedFile}
+              label={selectedNode.id}
+              accent={kindColor()[selectedNode.kind]}
+              onRemoved={(r) => {
+                setSelected(null);
+                onRemoved(r);
+              }}
+            />
           )}
         </div>
       )}

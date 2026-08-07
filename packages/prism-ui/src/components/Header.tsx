@@ -1,4 +1,5 @@
 import { C, MONO } from "../theme";
+import type { BrainLayout } from "../brainLayout";
 import type { SynapseTab } from "../tabs";
 import { Logo } from "./Logo";
 import { ThemeToggle } from "./ThemeToggle";
@@ -24,7 +25,10 @@ interface Props {
   activeId: string | null;
   statuses: Record<string, boolean>;
   view: PrismView;
+  /** Brain View only: radial soma, or the horizontal bus. */
+  brainLayout: BrainLayout;
   onSelectView: (v: PrismView) => void;
+  onSelectBrainLayout: (l: BrainLayout) => void;
   onSelectTab: (id: string) => void;
   onAddTab: () => void;
   onCloseTab: (id: string) => void;
@@ -56,7 +60,9 @@ export function Header({
   activeId,
   statuses,
   view,
+  brainLayout,
   onSelectView,
+  onSelectBrainLayout,
   onSelectTab,
   onAddTab,
   onCloseTab,
@@ -157,12 +163,68 @@ export function Header({
           clear
         </button>
         {view === "brain" && (
-          <button onClick={onToggleSidebar} style={btn(sidebarOpen ? C.engram : null)}>
-            {sidebarOpen ? "hide signals ›" : "‹ signals"}
-          </button>
+          <>
+            <LayoutToggle value={brainLayout} onSelect={onSelectBrainLayout} />
+            <button onClick={onToggleSidebar} style={btn(sidebarOpen ? C.engram : null)}>
+              {sidebarOpen ? "hide signals ›" : "‹ signals"}
+            </button>
+          </>
         )}
         <ThemeToggle />
       </div>
+    </div>
+  );
+}
+
+/**
+ * Radial or bus - the same brain, arranged two ways. A two-segment pill
+ * rather than a single toggle button, so the arrangement you are *not*
+ * looking at is still named on screen.
+ */
+const LAYOUTS: { id: BrainLayout; glyph: string; title: string }[] = [
+  { id: "radial", glyph: "◎", title: "Radial - synapse at the centre, participants ringing it" },
+  { id: "bus", glyph: "≡", title: "Bus - synapse as a horizontal bar, receptors above it" },
+];
+
+function LayoutToggle({ value, onSelect }: {
+  value: BrainLayout;
+  onSelect: (l: BrainLayout) => void;
+}) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 2,
+        padding: 2,
+        borderRadius: 9,
+        border: "1px solid " + C.borderStrong,
+      }}
+    >
+      {LAYOUTS.map((l) => {
+        const on = l.id === value;
+        return (
+          <div
+            key={l.id}
+            title={l.title}
+            onClick={() => onSelect(l.id)}
+            style={{
+              padding: "3px 10px",
+              borderRadius: 7,
+              cursor: "pointer",
+              fontFamily: MONO,
+              fontSize: 14.5,
+              lineHeight: 1.2,
+              whiteSpace: "nowrap",
+              color: on ? C.accent2 : C.textDim,
+              background: on ? "rgba(var(--accent2-rgb), 0.14)" : "transparent",
+              transition: "all 0.15s",
+            }}
+          >
+            {l.glyph} {l.id}
+          </div>
+        );
+      })}
     </div>
   );
 }

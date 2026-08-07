@@ -152,8 +152,16 @@ async def run_prism(
     initial_base_url: str | None,
     initial_namespace: str | None,
     port: int,
+    open_browser: bool = True,
 ) -> None:
-    """Start the aiohttp server that hosts Prism (SPA + WS bridge)."""
+    """Start the aiohttp server that hosts Prism (SPA + WS bridge).
+
+    ``open_browser`` exists for callers that are already opening the tab
+    themselves. Genesis is the one that matters: it spawns this server but
+    knows the synapse URL and namespace, which only it can put in the query
+    string - so the tab has to be its to open, and this process opening a
+    second one at the bare path is a blank Prism form nobody asked for.
+    """
     try:
         from aiohttp import web
     except ImportError:
@@ -313,10 +321,11 @@ async def run_prism(
         print(f"  Prism:   {ui_url}")
         print("  Ctrl-C to stop\n")
 
-    try:
-        webbrowser.open(ui_url)
-    except Exception:
-        pass
+    if open_browser:
+        try:
+            webbrowser.open(ui_url)
+        except Exception:
+            pass
 
     stop = asyncio.Event()
     loop = asyncio.get_event_loop()

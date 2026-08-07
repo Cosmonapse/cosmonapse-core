@@ -314,8 +314,11 @@ class Axon(LifecycleHooks):
         appended to the source's ``system`` prompt so the model actually
         knows the ``{"cosmo": ...}`` convention the recogniser parses.
         Default (``None``): True exactly when ``recognize`` is on and the
-        source accepts a ``system=`` kwarg (every LLM source except
-        ``huggingface``; ``mcp`` is never taught). Pass False to opt out.
+        source accepts a ``system=`` kwarg -- ``ollama``, ``openai`` and
+        ``anthropic``. The OpenAI-compatible sources (``huggingface``,
+        ``groq``, ``openrouter``, ``together``, ``mistral``) take their
+        system prompt as a ``messages`` entry instead, and ``mcp`` is
+        never taught. Pass False to opt out.
         """
         from cosmonapse.neuron import Neuron  # lazy: avoids import cycle
 
@@ -957,9 +960,14 @@ COSMO_INTENT_SYSTEM_PROMPT = (
 )
 
 # Sources whose Neuron wrapper accepts a ``system=`` kwarg.
+#
+# NOT groq / openrouter / together / mistral: those are aliases for
+# ``_HuggingFaceNeuron`` pointed at an OpenAI-compatible base URL, and
+# that wrapper takes its system prompt as a ``messages`` entry, not a
+# ``system=`` kwarg. Listing them here made ``Axon.from_source()`` raise
+# TypeError for all four.
 _SYSTEM_CAPABLE_SOURCES = frozenset({
-    "ollama", "openai", "anthropic", "groq", "openrouter", "together",
-    "mistral",
+    "ollama", "openai", "anthropic",
 })
 
 _INTENT_KEY = "cosmo"

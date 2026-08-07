@@ -6,6 +6,166 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.11] - 2026-08-01
+
+Adds the seventh primitive - **Receptor**, the interface layer - makes
+`brain.py` a runnable entry point, ships **Genesis** (`cosmo genesis`), renames
+`cosmo doppler` to `cosmo prism`, and retires the TypeScript SDK. Nothing on the
+wire changed: no new signal types, no new envelope fields, no new
+`payload.role` value. 0.1.9 code that imports from `cosmonapse` runs unchanged.
+
+`v0.1.10` tags the same commit and was superseded by an identical re-tag; there
+is no code difference between the two.
+
+### Added
+- **`Receptor` - the interface primitive.** The edge where the outside world
+  touches the fabric: it collects an input from a transport it owns, turns it
+  into a TASK, and hands the trace back in one of the three dispatch shapes.
+  Neurons think, Engrams remember, Effectors act, Receptors listen. It adds
+  **nothing to the wire** - no signal types, no subjects, no envelope fields -
+  and emits exactly the TASK an orchestrator Dendrite has always emitted, tagged
+  with an optional `meta.receptor` for attribution. Structurally it sits *above*
+  the Dendrite (it originates signals rather than servicing them), so unlike
+  `Effector` / `Engram` it needs no host proxy and no subscription.
+  The trio: `rx.send(x)` -> `dispatch_task`, `rx.ask(x)` -> `dispatch` +
+  `Pathway.wait`, `rx.stream(x)` / `rx.iter_signals(x)` -> the subscribe shape;
+  `rx.receive(x, mode=...)` is the single funnel and the three are aliases.
+  Shaping hooks `@rx.on_input`, `@rx.on_result`, `@rx.on_failure`, and
+  `@rx.on_signal(SignalType.X)`, each sync or async; an exception inside
+  `@on_signal` is logged and swallowed so observation cannot break the trace it
+  observes. `rx.bind(dendrite)` supports late binding for ASGI apps, and
+  `neuron=` / `capabilities=` set at construction may be overridden per call.
+  Error hierarchy: `ReceptorError` (trace ended on ERROR), `ReceptorTimeout`
+  (no terminal Signal inside `timeout_s`; subclasses `TimeoutError`),
+  `ReceptorUnbound` (nothing to dispatch *from* - subclasses `ValueError`, and
+  is what an ASGI app hits when it serves a request before `bind()` ran).
+  Targeting mirrors `Dendrite.dispatch`: `neuron=` addresses, `capabilities=`
+  routes, and neither is an open call answered by any `catch_all=True` Axon in
+  the namespace. New exports: `Receptor`,
+  `CliReceptor`, `ApiReceptor`, `ChatReceptor`, `DispatchMode`,
+  `ReceptorError`, `ReceptorTimeout`, `ReceptorUnbound`, `run_brain`,
+  `run_receptors`.
+- **`CliReceptor` - terminal interfaces from a function signature.** A command
+  function returns the TASK input; the argparse tree and the REPL are derived
+  from its signature. No default -> positional (a `str` positional takes
+  `nargs="+"` and is re-joined); a default -> typed `--flag`; a `bool` default ->
+  `store_true`; `*args` / `**kwargs` raise `TypeError` at declaration.
+  `local=True` marks a command that answers without dispatching (the
+  `:memory` / `:stats` shape). `--stream` / `--send` override the mode per
+  invocation; no subcommand drops into the REPL, where `:name` runs a command
+  and a bare line goes to the default one. Needs nothing beyond the core
+  install.
+- **`ApiReceptor` - one endpoint, three shapes.** `POST /dispatch` (the default
+  path; `path=` renames it) with `mode` in the body selects `wait` (JSON
+  result), `send` (`{"accepted", "trace_id"}`), or `stream`
+  (`text/event-stream`); `GET /dispatch/{trace_id}` observes an existing trace
+  over SSE. `allowed_modes` narrows what a caller may ask for and
+  `max_timeout_s` clamps a caller-supplied deadline. A bare body with no `input`
+  envelope is accepted as the input. SSE frames are
+  `event: <signal_type_lowercased>` with a JSON `data:` body, terminated by
+  `event: done`; a failure becomes an `event: error` frame rather than a
+  truncated stream. `rx.router` mounts into an existing app, `rx.app(setup=...)`
+  builds a standalone one.
+- **`ChatReceptor` - conversation over `ApiReceptor`.** Per-session history
+  capped at `history_turns` and passed as a `[{role, content}]` list in the TASK
+  input (recorded *after* the dispatch, so the current message never appears
+  twice); the session id also rides as `context_ref`; `history_turns=0` is
+  stateless. A served page at `GET /` - single file, no build step, no CDN -
+  streams the turn over SSE. `extract_text` walks `reply` / `response` /
+  `answer` / `text` / `message` / `content` / `output` / `report` / `result` so
+  an arbitrary Neuron's dict renders as prose without a hand-written formatter.
+  `voice=True` enables `SpeechRecognition` and `speechSynthesis` **in the served
+  HTML only**: no audio dependency in the SDK, no audio bytes on the wire,
+  nothing about voice in the protocol, and graceful degradation where
+  `SpeechRecognition` is missing.
+- **`cosmonapse[receptor]` extra.** `fastapi>=0.110` + `uvicorn>=0.29`, needed
+  only by `ApiReceptor` / `ChatReceptor`. The HTTP backends are resolved through
+  a module-level `__getattr__`, so `import cosmonapse` never imports FastAPI.
+- **`Dendrite.attach_receptor()` / `detach_receptor()` / `receptors` and
+  `Dendrite.run()`.** The pair that makes `brain.py` a runnable entry point
+  rather than a wiring module beside a demo script. `run()` delegates to
+  `cosmonapse.receptor.runner`, which has four rules: HTTP Receptors sharing a
+  `(host, port)` merge into one FastAPI app on one port; a Receptor finishing
+  detaches that interface and nothing else (`:quit` closes a REPL, it does not
+  kill the brain - what ends a brain is Ctrl-C or SIGTERM); a Receptor that
+  raises still propagates, so a crash is not swallowed by the previous rule; and
+  nothing left to serve blocks forever, because a headless worker node is a
+  legitimate deployment. A one-shot command sets `ends_process` on its Receptor
+  and the process exits with its code - that is the invocation completing, not
+  an interface dying.
+- **`cosmo genesis` - the browser tool for starting and growing a brain.** Name
+  a project, pick a folder, scaffold it (the same skeleton `cosmo init` writes),
+  then work on it as a draw.io-style canvas: one Synapse with the Neurons,
+  Engrams, Effectors, and Receptors it hosts, each wearing the silhouette Prism
+  gives it. Adding a component writes the module and wires it into `brain.py`;
+  removing one archives the module to `_archive/` with a manifest and unwires
+  it, and restore puts both back. The Code tab reads and edits every component
+  with AST-surgical edits, so hand-written code inside a module survives a
+  change made from the UI; declarations carry an explicit source and form axis
+  (`/api/axon-source`), and an existing project can be imported rather than
+  scaffolded. The Test tab runs the brain (`python -u brain.py` as a subprocess,
+  started and stopped explicitly) and connects to whichever interface it mounts
+  - a terminal for a `CliReceptor`, a request builder for an `ApiReceptor`, a
+  chat panel for a `ChatReceptor` - reading the mounted Receptors off the
+  project rather than guessing. The local Synapse and Prism are spawned
+  subprocesses with their own liveness indicators, never run in-process. Ships
+  as a frozen `genesis_dist/` bundle inside the wheel, served by the CLI, using
+  the same split `cosmo prism` uses. Defaults to port 7072; `--port` overrides.
+- **Prism: multi-synapse tabs.** Each watched `(url, namespace)` pair is a tab
+  with a stable id, persisted in `localStorage` across refreshes. The query
+  string always mirrors the active tab, so a Prism link still points at exactly
+  one synapse.
+- **Prism: Receptors on the Constellation.** A receptor node is synthesised from
+  `meta.receptor` and the entry edge is drawn from it to the Neuron it handed
+  the root task to, so a trace shows where it came in and not only where it
+  went.
+- **Prism and Genesis: light and dark themes.** A theme toggle in both, with
+  every colour published as a CSS variable rather than hardcoded.
+- **`Axon(catch_all=True)`.** Answer TASKs that name neither a Neuron nor any
+  capability - the open call. Off by default, because an Axon silently widening
+  its own inbox makes a namespace hard to reason about. Changes nothing about
+  addressed or capability-routed delivery.
+- **`design/RECEPTOR_DESIGN.md`.** The design pass behind the primitive:
+  layering, the trio, terminal semantics, the four backends, and what a Receptor
+  deliberately is not.
+
+### Changed
+- **`cosmo doppler` is now `cosmo prism`.** The command is named after the
+  thing it opens: `cosmo prism` launches the live browser visualization by
+  default (what used to be `cosmo doppler --prism`), and `cosmo prism --tail`
+  streams Signals to stdout (what used to be bare `cosmo doppler`). All other
+  flags - `--url`, `--namespace`, `--synapse`, `--port`, `--type`, `--trace`,
+  `--neuron`, `--json`, `--payload` - are unchanged, and `--no-browser` is new
+  (open the server without launching a browser tab). `cosmo doppler` still
+  works as a hidden deprecated alias that prints a warning and forwards to
+  `cosmo prism`; under the alias `--prism` keeps its old meaning and selects
+  the browser view, while on `cosmo prism` itself it is accepted and ignored.
+  The alias will be removed in a future release. "Doppler" remains the protocol-level term for a
+  subscriber with no queue_group (see `Synapse.subscribe`).
+- **`cosmo init` scaffolds all four primitives, and `brain.py` is the only
+  entry.** The skeleton is now `neurons/` (think), `engram/` (remember),
+  `effector/` (act), and `receptors/` (listen), one worked example in each,
+  plus `config.py`, `brain.py`, and a README. `demo.py` is gone: `brain.py` is
+  both the wiring and the entry, and `python brain.py` gives a full round-trip
+  in one process on an in-process MemorySynapse. `SYNAPSE_URL` still swaps the
+  transport. The scaffolded Engram module now shows the storage/hook split
+  explicitly - a finished `_backend` (`InMemoryEngram`, swappable for
+  `SqliteEngram` / `PostgresEngram`) behind a served `ENGRAM` front whose
+  surfaces are decorators, which is where a cache, an ACL, a quota, or a query
+  rewrite goes. Existing scaffolded projects are unaffected.
+- **`cosmo synapse start --quiet` suppresses the banner too**, not just the
+  Signal stream, and applies before anything prints. A `--quiet` synapse is
+  nearly always one whose stdout is a pipe or the null device, and its banner
+  has no reader.
+- **Prism internals reworked.** Constellation, signal tree, metrics, signal
+  list, tooltip, sidebar, header, and connect form all rebuilt on top of the
+  views 0.1.9 introduced.
+- **Design docs reconciled.** `DECISIONS.md` gains #19 (one reference
+  implementation) and marks #1 partly superseded; `ROADMAP.md` drops milestone
+  0.5.0 ("Parity") and rewrites the 1.0 definition and the 0.3.0 conformance
+  criterion in single-implementation terms; `SDK_DESIGN.md`,
+  `ENGRAM_DESIGN.md`, `ENVELOPE_SPEC.md`, and both READMEs follow.
+
 ### Removed
 - **The TypeScript SDK (`@cosmonapse/sdk`) has been retired.** `packages/ts-sdk`
   is gone from the tree, along with its CI job and the npm publish step in the
@@ -17,18 +177,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   always had exactly one implementation, shipped in the Python package, and
   `pip install cosmonapse` is now the only way to get it. `/docs/typescript/*`
   on the site 308-redirects to the matching Python reference section.
+  Rationale and consequences: `DECISIONS.md` #19.
 
-### Changed
-- **`cosmo doppler` is now `cosmo prism`.** The command is named after the
-  thing it opens: `cosmo prism` launches the live browser visualization by
-  default (what used to be `cosmo doppler --prism`), and `cosmo prism --tail`
-  streams Signals to stdout (what used to be bare `cosmo doppler`). All other
-  flags - `--url`, `--namespace`, `--synapse`, `--port`, `--type`, `--trace`,
-  `--neuron`, `--json`, `--payload` - are unchanged. `cosmo doppler` still
-  works as a hidden deprecated alias that prints a warning and forwards to
-  `cosmo prism`; `--prism` is accepted and ignored. The alias will be removed
-  in a future release. "Doppler" remains the protocol-level term for a
-  subscriber with no queue_group (see `Synapse.subscribe`).
+### Tests
+- 401 tests across 23 files, up from 266 across 19 at 0.1.9. 62 new Receptor
+  tests run against a real `MemorySynapse` and a real worker Axon; 68 cover
+  Genesis's AST surgery, project import, and local API.
 
 ## [0.1.9] - 2026-07-28
 

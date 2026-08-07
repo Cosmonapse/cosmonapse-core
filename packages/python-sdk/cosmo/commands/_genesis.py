@@ -18,6 +18,9 @@ dialog, run a scaffolder, or read a project off disk itself):
     POST /api/init        -> run the standard-skeleton scaffold at a path
     GET  /api/scaffold    -> read a scaffolded project back as graph nodes
     POST /api/component   -> add a Neuron/Effector/Engram module + wire it
+    POST /api/component/delete  -> unwire it, then archive or delete it
+    POST /api/component/restore -> move an archived module back + re-wire
+    GET  /api/archived          -> what is in this project's _archive/
     GET  /api/detect      -> can this folder be opened as a project?
     GET  /api/file        -> read one file out of a project (Code tab)
     POST /api/file        -> write one file back (helpers editor)
@@ -266,6 +269,11 @@ def _read_scaffold(raw_path: str) -> dict:
 _SKIP_DIRS = frozenset({
     "__pycache__", ".git", ".venv", "venv", "env", "node_modules",
     ".mypy_cache", ".pytest_cache", ".ruff_cache", "dist", "build",
+    # Archived components. Listed here rather than filtered at each call
+    # site so that archiving really is removal as far as the rest of Genesis
+    # is concerned: no canvas node, no Code tab entry, no detect() count and
+    # no import warning comes back from a module that has been put away.
+    "_archive",
 })
 
 _IMPORTS_COSMONAPSE = re.compile(r"^\s*(?:from|import)\s+cosmonapse\b", re.MULTILINE)
@@ -1156,6 +1164,412 @@ def _create_component(raw_path: str, kind: str, raw_name: str, force: bool = Fal
 
 
 # ---------------------------------------------------------------------------
+# Removing a component (unwire brain.py, then archive or delete)
+# ---------------------------------------------------------------------------
+#
+# The mirror of _create_component, and deliberately a mirror rather than an
+# ``os.remove``: a module gone from disk but still imported and attached in
+# brain.py leaves a project that won't start, which is a worse place to be
+# than the one the user asked to leave. Removal therefore always unwires
+# first, and reports what it unwired.
+#
+# Archive is the default because a component is a decision, not a keystroke.
+# The module moves to _archive/<its original path> and gains a manifest
+# entry, so Restore can put it back exactly where it was and re-wire it.
+# _archive is in _SKIP_DIRS, so nothing in there is ever read as part of the
+# project again - it is out of the canvas, the Code tab, the detect() counts
+# and the import warnings the moment it lands.
+
+_ARCHIVE_DIR = "_archive"
+_MANIFEST = "manifest.json"
+
+#: kind -> the regex that reads that kind's declared id out of its source.
+_KIND_ID_RE = {
+    "neuron": _NEURON_ID_RE,
+    "effector": _EFFECTOR_ID_RE,
+    "engram": _ENGRAM_ID_RE,
+    "receptor": _RECEPTOR_ID_RE,
+}
+
+_PACKAGE_KIND = {pkg: kind for kind, pkg in _KIND_PACKAGE.items()}
+
+#: Any attach call at all. Used to tell "this builder exists to host the
+#: component being removed" from "this builder hosts other things too",
+#: which is the difference between deleting a block and deleting a line.
+_ANY_ATTACH_RE = re.compile(r"^[ \t]*\w+\.attach_\w+\(", re.MULTILINE)
+
+_TOP_DEF_RE = re.compile(r"^(?:async )?def (\w+)\s*\(", re.MULTILINE)
+
+
+def _top_level_defs(src: str) -> list[tuple[str, int]]:
+    """(name, offset) for every ``def``/``async def`` at column 0."""
+    return [(m.group(1), m.start()) for m in _TOP_DEF_RE.finditer(src)]
+
+
+def _block_end(src: str, start: int) -> int:
+    """Offset just past the last non-blank line of the block at ``start``.
+
+    Line-based like everything else that touches brain.py: the block ends at
+    the first line with content and no indentation. Trailing blank lines are
+    deliberately left outside it - _cut_block consumes those itself, which is
+    what keeps exactly two blank lines between the blocks that remain.
+    """
+    lines = src[start:].splitlines(keepends=True)
+    if not lines:
+        return start
+    at = start + len(lines[0])
+    end = at
+    for line in lines[1:]:
+        if line.strip() and not line[:1].isspace():
+            break
+        at += len(line)
+        if line.strip():
+            end = at
+    return end
+
+
+def _cut_block(src: str, start: int, end: int) -> str:
+    """Remove ``[start, end)`` along with the blank lines that trailed it."""
+    at = end
+    while at < len(src):
+        nl = src.find("\n", at)
+        line = src[at:] if nl == -1 else src[at:nl + 1]
+        if line.strip():
+            break
+        at += len(line)
+        if nl == -1:
+            break
+    out = src[:start] + src[at:]
+    # Cutting the final block would otherwise leave the file ending mid-air.
+    return out if out.endswith("\n") or not out else out + "\n"
+
+
+def _strip_import(src: str, pkg: str, module: str) -> str:
+    """Drop ``module`` from ``from <pkg> import ...``, dropping an emptied line.
+
+    The multi-name form is handled because brain.py is hand-editable and
+    ``from neurons import hello, planner`` is a thing people write, even
+    though _add_import never emits it. The parenthesised multi-line form is
+    left alone rather than half-rewritten - the caller reports what it did,
+    so an untouched import is visible rather than silent.
+    """
+    def repl(m: re.Match[str]) -> str:
+        names = [n.strip() for n in m.group(1).split(",")]
+        keep = [n for n in names if n and n.split()[0] != module]
+        if len(keep) == len([n for n in names if n]):
+            return m.group(0)
+        if not keep:
+            return ""
+        return f"from {pkg} import {', '.join(keep)}\n"
+
+    return re.sub(
+        rf"^from {re.escape(pkg)} import ([^(\n]+)\n", repl, src, flags=re.MULTILINE,
+    )
+
+
+def _drop_builder_arg(src: str, name: str) -> str:
+    """Remove ``name(synapse),`` from the run_brain call.
+
+    Its own line first (the scaffold's shape), then the inline form, so a
+    hand-collapsed ``run_brain(build_a(synapse), build_b(synapse))`` loses one
+    argument instead of keeping a call to a function that no longer exists.
+    """
+    call = re.escape(name)
+    line = re.compile(rf"^[ \t]*{call}\([^()]*\),?[ \t]*\n", re.MULTILINE)
+    if line.search(src):
+        return line.sub("", src, count=1)
+    inline = re.compile(rf"{call}\([^()]*\)\s*,\s*|\s*,\s*{call}\([^()]*\)")
+    return inline.sub("", src, count=1)
+
+
+def _unwire_brain(target: Path, kind: str, pkg: str, module: str) -> tuple[bool, str]:
+    """Undo _wire_brain for one module. Returns (changed, note).
+
+    Three things can reference a component, and which exist depends on the
+    shape of the brain: the import, the attach call, and - in a per-node brain
+    - a whole builder plus its argument to run_brain. A builder that attaches
+    only this component goes entirely; one that hosts others keeps its body
+    and loses a line. That split is what makes this work unchanged on the
+    older shared-worker shape, where one builder hosts everything.
+
+    Never an error: a brain.py that couldn't be edited still leaves a real
+    file move on disk, so the caller reports the note and the user finishes
+    the job by hand.
+    """
+    brain = target / "brain.py"
+    if not brain.is_file():
+        return False, "no brain.py in this project"
+    try:
+        src = brain.read_text(encoding="utf-8")
+    except OSError as e:
+        return False, str(e)
+
+    original = src
+    export = _KIND_EXPORT[kind]
+    attach_re = re.compile(
+        rf"^[ \t]*\w+\.attach_\w+\(\s*{re.escape(module)}\.{export}\s*\)[ \t]*\n",
+        re.MULTILINE,
+    )
+    did: list[str] = []
+
+    # Builders, back to front: cutting one shifts every offset after it.
+    hits = []
+    for name, start in _top_level_defs(src):
+        end = _block_end(src, start)
+        body = src[start:end]
+        if attach_re.search(body):
+            hits.append((name, start, end, len(_ANY_ATTACH_RE.findall(body))))
+    for name, start, end, attaches in reversed(hits):
+        if attaches > 1:
+            body = attach_re.sub("", src[start:end], count=1)
+            src = src[:start] + body + src[end:]
+            did.append(f"its attach line in {name}()")
+        else:
+            src = _cut_block(src, start, end)
+            src = _drop_builder_arg(src, name)
+            did.append(f"{name}()")
+
+    # Anything attached outside a builder - a hand-written main(), say.
+    if attach_re.search(src):
+        src = attach_re.sub("", src)
+        did.append("its attach line")
+
+    stripped = _strip_import(src, pkg, module)
+    if stripped != src:
+        src = stripped
+        did.append("its import")
+
+    if src == original:
+        return False, "nothing in brain.py referred to it"
+    try:
+        brain.write_text(src, encoding="utf-8")
+    except OSError as e:
+        return False, str(e)
+    return True, "removed " + ", ".join(did) + " from brain.py"
+
+
+# -- where a component lives, and where its archived copy goes --------------
+
+def _project_rel(target: Path, rel: str) -> Path:
+    """Resolve ``rel`` inside the project, refusing anything that escapes it."""
+    candidate = (target / rel).resolve()
+    if candidate != target and target not in candidate.parents:
+        raise PermissionError("path escapes the project directory")
+    return candidate
+
+
+def _split_component(rel: str) -> tuple[str, str, str]:
+    """``neurons/model/coding.py`` -> (kind, dotted package, module).
+
+    Nested modules are addressable because _package_modules reports them:
+    projects that group Neurons under ``neurons/model/`` are the reason the
+    import to strip is ``from neurons.model import coding`` rather than
+    always the package root.
+    """
+    parts = rel.replace("\\", "/").split("/")
+    if len(parts) < 2 or not parts[-1].endswith(".py"):
+        raise ComponentError(f"{rel} is not a component module.")
+    kind = _PACKAGE_KIND.get(parts[0])
+    if kind is None:
+        raise ComponentError(
+            f"{parts[0]}/ is not a component package - only "
+            f"{', '.join(sorted(_PACKAGE_KIND))} hold removable components.",
+        )
+    if parts[-1] == "__init__.py":
+        raise ComponentError("__init__.py is the package itself, not a component.")
+    return kind, ".".join(parts[:-1]), parts[-1][:-3]
+
+
+def _archive_root(target: Path) -> Path:
+    return target / _ARCHIVE_DIR
+
+
+def _read_manifest(target: Path) -> list[dict]:
+    """The archive's index, or [] when there isn't a readable one.
+
+    Only ever an *index*: every entry is re-checked against the files that
+    are actually there, and archived modules with no entry are still listed.
+    A hand-emptied manifest costs metadata, never a file.
+    """
+    path = _archive_root(target) / _MANIFEST
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    return [e for e in data if isinstance(e, dict) and e.get("file")]
+
+
+def _write_manifest(target: Path, entries: list[dict]) -> None:
+    root = _archive_root(target)
+    root.mkdir(parents=True, exist_ok=True)
+    with contextlib.suppress(OSError):
+        (root / _MANIFEST).write_text(
+            json.dumps(entries, indent=2) + "\n", encoding="utf-8",
+        )
+
+
+def _archived_entry(target: Path, rel: str, known: dict | None) -> dict:
+    """One row of the Archived list, trusting the file over the manifest."""
+    inner = rel[len(_ARCHIVE_DIR) + 1:]
+    kind = (known or {}).get("kind") or _PACKAGE_KIND.get(inner.split("/")[0], "")
+    path = target / rel
+    id_re = _KIND_ID_RE.get(kind)
+    return {
+        "file": rel,
+        "origin": (known or {}).get("origin") or inner,
+        "kind": kind,
+        "id": (_extract_id(path, id_re) if id_re else path.stem),
+        "archived_at": (known or {}).get("archived_at", ""),
+        # False once something has been created at the path it came from -
+        # the Restore button says so rather than failing when pressed.
+        "restorable": not (target / ((known or {}).get("origin") or inner)).exists(),
+    }
+
+
+def _list_archived(raw_path: str) -> dict:
+    """Every archived module, newest first."""
+    target = Path(raw_path).expanduser().resolve()
+    if not target.is_dir():
+        raise FileNotFoundError(f"{target} is not a directory")
+
+    root = _archive_root(target)
+    if not root.is_dir():
+        return {"path": str(target), "entries": []}
+
+    known = {e["file"]: e for e in _read_manifest(target)}
+    entries = []
+    for py in sorted(root.rglob("*.py")):
+        if py.name == "__init__.py":
+            continue
+        rel = py.relative_to(target).as_posix()
+        entries.append(_archived_entry(target, rel, known.get(rel)))
+    entries.sort(key=lambda e: e["archived_at"], reverse=True)
+    return {"path": str(target), "entries": entries}
+
+
+def _free_archive_path(root: Path, inner: str) -> Path:
+    """``_archive/neurons/hello.py``, suffixed if that name is taken.
+
+    Archiving the same name twice is ordinary - write a Neuron, archive it,
+    write another with the same name, archive that - so a collision widens
+    the archive rather than overwriting the older copy or refusing.
+    """
+    dest = root / inner
+    if not dest.exists():
+        return dest
+    stem, suffix = dest.stem, dest.suffix
+    for n in range(2, 1000):
+        candidate = dest.with_name(f"{stem}-{n}{suffix}")
+        if not candidate.exists():
+            return candidate
+    raise ComponentError(f"{inner} is already archived a thousand times over.")
+
+
+def _remove_component(raw_path: str, rel: str, mode: str = "archive") -> dict:
+    """Unwire a component from brain.py, then archive or delete its module."""
+    if mode not in ("archive", "delete"):
+        raise ComponentError(f"unknown mode {mode!r} - archive or delete.")
+
+    target = Path(raw_path).expanduser().resolve()
+    if not target.is_dir():
+        raise FileNotFoundError(f"{target} is not a directory")
+
+    rel = rel.replace("\\", "/").strip("/")
+    source = _project_rel(target, rel)
+    if not source.is_file():
+        raise FileNotFoundError(f"{rel} not found in {target.name}")
+
+    # Deleting out of the archive is the one path that skips unwiring: it was
+    # unwired on the way in, and its manifest entry has to go with it.
+    if rel.startswith(_ARCHIVE_DIR + "/"):
+        if mode != "delete":
+            raise ComponentError(f"{rel} is already archived.")
+        source.unlink()
+        _write_manifest(target, [e for e in _read_manifest(target) if e["file"] != rel])
+        return {"ok": True, "mode": "delete", "file": rel, "id": source.stem,
+                "kind": "", "archived_to": None, "unwired": False,
+                "note": "deleted from the archive"}
+
+    kind, pkg, module = _split_component(rel)
+    id_re = _KIND_ID_RE.get(kind)
+    component_id = _extract_id(source, id_re) if id_re else source.stem
+
+    unwired, note = _unwire_brain(target, kind, pkg, module)
+
+    archived_to = None
+    if mode == "archive":
+        root = _archive_root(target)
+        dest = _free_archive_path(root, rel)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        source.replace(dest)
+        archived_to = dest.relative_to(target).as_posix()
+        entries = [e for e in _read_manifest(target) if e["file"] != archived_to]
+        entries.append({
+            "file": archived_to,
+            "origin": rel,
+            "kind": kind,
+            "id": component_id,
+            "archived_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        })
+        _write_manifest(target, entries)
+    else:
+        source.unlink()
+
+    return {
+        "ok": True,
+        "mode": mode,
+        "file": rel,
+        "id": component_id,
+        "kind": kind,
+        "archived_to": archived_to,
+        "unwired": unwired,
+        "note": note,
+    }
+
+
+def _restore_component(raw_path: str, rel: str) -> dict:
+    """Move an archived module back where it came from and re-wire brain.py."""
+    target = Path(raw_path).expanduser().resolve()
+    if not target.is_dir():
+        raise FileNotFoundError(f"{target} is not a directory")
+
+    rel = rel.replace("\\", "/").strip("/")
+    if not rel.startswith(_ARCHIVE_DIR + "/"):
+        raise ComponentError(f"{rel} is not in the archive.")
+    source = _project_rel(target, rel)
+    if not source.is_file():
+        raise FileNotFoundError(f"{rel} not found in {target.name}")
+
+    known = {e["file"]: e for e in _read_manifest(target)}
+    origin = (known.get(rel) or {}).get("origin") or rel[len(_ARCHIVE_DIR) + 1:]
+    kind, _pkg, module = _split_component(origin)
+
+    dest = _project_rel(target, origin)
+    if dest.exists():
+        raise ComponentError(
+            f"{origin} already exists - rename or remove it first.", exists=True,
+        )
+
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    init = dest.parent / "__init__.py"
+    if not init.exists() and dest.parent.name in _PACKAGE_KIND:
+        init.write_text(_KIND_INIT_DOC[kind], encoding="utf-8")
+    source.replace(dest)
+    _write_manifest(target, [e for e in _read_manifest(target) if e["file"] != rel])
+
+    wired, note = _wire_brain(target, kind, module)
+    id_re = _KIND_ID_RE.get(kind)
+    return {
+        "ok": True,
+        "file": origin,
+        "kind": kind,
+        "id": _extract_id(dest, id_re) if id_re else dest.stem,
+        "wired": wired,
+        "note": note,
+    }
+
+
+# ---------------------------------------------------------------------------
 # The Test tab: what this project mounts, and how to drive each one
 # ---------------------------------------------------------------------------
 #
@@ -1520,6 +1934,78 @@ def build_app(dist: Path | None):
                 {"error": str(e), "exists": e.exists},
                 status=409 if e.exists else 400,
             )
+        except FileNotFoundError as e:
+            return web.json_response({"error": str(e)}, status=404)
+        except OSError as e:
+            return web.json_response({"error": str(e)}, status=400)
+
+    async def handle_component_delete(request):
+        """Unwire a component, then archive or delete its module.
+
+        One endpoint for both modes because they differ by a single verb at
+        the end: everything before the move - working out the kind, reading
+        the id, taking the import, the attach line and the builder out of
+        brain.py - is identical, and splitting it in two would be two ways
+        for the unwiring to drift.
+        """
+        try:
+            body = await request.json()
+        except Exception:
+            return web.json_response({"error": "invalid JSON body"}, status=400)
+
+        raw_path = (body.get("path") or "").strip()
+        rel = (body.get("file") or "").strip()
+        mode = (body.get("mode") or "archive").strip()
+        if not raw_path or not rel:
+            return web.json_response(
+                {"error": "path and file are required"}, status=400,
+            )
+        try:
+            return web.json_response(_remove_component(raw_path, rel, mode))
+        except ComponentError as e:
+            return web.json_response(
+                {"error": str(e), "exists": e.exists},
+                status=409 if e.exists else 400,
+            )
+        except FileNotFoundError as e:
+            return web.json_response({"error": str(e)}, status=404)
+        except PermissionError as e:
+            return web.json_response({"error": str(e)}, status=403)
+        except OSError as e:
+            return web.json_response({"error": str(e)}, status=400)
+
+    async def handle_component_restore(request):
+        try:
+            body = await request.json()
+        except Exception:
+            return web.json_response({"error": "invalid JSON body"}, status=400)
+
+        raw_path = (body.get("path") or "").strip()
+        rel = (body.get("file") or "").strip()
+        if not raw_path or not rel:
+            return web.json_response(
+                {"error": "path and file are required"}, status=400,
+            )
+        try:
+            return web.json_response(_restore_component(raw_path, rel))
+        except ComponentError as e:
+            return web.json_response(
+                {"error": str(e), "exists": e.exists},
+                status=409 if e.exists else 400,
+            )
+        except FileNotFoundError as e:
+            return web.json_response({"error": str(e)}, status=404)
+        except PermissionError as e:
+            return web.json_response({"error": str(e)}, status=403)
+        except OSError as e:
+            return web.json_response({"error": str(e)}, status=400)
+
+    async def handle_archived(request):
+        raw_path = request.query.get("path")
+        if not raw_path:
+            return web.json_response({"error": "path is required"}, status=400)
+        try:
+            return web.json_response(_list_archived(raw_path))
         except FileNotFoundError as e:
             return web.json_response({"error": str(e)}, status=404)
         except OSError as e:
@@ -1936,6 +2422,9 @@ def build_app(dist: Path | None):
     app.router.add_get("/api/detect", handle_detect)
     app.router.add_get("/api/file", handle_file)
     app.router.add_post("/api/component", handle_component)
+    app.router.add_post("/api/component/delete", handle_component_delete)
+    app.router.add_post("/api/component/restore", handle_component_restore)
+    app.router.add_get("/api/archived", handle_archived)
     app.router.add_post("/api/file", handle_write_file)
     app.router.add_post("/api/helpers", handle_helpers)
     app.router.add_get("/api/model", handle_model)

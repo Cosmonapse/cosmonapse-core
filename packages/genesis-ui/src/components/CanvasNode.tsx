@@ -14,6 +14,28 @@ export const kindColor = (): Record<NodeKind, string> => ({
   receptor: C.receptor,
 });
 
+/**
+ * Which package each primitive's modules live in.
+ *
+ * Here rather than in either of its callers because both the Add panel (which
+ * predicts the path a new module will take) and the removal control (which
+ * has to name an existing one) need the same answer, and two copies of it is
+ * how the two end up disagreeing.
+ */
+export const KIND_FOLDER: Record<Exclude<NodeKind, "synapse">, string> = {
+  neuron: "neurons",
+  effector: "effector",
+  engram: "engram",
+  receptor: "receptors",
+};
+
+/** A canvas node's project-relative module path; null for the synapse, which
+ *  is the project itself and has no module of its own. */
+export function fileOf(kind: NodeKind, sublabel: string | undefined): string | null {
+  if (kind === "synapse" || !sublabel) return null;
+  return `${KIND_FOLDER[kind]}/${sublabel}`;
+}
+
 export interface CanvasNodeData {
   key: string;
   kind: NodeKind;

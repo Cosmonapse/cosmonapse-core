@@ -1,0 +1,363 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 330" width="900" height="330" role="img">
+<style>
+svg {
+  --font-sans: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace;
+
+  color-scheme: dark;
+
+  /* ── Channel triplets ──────────────────────────────────────────────
+     Every alpha-tinted colour in this sheet derives from one of these,
+     so a theme only has to restate the triplet, not the 60 rgba() calls
+     that consume it. Used as rgba(var(--fg-rgb), 0.06). */
+  --fg-rgb: 255, 255, 255;
+  --shadow-rgb: 0, 0, 0;
+  --accent-rgb: 139, 92, 246;
+  --accent2-rgb: 34, 211, 238;
+  --accent3-rgb: 244, 114, 182;
+  --engram-rgb: 167, 139, 250;
+  --warn-rgb: 251, 191, 36;
+  --ok-rgb: 74, 222, 128;
+
+  /* Surfaces */
+  --bg: #07080c;
+  --bg-elev: #0c0e15;
+  --bg-card: #0f111a;
+  --bg-card-soft: rgba(15, 17, 26, 0.5);
+  --bg-nav: rgba(7, 8, 12, 0.7);
+  --bg-mobile: rgba(7, 8, 12, 0.96);
+  --bg-menu: rgba(13, 15, 21, 0.96);
+  --bg-tooltip: #12141d;
+
+  /* Lines */
+  --border: rgba(var(--fg-rgb), 0.06);
+  --border-strong: rgba(var(--fg-rgb), 0.12);
+  --border-hover: rgba(var(--fg-rgb), 0.18);
+  --grid-line: rgba(var(--fg-rgb), 0.025);
+
+  /* Type */
+  --text: #e6e7ec;
+  --text-dim: #9097a8;
+  --text-faint: #5b6275;
+  --brand-word-color: var(--text);
+
+  /* Accents */
+  --accent: #8b5cf6;
+  --accent-2: #22d3ee;
+  --accent-3: #f472b6;
+  --accent-soft: #a78bfa;      /* accent legible as body text */
+  --accent-text: #c4b5fd;      /* accent text on an accent wash */
+  --accent2-soft: #67e8f9;
+  --on-accent: #ffffff;        /* text on a *solid* accent fill */
+  --ok: #86efac;
+  --ok-strong: #4ade80;
+  --warn: #fbbf24;
+  --glow: rgba(var(--accent-rgb), 0.35);
+
+  /* Buttons */
+  --btn-primary-bg: #ffffff;
+  --btn-primary-fg: #07080c;
+  --btn-primary-bg-hover: #e6e7ec;
+
+  /* Code surface + syntax tokens */
+  --code-bg-1: rgba(15, 17, 26, 0.9);
+  --code-bg-2: rgba(12, 14, 21, 0.9);
+  --code-text: #d4d7e0;
+  --tk-kw: #c084fc;
+  --tk-fn: #67e8f9;
+  --tk-str: #86efac;
+  --tk-cm: #5b6275;
+  --tk-num: #fbbf24;
+  --tk-op: #f472b6;
+
+  /* Gradient wordmarks */
+  --grad-1: #ffffff;
+  --grad-2: #a78bfa;
+  --grad-3: #67e8f9;
+
+  /* Elevation */
+  --shadow-lg: 0 30px 80px -20px rgba(var(--shadow-rgb), 0.6);
+  --shadow-md: 0 18px 40px rgba(var(--shadow-rgb), 0.45);
+  --shadow-sm: 0 12px 32px rgba(var(--shadow-rgb), 0.55);
+
+  /* Product + status accents. Referenced from inline styles in the page
+     components as well as from this sheet, so they must stay semantic. */
+  --p-engram: #a78bfa;
+  --p-doppler: #22d3ee;
+  --p-immune: #f87171;
+  --p-cloud: #fb923c;
+  --p-pathway: #818cf8;
+  --status-none: #6b7280;
+  --status-none-rgb: 107, 114, 128;
+  --warn-soft: #fcd34d;
+  --tag-advanced: #f9a8d4;
+  --tag-advanced-rgb: 244, 114, 182;
+
+  /* Atmosphere strength (dialled back in light mode) */
+  --glow-opacity: 0.7;
+
+  color-scheme: light;
+
+  --fg-rgb: 37, 80, 122;
+  --shadow-rgb: 22, 47, 74;
+  --accent-rgb: 37, 80, 122;
+  --accent2-rgb: 226, 85, 57;
+  --accent3-rgb: 226, 85, 57;
+  --engram-rgb: 109, 40, 217;
+  --warn-rgb: 180, 83, 9;
+  --ok-rgb: 21, 128, 61;
+
+  --bg: #ffffff;
+  --bg-elev: #f4f7fa;
+  --bg-card: #f8fafc;
+  --bg-card-soft: rgba(244, 247, 250, 0.72);
+  --bg-nav: rgba(255, 255, 255, 0.78);
+  --bg-mobile: rgba(255, 255, 255, 0.97);
+  --bg-menu: rgba(255, 255, 255, 0.98);
+  --bg-tooltip: #ffffff;
+
+  --border: rgba(var(--fg-rgb), 0.14);
+  --border-strong: rgba(var(--fg-rgb), 0.22);
+  --border-hover: rgba(var(--fg-rgb), 0.4);
+  --grid-line: rgba(var(--fg-rgb), 0.07);
+
+  --text: #16324c;
+  --text-dim: #4d6580;
+  --text-faint: #6b7f95;
+  --brand-word-color: #25507a;
+
+  --accent: #25507a;
+  /* The pure brand vermillion (#e25539) is kept in --accent2-rgb for washes
+     and borders; the text-facing token is darkened to clear WCAG AA on white. */
+  --accent-2: #c4442a;
+  --accent-3: #e25539;
+  --accent-soft: #25507a;
+  --accent-text: #1d4066;
+  --accent2-soft: #c4442a;
+  --on-accent: #ffffff;
+  --ok: #15803d;
+  --ok-strong: #166534;
+  --warn: #b45309;
+  --glow: rgba(var(--accent-rgb), 0.16);
+
+  --btn-primary-bg: #25507a;
+  --btn-primary-fg: #ffffff;
+  --btn-primary-bg-hover: #1d4066;
+
+  --code-bg-1: #f6f8fb;
+  --code-bg-2: #eef3f8;
+  --code-text: #1f3a52;
+  --tk-kw: #7c3aed;
+  --tk-fn: #0e7490;
+  --tk-str: #15803d;
+  --tk-cm: #8296ab;
+  --tk-num: #b45309;
+  --tk-op: #c4442a;
+
+  --grad-1: #25507a;
+  --grad-2: #3a76ad;
+  --grad-3: #e25539;
+
+  --shadow-lg: 0 24px 60px -24px rgba(var(--shadow-rgb), 0.22);
+  --shadow-md: 0 14px 34px rgba(var(--shadow-rgb), 0.13);
+  --shadow-sm: 0 10px 24px rgba(var(--shadow-rgb), 0.11);
+
+  --p-engram: #6d28d9;
+  --p-doppler: #0e7490;
+  --p-immune: #c02626;
+  --p-cloud: #c2410c;
+  --p-pathway: #4338ca;
+  --status-none: #64748b;
+  --status-none-rgb: 100, 116, 139;
+  --warn-soft: #b45309;
+  --tag-advanced: #be185d;
+  --tag-advanced-rgb: 190, 24, 93;
+
+  --glow-opacity: 0.35;
+
+}
+/* ── Figures ──────────────────────────────────────────────────────────
+   Explanatory diagrams, drawn as inline SVG so they flip with the theme
+   like everything else on the page. No literal colour is allowed in a
+   figure: a group carries a *tone* (--fig-c plus its wash), and every
+   shape and label inside reads those two variables. That is also why the
+   arrowheads are drawn as polygons rather than <marker>s - a marker is
+   resolved in the document, not in the group that points at it, so tone
+   would leak from whichever figure happened to render first.
+
+   On a narrow screen the figure scrolls rather than scaling down: SVG
+   text shrinks with the viewBox, and a diagram you cannot read is worse
+   than one you have to swipe. */
+{
+}
+svg {
+  display: block;
+  font-family: var(--font-sans), system-ui, -apple-system, sans-serif;
+  --fig-c: var(--text-faint);
+  --fig-wash: rgba(var(--fg-rgb), 0.04);
+}
+figcaption {
+  margin-top: 14px;
+  font-family: var(--font-mono), ui-monospace, monospace;
+  font-size: 12px;
+  line-height: 1.65;
+  letter-spacing: 0.02em;
+  color: var(--text-faint);
+  text-align: center;
+}
+
+/* Tones. Kept in step with the silhouette colours used on the Genesis
+   page: Neurons accent, Engrams --p-engram, Effectors accent-3,
+   Receptors accent-2. A component wears one colour across the suite. */
+.t-neutral  { --fig-c: var(--text-faint);  --fig-wash: rgba(var(--fg-rgb), 0.04); }
+.t-accent   { --fig-c: var(--accent);      --fig-wash: rgba(var(--accent-rgb), 0.10); }
+.t-accent2  { --fig-c: var(--accent-2);    --fig-wash: rgba(var(--accent2-rgb), 0.10); }
+.t-accent3  { --fig-c: var(--accent-3);    --fig-wash: rgba(var(--accent3-rgb), 0.10); }
+.t-engram   { --fig-c: var(--p-engram);    --fig-wash: rgba(var(--engram-rgb), 0.10); }
+.t-muted    { --fig-c: var(--status-none); --fig-wash: rgba(var(--status-none-rgb), 0.07); }
+
+.fig-box   { fill: var(--fig-wash); stroke: var(--fig-c); stroke-width: 1.2; }
+.fig-plain { fill: var(--bg-card);  stroke: var(--border-strong); stroke-width: 1; }
+.fig-line  { fill: none; stroke: var(--fig-c); stroke-width: 1.3; }
+.fig-hair  { fill: none; stroke: var(--border-strong); stroke-width: 1; }
+.fig-dash  { stroke-dasharray: 5 5; }
+.fig-fill  { fill: var(--fig-c); stroke: none; }
+.fig-hollow{ fill: var(--bg); stroke: var(--fig-c); stroke-width: 1.4; }
+
+.fig-title { fill: var(--text); font-size: 13.5px; font-weight: 600; }
+.fig-sub   { fill: var(--text-dim); font-size: 11.5px; }
+.fig-tag {
+  fill: var(--fig-c);
+  font-family: var(--font-mono), ui-monospace, monospace;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+}
+.fig-note  { fill: var(--text-faint); font-size: 12px; font-style: italic; }
+.fig-strike { stroke: var(--text-faint); stroke-width: 1.2; }
+
+/* ── Figure motion ────────────────────────────────────────────────────
+   A Signal on the bus is the one thing worth animating on this site, so
+   the only moving part in a figure is a spark travelling a route.
+
+   The route is passed in as custom properties rather than compiled into
+   bespoke keyframes per diagram: --x0/--y0 through --x3/--y3 are read
+   inside the keyframes, so three generic animations cover every path in
+   every figure. Paths here are orthogonal - out of a node, along the bus,
+   down into another - which is exactly what a sequence of translates
+   draws, and translate needs no transform-origin to behave.
+
+   Each spark also carries its start point as a plain inline transform, so
+   when the animation is switched off it rests at the beginning of its
+   route instead of collapsing into the top-left corner. */
+
+@keyframes fig-run2 {
+  0%   { transform: translate(var(--x0), var(--y0)); opacity: 0; }
+  12%  { opacity: 1; }
+  88%  { opacity: 1; }
+  100% { transform: translate(var(--x1), var(--y1)); opacity: 0; }
+}
+@keyframes fig-run3 {
+  0%   { transform: translate(var(--x0), var(--y0)); opacity: 0; }
+  9%   { opacity: 1; }
+  50%  { transform: translate(var(--x1), var(--y1)); }
+  91%  { opacity: 1; }
+  100% { transform: translate(var(--x2), var(--y2)); opacity: 0; }
+}
+@keyframes fig-run4 {
+  0%   { transform: translate(var(--x0), var(--y0)); opacity: 0; }
+  7%   { opacity: 1; }
+  28%  { transform: translate(var(--x1), var(--y1)); }
+  72%  { transform: translate(var(--x2), var(--y2)); }
+  93%  { opacity: 1; }
+  100% { transform: translate(var(--x3), var(--y3)); opacity: 0; }
+}
+
+/* A node acknowledging that something arrived. */
+@keyframes fig-halo {
+  0%   { transform: scale(0.55); opacity: 0.55; }
+  70%  { opacity: 0; }
+  100% { transform: scale(2.3); opacity: 0; }
+}
+
+/* A dashed edge that is carrying something rather than merely optional. */
+@keyframes fig-flow {
+  to { stroke-dashoffset: -20; }
+}
+
+.fig-spark,
+.fig-spark-halo {
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+  animation-fill-mode: both;
+}
+.fig-spark { fill: var(--fig-c); }
+.fig-spark-halo { fill: var(--fig-c); fill-opacity: 0.22; }
+
+.fig-halo {
+  fill: none;
+  stroke: var(--fig-c);
+  stroke-width: 1.2;
+  transform-box: fill-box;
+  transform-origin: center;
+  animation-name: fig-halo;
+  animation-timing-function: ease-out;
+  animation-iteration-count: infinite;
+  animation-fill-mode: both;
+}
+
+.fig-flow { animation: fig-flow 1.8s linear infinite; }
+
+/* Motion is decoration here - the figure reads perfectly still. */
+@media (prefers-reduced-motion: reduce) {
+  svg * { animation: none !important; }
+  .fig-spark-halo { opacity: 0; }
+  .fig-halo { opacity: 0; }
+}
+
+/* ── Product miniatures ───────────────────────────────────────────────
+   A few figures draw the actual tools at postage-stamp size: Genesis's
+   canvas, a terminal, Prism's brain view. They need two type scales the
+   rest of the kit does not - chrome (tab strips, window titles) and
+   terminal output - and a way to make lines arrive in order. */
+.fig-chrome {
+  font-family: var(--font-mono), ui-monospace, monospace;
+  font-size: 9px;
+  letter-spacing: 0.03em;
+  fill: var(--text-faint);
+}
+.fig-chrome.on { fill: var(--fig-c); }
+.fig-term {
+  font-family: var(--font-mono), ui-monospace, monospace;
+  font-size: 9.5px;
+  fill: var(--text-dim);
+}
+.fig-term.dim { fill: var(--text-faint); }
+.fig-term.hot { fill: var(--fig-c); }
+
+/* Output arriving a line at a time. Staggered by delay, looping with the
+   sparks, so the terminal reads as a program that is still running. */
+@keyframes fig-type {
+  0%, 4%   { opacity: 0; }
+  12%, 100% { opacity: 1; }
+}
+.fig-type {
+  animation-name: fig-type;
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+  animation-fill-mode: both;
+}
+
+@keyframes fig-blink {
+  0%, 49%   { opacity: 1; }
+  50%, 100% { opacity: 0; }
+}
+.fig-caret {
+  fill: var(--fig-c);
+  animation: fig-blink 1.1s steps(1, end) infinite;
+}
+
+
+</style>
+<rect width="100%" height="100%" fill="var(--bg)"/>
+<title>The Signal envelope drawn as a card listing its fields: v, id, trace_id, parent_id, type, directed, payload and meta. The id, trace_id and parent_id fields are highlighted and point to a small causal tree of Signals on the right.</title><rect x="48" y="34" width="430" height="252" rx="12" class="fig-plain"></rect><g class="t-accent2"><text class="fig-tag" x="68" y="24" text-anchor="start">one Signal envelope</text></g><g class="t-neutral"><text class="fig-tag" x="76" y="60" text-anchor="start">v</text><text class="fig-sub" x="250" y="60" text-anchor="start">envelope version</text></g><g class="t-accent2"><rect x="60" y="73" width="406" height="24" rx="6" class="fig-box"></rect><text class="fig-tag" x="76" y="90" text-anchor="start">id</text><text class="fig-sub" x="250" y="90" text-anchor="start">this Signal</text></g><g class="t-accent2"><rect x="60" y="103" width="406" height="24" rx="6" class="fig-box"></rect><text class="fig-tag" x="76" y="120" text-anchor="start">trace_id</text><text class="fig-sub" x="250" y="120" text-anchor="start">the run it belongs to</text></g><g class="t-accent2"><rect x="60" y="133" width="406" height="24" rx="6" class="fig-box"></rect><text class="fig-tag" x="76" y="150" text-anchor="start">parent_id</text><text class="fig-sub" x="250" y="150" text-anchor="start">what caused it</text></g><g class="t-neutral"><text class="fig-tag" x="76" y="180" text-anchor="start">type</text><text class="fig-sub" x="250" y="180" text-anchor="start">TASK · TOOL_CALL · FINAL …</text></g><g class="t-neutral"><text class="fig-tag" x="76" y="210" text-anchor="start">directed</text><text class="fig-sub" x="250" y="210" text-anchor="start">who it is addressed to</text></g><g class="t-neutral"><text class="fig-tag" x="76" y="240" text-anchor="start">payload · meta</text><text class="fig-sub" x="250" y="240" text-anchor="start">the content, and everything else</text></g><g class="t-accent2"><line x1="486" y1="118" x2="547" y2="118" class="fig-line"></line><polygon class="fig-fill" points="556,118 547,123 547,113"></polygon></g><g class="t-accent2"><circle cx="640" cy="70" r="7" class="fig-fill"></circle><circle cx="716" cy="140" r="7" class="fig-fill"></circle><circle cx="716" cy="206" r="7" class="fig-fill"></circle><circle cx="800" cy="140" r="7" class="fig-fill"></circle><path d="M640 77 L640 140 L709 140" class="fig-line"></path><path d="M640 140 L640 206 L709 206" class="fig-line"></path><path d="M723 140 L793 140" class="fig-line"></path></g><text class="fig-sub" x="654" y="62" text-anchor="start">TASK</text><text class="fig-sub" x="716" y="126" text-anchor="middle">TOOL_CALL</text><text class="fig-sub" x="812" y="144" text-anchor="start">RESULT</text><text class="fig-sub" x="730" y="210" text-anchor="start">FINAL</text><text class="fig-note" x="704" y="280" text-anchor="middle">you never passed a trace ID anywhere to get this</text>
+</svg>
