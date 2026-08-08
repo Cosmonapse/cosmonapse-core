@@ -56,6 +56,23 @@ Real systems are concurrent and only partially ordered. Encoding one as a graph 
 
 They share exactly one thing - the Signal envelope. That is what lets the designer, the runtime and the observability plane stay honest about the same system without any of them owning it. Genesis and Prism both ship inside the `cosmonapse` wheel; there is nothing extra to download and no runtime dependency on either.
 
+### Genesis, in three moves
+
+<div align="center">
+<img src="assets/media/genesis-canvas.jpg" alt="The Genesis canvas: a Synapse at the centre with Neurons, an Engram, Effectors and Receptors on a ring around it, each labelled with the file it lives in, and the add-a-component palette open in the corner." width="880" />
+<p><em><b>Canvas</b> - place a component and Genesis writes the module, wires it into <code>brain.py</code>, and lands the node on the ring around the Synapse. Each primitive keeps its silhouette: circle, diamond, triangle, cup.</em></p>
+</div>
+
+<div align="center">
+<img src="assets/media/genesis-code.jpg" alt="The Genesis Code tab: a Neuron's Axon declaration rendered as a form with provider cards, neuron_id, neuron_fn and capabilities fields, beside a file tree grouped into Neurons, Engrams, Effectors, Receptors and wiring." width="880" />
+<p><em><b>Code</b> - the declaration as a form and the handlers as code boxes. Edits are applied through the AST, so the file that comes back is your file with one node changed, comments and all.</em></p>
+</div>
+
+<div align="center">
+<img src="assets/media/genesis-test.jpg" alt="The Genesis Test tab: brain.py running with a green pid and uptime pill, the Receptor list on the left, and a terminal panel attached to the process showing a completed run." width="880" />
+<p><em><b>Test</b> - Run starts <code>brain.py</code> as a real process; Connect opens whatever that Receptor actually is - a terminal on its stdin and stdout, a request builder, or a chat panel.</em></p>
+</div>
+
 ## Quick Start
 
 ```bash
@@ -192,6 +209,33 @@ Other extras: `[postgres]` for a Postgres-backed Engram, `[receptor]` for the Fa
 
 An ordinary consumer joins a queue group, so exactly one of them gets each message. A **Doppler** joins none: it competes for nothing, sees every Signal, and can never take work away from a participant. `cosmo prism` is that seat rendered in a browser; `cosmo prism --tail` is the same stream on stdout. Neither is privileged - anything willing to speak the envelope can take the same seat.
 
+### The five views
+
+<div align="center">
+<img src="assets/media/prism-brain-view.gif" alt="Prism's Brain View: participants arranged around the Synapse, with coloured particles travelling between them as REGISTER, TASK, RECALL, TOOL_CALL and FINAL fire, and the raw Signal stream listed alongside." width="880" />
+<p><em><b>Brain View</b> - the live graph. Each node is tinted by the last Signal type it emitted; a request and the reply it provokes are drawn as one journey through the Synapse rather than two unrelated blips.</em></p>
+</div>
+
+<div align="center">
+<img src="assets/media/prism-constellation.jpg" alt="Prism's Constellation view: one node per participant in a single run - a Receptor, three Neurons, an Engram and four Effectors - joined by edges coloured by channel and labelled with call counts." width="880" />
+<p><em><b>Constellation</b> - one run as its execution graph, edges typed by channel (task, tool, recall, imprint, output). Repeated runs of the same prompt carry a structural consistency score, so a refactor that changed the shape of the system shows up as a number.</em></p>
+</div>
+
+<div align="center">
+<img src="assets/media/prism-signal-tree.gif" alt="Prism's Signal Tree: every Signal of one task arranged by parent_id into a tidy tree, with a selected RECALL node opened into its full envelope in a side panel." width="880" />
+<p><em><b>Signal Tree</b> - every Signal of one task arranged by <code>parent_id</code>. Each edge is causal parentage, so "why did this happen" is walking up ancestors rather than grepping a log.</em></p>
+</div>
+
+<div align="center">
+<img src="assets/media/prism-signal-list.jpg" alt="Prism's Signal List: a task as a collapsible row with duration, Signal count and final status, its Signals indented by lineage and each expandable to the full envelope." width="880" />
+<p><em><b>Signal List</b> - the chronological record. Tasks as collapsible rows, Signals indented by lineage, any row expandable from payload to the full envelope, and the whole trace exportable as text.</em></p>
+</div>
+
+<div align="center">
+<img src="assets/media/prism-metrics.gif" alt="Prism's Metrics view: sections for health, latency, per-task breakdown, task time composition, human-in-the-loop, memory effectiveness, consistency and participants, with a longest-tool-calls bar chart." width="880" />
+<p><em><b>Metrics</b> - health, latency, task time composition, human-in-the-loop, memory effectiveness and participants. Every number is derived from timestamps and parent links already in the envelope, so nothing had to be instrumented to be measured.</em></p>
+</div>
+
 ## The `cosmo` CLI
 
 | Command | Does |
@@ -235,7 +279,7 @@ Runnable end-to-end examples - routing, bidding, retries, RAG, MCP tools, memory
 - [CONTRIBUTING.md](CONTRIBUTING.md) - how to set up and contribute
 - [CHANGELOG.md](CHANGELOG.md) - release notes
 
-The diagrams above are generated from the same components that draw them on [cosmonapse.com](https://cosmonapse.com), so a figure here cannot drift from the one on the site.
+The diagrams above are generated from the same components that draw them on [cosmonapse.com](https://cosmonapse.com), so a figure here cannot drift from the one on the site. The screenshots and recordings are Genesis and Prism as they ship in the wheel, captured from a real run.
 
 ## License
 
