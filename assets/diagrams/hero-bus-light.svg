@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 342" width="920" height="342" role="img">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 286" width="920" height="286" role="img">
 <style>
 /* <![CDATA[ */
 svg {
@@ -96,6 +96,85 @@ svg {
 
   /* Atmosphere strength (dialled back in light mode) */
   --glow-opacity: 0.7;
+
+  color-scheme: light;
+
+  --fg-rgb: 37, 80, 122;
+  --shadow-rgb: 22, 47, 74;
+  --accent-rgb: 37, 80, 122;
+  --accent2-rgb: 226, 85, 57;
+  --accent3-rgb: 226, 85, 57;
+  --engram-rgb: 109, 40, 217;
+  --warn-rgb: 180, 83, 9;
+  --ok-rgb: 21, 128, 61;
+
+  --bg: #ffffff;
+  --bg-elev: #f4f7fa;
+  --bg-card: #f8fafc;
+  --bg-card-soft: rgba(244, 247, 250, 0.72);
+  --bg-nav: rgba(255, 255, 255, 0.78);
+  --bg-mobile: rgba(255, 255, 255, 0.97);
+  --bg-menu: rgba(255, 255, 255, 0.98);
+  --bg-tooltip: #ffffff;
+
+  --border: rgba(var(--fg-rgb), 0.14);
+  --border-strong: rgba(var(--fg-rgb), 0.22);
+  --border-hover: rgba(var(--fg-rgb), 0.4);
+  --grid-line: rgba(var(--fg-rgb), 0.07);
+
+  --text: #16324c;
+  --text-dim: #4d6580;
+  --text-faint: #6b7f95;
+  --brand-word-color: #25507a;
+
+  --accent: #25507a;
+  /* The pure brand vermillion (#e25539) is kept in --accent2-rgb for washes
+     and borders; the text-facing token is darkened to clear WCAG AA on white. */
+  --accent-2: #c4442a;
+  --accent-3: #e25539;
+  --accent-soft: #25507a;
+  --accent-text: #1d4066;
+  --accent2-soft: #c4442a;
+  --on-accent: #ffffff;
+  --ok: #15803d;
+  --ok-strong: #166534;
+  --warn: #b45309;
+  --glow: rgba(var(--accent-rgb), 0.16);
+
+  --btn-primary-bg: #25507a;
+  --btn-primary-fg: #ffffff;
+  --btn-primary-bg-hover: #1d4066;
+
+  --code-bg-1: #f6f8fb;
+  --code-bg-2: #eef3f8;
+  --code-text: #1f3a52;
+  --tk-kw: #7c3aed;
+  --tk-fn: #0e7490;
+  --tk-str: #15803d;
+  --tk-cm: #8296ab;
+  --tk-num: #b45309;
+  --tk-op: #c4442a;
+
+  --grad-1: #25507a;
+  --grad-2: #3a76ad;
+  --grad-3: #e25539;
+
+  --shadow-lg: 0 24px 60px -24px rgba(var(--shadow-rgb), 0.22);
+  --shadow-md: 0 14px 34px rgba(var(--shadow-rgb), 0.13);
+  --shadow-sm: 0 10px 24px rgba(var(--shadow-rgb), 0.11);
+
+  --p-engram: #6d28d9;
+  --p-doppler: #0e7490;
+  --p-immune: #c02626;
+  --p-cloud: #c2410c;
+  --p-pathway: #4338ca;
+  --status-none: #64748b;
+  --status-none-rgb: 100, 116, 139;
+  --warn-soft: #b45309;
+  --tag-advanced: #be185d;
+  --tag-advanced-rgb: 190, 24, 93;
+
+  --glow-opacity: 0.35;
 
 }
 /* ── Figures ──────────────────────────────────────────────────────────
@@ -282,5 +361,5 @@ figcaption {
 /* ]]> */
 </style>
 <rect width="100%" height="100%" fill="var(--bg)"/>
-<title>Three windows side by side. The Genesis canvas shows a Synapse with a Neuron, an Engram, an Effector and a Receptor placed around it. A terminal runs brain.py and prints REGISTER, TASK, TOOL_CALL and FINAL lines. Prism&#x27;s Brain View shows the same four components around the same Synapse with Signals travelling between them. An arrow returns from Prism back to Genesis.</title><g class="t-accent3"><text class="fig-title" x="158" y="30" text-anchor="middle">Design</text><text class="fig-tag" x="158" y="46" text-anchor="middle">Genesis</text></g><rect x="18" y="62" width="280" height="200" rx="10" class="fig-plain"></rect><line x1="18" y1="86" x2="298" y2="86" class="fig-hair"></line><g class="t-accent3"><text class="fig-chrome on" x="32" y="78">Canvas</text></g><g class="t-accent3"><text class="fig-chrome" x="78" y="78">Code</text></g><g class="t-accent3"><text class="fig-chrome" x="124" y="78">Test</text></g><line x1="158" y1="174" x2="158" y2="128" class="fig-hair"></line><line x1="158" y1="174" x2="204" y2="174" class="fig-hair"></line><line x1="158" y1="174" x2="158" y2="220" class="fig-hair"></line><line x1="158" y1="174" x2="112" y2="174" class="fig-hair"></line><g class="t-accent2" transform="translate(158,174)"><circle r="17" class="fig-box"></circle><circle r="11" class="fig-line"></circle><circle r="4" class="fig-fill"></circle></g><g class="t-accent" transform="translate(158,122)"><circle r="8" class="fig-hollow"></circle></g><g class="t-engram" transform="translate(210,174)"><polygon points="0,-8 8,0 0,8 -8,0" class="fig-hollow"></polygon></g><g class="t-accent3" transform="translate(158,226)"><polygon points="0,-8 6.928,4 -6.928,4" class="fig-hollow"></polygon></g><g class="t-accent2" transform="translate(106,174)"><path d="M -8,0 A 8,8 0 0 0 8,0 L 4.96,0 A 4.96,4.96 0 0 1 -4.96,0 Z" class="fig-hollow"></path></g><g class="t-accent3"><rect x="32" y="232" width="72" height="18" rx="9" class="fig-box"></rect><text class="fig-chrome on" x="42" y="245">+ Neuron</text></g><text class="fig-chrome" x="284" y="245" text-anchor="end">neurons/planner.py</text><g class="t-accent"><text class="fig-title" x="460" y="30" text-anchor="middle">Run</text><text class="fig-tag" x="460" y="46" text-anchor="middle">Core</text></g><rect x="320" y="62" width="280" height="200" rx="10" class="fig-plain"></rect><line x1="320" y1="86" x2="600" y2="86" class="fig-hair"></line><text class="fig-chrome" x="334" y="78">brain.py</text><g class="t-accent"><circle cx="580" cy="75" r="3" class="fig-fill"></circle></g><g class="t-neutral"><text class="fig-term fig-type" x="334" y="112" style="animation-duration:6.4s;animation-delay:0s">$ python brain.py</text></g><g class="t-neutral"><text class="fig-term dim fig-type" x="334" y="134" style="animation-duration:6.4s;animation-delay:0.42s">synapse   cosmo://127.0.0.1:7070</text></g><g class="t-neutral"><text class="fig-term dim fig-type" x="334" y="156" style="animation-duration:6.4s;animation-delay:0.84s">REGISTER  planner · memory · search</text></g><g class="t-accent"><text class="fig-term hot fig-type" x="334" y="178" style="animation-duration:6.4s;animation-delay:1.26s">TASK      → planner</text></g><g class="t-accent"><text class="fig-term hot fig-type" x="334" y="200" style="animation-duration:6.4s;animation-delay:1.68s">TOOL_CALL → search</text></g><g class="t-accent"><text class="fig-term fig-type" x="334" y="222" style="animation-duration:6.4s;animation-delay:2.1s">FINAL     ok  1.4s</text></g><g class="t-accent"><rect x="334" y="234" width="5" height="11" class="fig-caret"></rect></g><g class="t-accent2"><text class="fig-title" x="762" y="30" text-anchor="middle">Observe</text><text class="fig-tag" x="762" y="46" text-anchor="middle">Prism</text></g><rect x="622" y="62" width="280" height="200" rx="10" class="fig-plain"></rect><line x1="622" y1="86" x2="902" y2="86" class="fig-hair"></line><g class="t-accent2"><text class="fig-chrome on" x="636" y="78">Brain</text></g><g class="t-accent2"><text class="fig-chrome" x="678" y="78">Tree</text></g><g class="t-accent2"><text class="fig-chrome" x="720" y="78">Metrics</text></g><line x1="740" y1="174" x2="740" y2="128" class="fig-hair"></line><line x1="740" y1="174" x2="786" y2="174" class="fig-hair"></line><line x1="740" y1="174" x2="740" y2="220" class="fig-hair"></line><line x1="740" y1="174" x2="694" y2="174" class="fig-hair"></line><g class="t-accent2" transform="translate(740,174)"><circle r="17" class="fig-box"></circle><circle r="11" class="fig-line"></circle><circle r="4" class="fig-fill"></circle></g><g class="t-accent" transform="translate(740,122)"><circle r="8" class="fig-hollow"></circle></g><g class="t-engram" transform="translate(792,174)"><polygon points="0,-8 8,0 0,8 -8,0" class="fig-hollow"></polygon></g><g class="t-accent3" transform="translate(740,226)"><polygon points="0,-8 6.928,4 -6.928,4" class="fig-hollow"></polygon></g><g class="t-accent2" transform="translate(688,174)"><path d="M -8,0 A 8,8 0 0 0 8,0 L 4.96,0 A 4.96,4.96 0 0 1 -4.96,0 Z" class="fig-hollow"></path></g><g class="t-accent2"><circle class="fig-spark-halo" r="7.0200000000000005" style="--x0:688px;--y0:174px;--x1:740px;--y1:174px;--x2:740px;--y2:122px;transform:translate(688px, 174px);animation-name:fig-run3;animation-duration:6.4s;animation-delay:0.6s"></circle><circle class="fig-spark" r="2.6" style="--x0:688px;--y0:174px;--x1:740px;--y1:174px;--x2:740px;--y2:122px;transform:translate(688px, 174px);animation-name:fig-run3;animation-duration:6.4s;animation-delay:0.6s"></circle></g><g class="t-accent3"><circle class="fig-spark-halo" r="7.0200000000000005" style="--x0:740px;--y0:122px;--x1:740px;--y1:174px;--x2:740px;--y2:226px;transform:translate(740px, 122px);animation-name:fig-run3;animation-duration:6.4s;animation-delay:2.4s"></circle><circle class="fig-spark" r="2.6" style="--x0:740px;--y0:122px;--x1:740px;--y1:174px;--x2:740px;--y2:226px;transform:translate(740px, 122px);animation-name:fig-run3;animation-duration:6.4s;animation-delay:2.4s"></circle></g><g class="t-accent3"><circle class="fig-spark-halo" r="7.0200000000000005" style="--x0:740px;--y0:226px;--x1:740px;--y1:174px;--x2:740px;--y2:122px;transform:translate(740px, 226px);animation-name:fig-run3;animation-duration:6.4s;animation-delay:4.2s"></circle><circle class="fig-spark" r="2.6" style="--x0:740px;--y0:226px;--x1:740px;--y1:174px;--x2:740px;--y2:122px;transform:translate(740px, 226px);animation-name:fig-run3;animation-duration:6.4s;animation-delay:4.2s"></circle></g><line x1="844" y1="86" x2="844" y2="262" class="fig-hair"></line><g class="t-accent2"><rect x="852" y="100" width="38" height="7" rx="3.5" class="fig-box"></rect></g><g class="t-accent"><rect x="852" y="120" width="28" height="7" rx="3.5" class="fig-box"></rect></g><g class="t-accent3"><rect x="852" y="140" width="28" height="7" rx="3.5" class="fig-box"></rect></g><g class="t-engram"><rect x="852" y="160" width="38" height="7" rx="3.5" class="fig-box"></rect></g><g class="t-accent"><rect x="852" y="180" width="28" height="7" rx="3.5" class="fig-box"></rect></g><g class="t-accent2"><rect x="852" y="200" width="28" height="7" rx="3.5" class="fig-box"></rect></g><g class="t-accent"><rect x="852" y="220" width="38" height="7" rx="3.5" class="fig-box"></rect></g><g class="t-accent2"><path d="M762 262 L762 312 L158 312 L158 271" class="fig-line"></path><polygon class="fig-fill" points="158,262 163,276 153,276"></polygon></g><g class="t-accent2"><circle class="fig-spark-halo" r="7.56" style="--x0:762px;--y0:266px;--x1:762px;--y1:312px;--x2:158px;--y2:312px;--x3:158px;--y3:266px;transform:translate(762px, 266px);animation-name:fig-run4;animation-duration:6.4s;animation-delay:5s"></circle><circle class="fig-spark" r="2.8" style="--x0:762px;--y0:266px;--x1:762px;--y1:312px;--x2:158px;--y2:312px;--x3:158px;--y3:266px;transform:translate(762px, 266px);animation-name:fig-run4;animation-duration:6.4s;animation-delay:5s"></circle></g><g class="t-accent2"><text class="fig-tag" x="460" y="298" text-anchor="middle">what you watch sends you back to the canvas</text></g>
+<title>A synapse bus with a Receptor above it and a Neuron, an Engram and an Effector below it. Signals travel from the Receptor into the Neuron, from the Neuron to the Engram and to the Effector, and back again.</title><g class="t-accent2" transform="translate(170,72)"><path d="M -19.549999999999997,0 A 19.549999999999997,19.549999999999997 0 0 0 19.549999999999997,0 L 12.120999999999999,0 A 12.120999999999999,12.120999999999999 0 0 1 -12.120999999999999,0 Z" class="fig-hollow"></path><text class="fig-title" text-anchor="middle" y="-24">terminal</text><text class="fig-tag" text-anchor="middle" y="-10">receptor</text></g><line x1="170" y1="94" x2="170" y2="128" class="fig-hair"></line><g class="t-accent2"><rect x="60" y="135.5" width="800" height="13" rx="6.5" class="fig-box"></rect><text class="fig-tag" x="60" y="129" dominant-baseline="auto">Synapse</text></g><line x1="330" y1="149" x2="330" y2="206" class="fig-hair"></line><line x1="540" y1="149" x2="540" y2="204" class="fig-hair"></line><line x1="740" y1="149" x2="740" y2="208" class="fig-hair"></line><g class="t-accent" transform="translate(330,224)"><circle r="17" class="fig-hollow"></circle><text class="fig-title" text-anchor="middle" y="36">planner</text></g><g class="t-engram" transform="translate(540,224)"><polygon points="0,-19.549999999999997 19.549999999999997,0 0,19.549999999999997 -19.549999999999997,0" class="fig-hollow"></polygon><text class="fig-title" text-anchor="middle" y="38.55">memory</text></g><g class="t-accent3" transform="translate(740,224)"><polygon points="0,-19.549999999999997 16.930796569999995,9.774999999999999 -16.930796569999995,9.774999999999999" class="fig-hollow"></polygon><text class="fig-title" text-anchor="middle" y="36">search</text></g><g class="t-accent" transform="translate(330,224)"><circle class="fig-halo" r="24" style="animation-duration:4.5s;animation-delay:1.15s"></circle></g><g class="t-engram" transform="translate(540,224)"><circle class="fig-halo" r="24" style="animation-duration:4.5s;animation-delay:2.5s"></circle></g><g class="t-accent3" transform="translate(740,224)"><circle class="fig-halo" r="24" style="animation-duration:4.5s;animation-delay:3.9s"></circle></g><g class="t-accent2"><circle class="fig-spark-halo" r="9.18" style="--x0:170px;--y0:96px;--x1:170px;--y1:142px;--x2:330px;--y2:142px;--x3:330px;--y3:206px;transform:translate(170px, 96px);animation-name:fig-run4;animation-duration:5.4s;animation-delay:0s"></circle><circle class="fig-spark" r="3.4" style="--x0:170px;--y0:96px;--x1:170px;--y1:142px;--x2:330px;--y2:142px;--x3:330px;--y3:206px;transform:translate(170px, 96px);animation-name:fig-run4;animation-duration:5.4s;animation-delay:0s"></circle></g><g class="t-engram"><circle class="fig-spark-halo" r="9.18" style="--x0:330px;--y0:206px;--x1:330px;--y1:142px;--x2:540px;--y2:142px;--x3:540px;--y3:204px;transform:translate(330px, 206px);animation-name:fig-run4;animation-duration:5.4s;animation-delay:1.35s"></circle><circle class="fig-spark" r="3.4" style="--x0:330px;--y0:206px;--x1:330px;--y1:142px;--x2:540px;--y2:142px;--x3:540px;--y3:204px;transform:translate(330px, 206px);animation-name:fig-run4;animation-duration:5.4s;animation-delay:1.35s"></circle></g><g class="t-accent3"><circle class="fig-spark-halo" r="9.18" style="--x0:330px;--y0:206px;--x1:330px;--y1:142px;--x2:740px;--y2:142px;--x3:740px;--y3:208px;transform:translate(330px, 206px);animation-name:fig-run4;animation-duration:5.4s;animation-delay:2.7s"></circle><circle class="fig-spark" r="3.4" style="--x0:330px;--y0:206px;--x1:330px;--y1:142px;--x2:740px;--y2:142px;--x3:740px;--y3:208px;transform:translate(330px, 206px);animation-name:fig-run4;animation-duration:5.4s;animation-delay:2.7s"></circle></g><g class="t-accent3"><circle class="fig-spark-halo" r="9.18" style="--x0:740px;--y0:208px;--x1:740px;--y1:142px;--x2:330px;--y2:142px;--x3:330px;--y3:206px;transform:translate(740px, 208px);animation-name:fig-run4;animation-duration:5.4s;animation-delay:4.05s"></circle><circle class="fig-spark" r="3.4" style="--x0:740px;--y0:208px;--x1:740px;--y1:142px;--x2:330px;--y2:142px;--x3:330px;--y3:206px;transform:translate(740px, 208px);animation-name:fig-run4;animation-duration:5.4s;animation-delay:4.05s"></circle></g>
 </svg>

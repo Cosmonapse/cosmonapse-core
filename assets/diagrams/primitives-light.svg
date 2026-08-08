@@ -1,5 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 300" width="900" height="300" role="img">
 <style>
+/* <![CDATA[ */
 svg {
   --font-sans: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace;
@@ -357,6 +358,7 @@ figcaption {
 }
 
 
+/* ]]> */
 </style>
 <rect width="100%" height="100%" fill="var(--bg)"/>
 <title>Four participants on one synapse bus. A Receptor, drawn as a cup, sits above the bus; a Neuron drawn as a circle, an Engram drawn as a diamond and an Effector drawn as a triangle hang below it.</title><g class="t-accent2" transform="translate(180,58)"><path d="M -19.549999999999997,0 A 19.549999999999997,19.549999999999997 0 0 0 19.549999999999997,0 L 12.120999999999999,0 A 12.120999999999999,12.120999999999999 0 0 1 -12.120999999999999,0 Z" class="fig-hollow"></path><text class="fig-title" text-anchor="middle" y="-24">Receptor</text><text class="fig-tag" text-anchor="middle" y="-10">listens</text></g><line x1="180" y1="80" x2="180" y2="114" class="fig-hair"></line><g class="t-accent2"><rect x="60" y="121.5" width="780" height="13" rx="6.5" class="fig-box"></rect><text class="fig-tag" x="60" y="115" dominant-baseline="auto">Synapse · one bus, one envelope</text></g><line x1="352" y1="135" x2="352" y2="190" class="fig-hair"></line><line x1="530" y1="135" x2="530" y2="188" class="fig-hair"></line><line x1="708" y1="135" x2="708" y2="192" class="fig-hair"></line><g class="t-accent" transform="translate(352,208)"><circle r="17" class="fig-hollow"></circle><text class="fig-title" text-anchor="middle" y="36">Neuron</text><text class="fig-tag" text-anchor="middle" y="50">thinks</text></g><g class="t-engram" transform="translate(530,208)"><polygon points="0,-19.549999999999997 19.549999999999997,0 0,19.549999999999997 -19.549999999999997,0" class="fig-hollow"></polygon><text class="fig-title" text-anchor="middle" y="38.55">Engram</text><text class="fig-tag" text-anchor="middle" y="52.55">remembers</text></g><g class="t-accent3" transform="translate(708,208)"><polygon points="0,-19.549999999999997 16.930796569999995,9.774999999999999 -16.930796569999995,9.774999999999999" class="fig-hollow"></polygon><text class="fig-title" text-anchor="middle" y="36">Effector</text><text class="fig-tag" text-anchor="middle" y="50">acts</text></g>

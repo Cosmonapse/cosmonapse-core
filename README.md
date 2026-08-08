@@ -56,6 +56,15 @@ Real systems are concurrent and only partially ordered. Encoding one as a graph 
 
 They share exactly one thing - the Signal envelope. That is what lets the designer, the runtime and the observability plane stay honest about the same system without any of them owning it. Genesis and Prism both ship inside the `cosmonapse` wheel; there is nothing extra to download and no runtime dependency on either.
 
+<div align="center">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/suite-stream-dark.svg" />
+  <img src="assets/diagrams/suite-stream-light.svg" alt="A synapse bus labelled Core carries three participants below it. Above the bus, Genesis writes components onto it and Prism reads every Signal off it." width="880" />
+</picture>
+</div>
+
+Genesis writes onto the bus, Prism reads off it, and Core *is* the bus. None of the three owns the system, which is the only reason a designer and an observability plane can describe the same running program without either becoming a dependency of it.
+
 ### Genesis, in three moves
 
 <div align="center">
@@ -149,6 +158,15 @@ asyncio.run(main())
 The Neuron is a plain async function. No base class, no inheritance, nothing to import into it.
 
 ## Architecture
+
+<div align="center">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/hero-bus-dark.svg" />
+  <img src="assets/diagrams/hero-bus-light.svg" alt="A synapse bus with a Receptor above it and a Neuron, an Engram and an Effector below it. Signals travel from the Receptor into the Neuron, from the Neuron to the Engram and to the Effector, and back again." width="880" />
+</picture>
+</div>
+
+A system, moving. A request arrives at a Receptor and crosses the bus into a Neuron; the memory read and the tool call that follow are Signals on that same bus, and so is the tool's answer coming back. There is no call stack in that picture and nobody is holding a loop - just four participants and one medium, which is why any of them could have been on another machine, and why a fifth could watch the whole thing without being wired to anyone.
 
 <div align="center">
 <picture>

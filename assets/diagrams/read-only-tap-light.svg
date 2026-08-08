@@ -1,5 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 382" width="900" height="382" role="img">
 <style>
+/* <![CDATA[ */
 svg {
   --font-sans: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace;
@@ -357,6 +358,7 @@ figcaption {
 }
 
 
+/* ]]> */
 </style>
 <rect width="100%" height="100%" fill="var(--bg)"/>
 <title>A synapse bus with three participants below it, each connected by a two-way arrow. Above the bus, a read-only tap labelled Prism is connected by a single dashed arrow pointing upward, away from the bus.</title><g class="t-accent2" transform="translate(450,62)"><rect x="-115" y="-27" width="230" height="54" rx="10" class="fig-box"></rect><text class="fig-title" text-anchor="middle" y="-1">Prism</text><text class="fig-sub" text-anchor="middle" y="16">read-only tap</text></g><g class="t-accent2"><line x1="450" y1="182" x2="450" y2="103" class="fig-line fig-dash"></line><polygon class="fig-fill" points="450,94 455,103 445,103"></polygon></g><g class="t-accent2"><text class="fig-tag" x="478" y="142" text-anchor="start">listens only, never emits</text></g><g class="t-accent2"><rect x="60" y="185.5" width="780" height="13" rx="6.5" class="fig-box"></rect><text class="fig-tag" x="60" y="179" dominant-baseline="auto">Synapse</text></g><g class="t-neutral"><line x1="216" y1="255" x2="216" y2="209" class="fig-line"></line><polygon class="fig-fill" points="216,200 221,209 211,209"></polygon><polygon class="fig-fill" points="216,264 211,255 221,255"></polygon></g><g class="t-neutral"><line x1="444" y1="257" x2="444" y2="209" class="fig-line"></line><polygon class="fig-fill" points="444,200 449,209 439,209"></polygon><polygon class="fig-fill" points="444,266 439,257 449,257"></polygon></g><g class="t-neutral"><line x1="672" y1="253" x2="672" y2="209" class="fig-line"></line><polygon class="fig-fill" points="672,200 677,209 667,209"></polygon><polygon class="fig-fill" points="672,262 667,253 677,253"></polygon></g><g class="t-accent" transform="translate(216,286)"><circle r="17" class="fig-hollow"></circle><text class="fig-title" text-anchor="middle" y="36">intake</text></g><g class="t-accent" transform="translate(444,286)"><circle r="17" class="fig-hollow"></circle><text class="fig-title" text-anchor="middle" y="36">specialist</text></g><g class="t-accent3" transform="translate(672,286)"><polygon points="0,-19.549999999999997 16.930796569999995,9.774999999999999 -16.930796569999995,9.774999999999999" class="fig-hollow"></polygon><text class="fig-title" text-anchor="middle" y="36">policy tool</text></g><text class="fig-note" x="450" y="362" text-anchor="middle">attach it to a running system and detach again without a deploy</text>
