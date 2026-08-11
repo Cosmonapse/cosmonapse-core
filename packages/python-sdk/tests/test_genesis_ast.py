@@ -611,3 +611,196 @@ def test_tool_standard_suggests_dialects_not_providers():
 
     field = next(f for f in gp.declaration_fields("Axon") if f["name"] == "tool_standard")
     assert set(field["suggest"]) == set(TOOL_STANDARDS)
+
+
+# --------------------------------------------------------------------------
+# Neuron prompt
+# --------------------------------------------------------------------------
+#
+# The prompt is a module constant rather than a keyword, which is exactly why
+# it needed its own section: it is the most-edited text in an LLM Neuron and
+# the config form has never been able to reach it. What these pin down is
+# that lifting it into an editable box didn't cost the file anything - an
+# unchanged save is byte-identical, and the two shapes Genesis can't rewrite
+# safely are refused instead of flattened.
+
+_NEURON = '''\
+"""A stock LLM neuron."""
+import os
+
+from cosmonapse import Axon
+
+#: which model to talk to
+MODEL = os.environ.get("M", "llama3")
+
+SYSTEM = (
+    "You are a research specialist. Using ONLY the supplied web context, "
+    "write tight, factual notes."
+)
+
+AXON = Axon.ollama(
+    neuron_id="research",
+    model=MODEL,
+)
+
+
+@AXON.before_task
+async def gather(input):
+    return {"messages": [{"role": "system", "content": SYSTEM}]}
+'''
+
+
+def test_the_prompt_is_read_out_of_the_module():
+    model = ga.parse_component(_NEURON)
+    prompt = model["prompt"]
+    assert prompt["name"] == "SYSTEM"
+    assert prompt["text"].startswith("You are a research specialist.")
+    assert prompt["editable"] is True
+    assert prompt["used"] is True
+    # And it leaves the read-only chunks, which is the point of the section.
+    assert not any("You are a research specialist" in c["text"] for c in model["other"])
+
+
+def test_a_prompt_the_module_never_reads_is_reported():
+    src = _NEURON.replace('{"role": "system", "content": SYSTEM}', '{"role": "user"}')
+    assert ga.parse_component(src)["prompt"]["used"] is False
+
+
+def test_only_a_neuron_gets_a_prompt_section():
+    src = _NEURON.replace("from cosmonapse import Axon", "from cosmonapse import Effector") \
+                 .replace("AXON = Axon.ollama(\n    neuron_id=\"research\",\n    model=MODEL,\n)",
+                          "EFFECTOR = Effector.serve(effector_id=\"tools\")") \
+                 .replace("@AXON.before_task", "@EFFECTOR.on_tool_call")
+    model = ga.parse_component(src)
+    assert model["kind"] == "effector"
+    assert model["prompt"] is None
+    # Someone else's constant stays in the read-only chunks, untouched.
+    assert any("You are a research specialist" in c["text"] for c in model["other"])
+
+
+def test_saving_an_unchanged_prompt_leaves_the_file_alone():
+    text = ga.parse_component(_NEURON)["prompt"]["text"]
+    assert ga.set_prompt(_NEURON, prompt=text) == _NEURON
+
+
+def test_editing_the_prompt_touches_only_the_prompt():
+    out = ga.set_prompt(_NEURON, prompt="Be terse.")
+    assert ga.parse_component(out)["prompt"]["text"] == "Be terse."
+    assert 'SYSTEM = "Be terse."' in out
+    # Everything else survives, including the declaration and the hook.
+    for kept in ("#: which model to talk to", "MODEL = os.environ.get", "AXON = Axon.ollama(",
+                 "async def gather(input):"):
+        assert kept in out
+    ast.parse(out)
+
+
+@pytest.mark.parametrize("prompt", [
+    "One line.",
+    "Two\nlines.",
+    ("A paragraph.\n\nAnother paragraph, with a much longer run of words in it "
+     "so that the renderer has to break the literal somewhere sensible."),
+    'JSON in it: {"route": "research", "task": "<what to find out>"}',
+    "Both quote kinds: \"quoted\" and 'quoted', plus a tab\there.",
+    "Trailing newline.\n",
+    "   leading and trailing spaces   matter   ",
+])
+def test_a_prompt_round_trips_through_the_file(prompt):
+    """Whatever goes in the box comes back out of the file unchanged.
+
+    The renderer wraps long prompts across several literals, and a wrap that
+    drops the space it broke on is a silent change to what the model is told.
+    """
+    out = ga.set_prompt(_NEURON, prompt=prompt)
+    assert ga.parse_component(out)["prompt"]["text"] == prompt
+    assert max(len(ln) for ln in out.splitlines()) <= 79
+
+
+def test_a_json_heavy_prompt_is_not_written_as_escaped_quotes():
+    out = ga.set_prompt(_NEURON, prompt='Reply with {"route": "research"} and nothing else.')
+    assert '\\"' not in out
+
+
+def test_a_prompt_is_added_to_a_module_that_has_none():
+    src = _NEURON.replace(
+        'SYSTEM = (\n'
+        '    "You are a research specialist. Using ONLY the supplied web context, "\n'
+        '    "write tight, factual notes."\n'
+        ')\n\n', "")
+    assert ga.parse_component(src)["prompt"] is None
+    out = ga.set_prompt(src, prompt="Be terse.")
+    model = ga.parse_component(out)
+    assert model["prompt"]["text"] == "Be terse."
+    # Written at the top of the body, under the imports - and above the
+    # comment that belongs to the constant below it, not between them.
+    assert out.index("SYSTEM") < out.index("#: which model")
+    assert out.index("from cosmonapse import Axon") < out.index("SYSTEM")
+    ast.parse(out)
+
+
+def test_an_empty_prompt_is_refused():
+    with pytest.raises(ga.EditError, match="needs some text"):
+        ga.set_prompt(_NEURON, prompt="   ")
+
+
+def test_a_module_with_no_axon_has_nothing_to_prompt():
+    with pytest.raises(ga.EditError, match="doesn't declare an Axon"):
+        ga.set_prompt("ENGRAM = Engram.serve(engram_id='notes')\n", prompt="hi")
+
+
+def test_a_built_prompt_is_shown_but_not_edited():
+    """15-claude-harness interpolates the date into its prompt.
+
+    Flattening that to a quoted literal would freeze today's date into the
+    file, so the card shows it and sends the user to their editor.
+    """
+    src = _NEURON.replace(
+        '    "You are a research specialist. Using ONLY the supplied web context, "\n'
+        '    "write tight, factual notes."\n',
+        '    "You are a research specialist. "\n'
+        '    f"Today is {datetime.date.today()}."\n')
+    prompt = ga.parse_component(src)["prompt"]
+    assert prompt["editable"] is False
+    assert prompt["note"] == "built rather than written"
+    assert prompt["source"].startswith("SYSTEM = (")
+    with pytest.raises(ga.EditError, match="built rather than written"):
+        ga.set_prompt(src, prompt="Be terse.")
+
+
+def test_a_prompt_with_comments_inside_it_is_not_rewritten():
+    """The comments between the pieces are the valuable half of that file.
+
+    A save replaces the constant as a unit, so there is nowhere for them to
+    go - refusing beats deleting an explanation the user can't see in the box.
+    """
+    src = _NEURON.replace(
+        '    "You are a research specialist. Using ONLY the supplied web context, "\n',
+        '    "You are a research specialist. "\n'
+        '    # Language pin: the served alias drifts into Thai without it.\n'
+        '    "Always reply in English. "\n')
+    prompt = ga.parse_component(src)["prompt"]
+    assert prompt["editable"] is False
+    assert prompt["note"] == "written with comments between its pieces"
+    with pytest.raises(ga.EditError, match="comments"):
+        ga.set_prompt(src, prompt="Be terse.")
+
+
+def test_a_hash_inside_the_prompt_is_not_a_comment():
+    """Two of the examples use "# Tools" as a heading in the prompt itself."""
+    out = ga.set_prompt(_NEURON, prompt="# Tools\n\nYou may call functions.")
+    assert ga.parse_component(out)["prompt"]["editable"] is True
+
+
+def test_the_conventional_names_are_all_read_back():
+    for name in ga.PROMPT_NAMES:
+        src = _NEURON.replace("SYSTEM = (", f"{name} = (").replace("content\": SYSTEM", f"content\": {name}")
+        assert ga.parse_component(src)["prompt"]["name"] == name
+
+
+def test_a_second_binding_of_the_name_is_refused():
+    src = _NEURON.replace(
+        'SYSTEM = (\n'
+        '    "You are a research specialist. Using ONLY the supplied web context, "\n'
+        '    "write tight, factual notes."\n'
+        ')', 'def SYSTEM():\n    return "built elsewhere"')
+    with pytest.raises(ga.EditError, match="already binds SYSTEM"):
+        ga.set_prompt(src, prompt="Be terse.")

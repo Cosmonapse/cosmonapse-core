@@ -32,7 +32,7 @@ jobs:
           cache: pip
 
       - name: Install (with dev extras)
-        run: pip install -e ".[dev,nats,kafka,postgres,flask]"
+        run: pip install -e ".[dev,nats,kafka,postgres,receptor]"
 
       - name: Lint (ruff)
         run: ruff check .

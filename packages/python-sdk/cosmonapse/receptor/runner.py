@@ -254,7 +254,15 @@ async def _serve_group(host: str, port: int,
     by the runner instead, before any of this is scheduled.
     """
     try:
-        import uvicorn  # type: ignore[import-not-found]
+        # No ignore code here on purpose. uvicorn ships a py.typed marker, so
+        # this line type-checks cleanly wherever the `receptor` extra is
+        # installed, and `warn_unused_ignores` then flags any ignore as dead.
+        # Where it is *not* installed the import is unresolvable and mypy wants
+        # an ignore - so the comment is correct in one environment and an error
+        # in the other. `follow_imports_for_stubs`-style config can't split
+        # that either; the module is listed under [[tool.mypy.overrides]] in
+        # pyproject instead, which is environment-independent.
+        import uvicorn
         from fastapi import FastAPI
     except ModuleNotFoundError as exc:  # pragma: no cover - env dependent
         raise ModuleNotFoundError(_UVICORN_HINT) from exc

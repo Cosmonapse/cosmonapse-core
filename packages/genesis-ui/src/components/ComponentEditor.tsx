@@ -5,6 +5,7 @@ import {
   readModel,
   saveBehavior,
   saveDeclaration,
+  savePrompt,
   setAxonSource,
   setEngramShape,
 } from "../api";
@@ -25,6 +26,7 @@ import { FieldInput, isBlank } from "./FieldInput";
 import { BehaviorCard, draftFrom, draftOf } from "./BehaviorCard";
 import type { DraftBehavior } from "./BehaviorCard";
 import { ProtocolPicker } from "./ProtocolPicker";
+import { PromptCard } from "./PromptCard";
 
 const SHAPES: { id: EngramShape; label: string; blurb: string }[] = [
   {
@@ -142,6 +144,9 @@ export function ComponentEditor({
   const [drafts, setDrafts] = useState<Record<string, DraftBehavior>>({});
   const [behaviorBusy, setBehaviorBusy] = useState<string | null>(null);
   const [behaviorError, setBehaviorError] = useState<Record<string, string>>({});
+
+  const [promptBusy, setPromptBusy] = useState(false);
+  const [promptError, setPromptError] = useState<string | null>(null);
 
   /**
    * Take a freshly-read model as the new truth, without discarding edits the
@@ -336,6 +341,13 @@ export function ComponentEditor({
     );
     setBehaviorBusy(null);
     if (ok && key === "new") setDrafts((d2) => { const { new: _drop, ...rest } = d2; return rest; });
+  }
+
+  async function writePrompt(text: string) {
+    setPromptBusy(true);
+    setPromptError(null);
+    await run(() => savePrompt({ path: projectPath, file, prompt: text }), setPromptError);
+    setPromptBusy(false);
   }
 
   async function removeBehavior(key: string) {
@@ -680,6 +692,19 @@ export function ComponentEditor({
           />
         );
       })}
+
+      {/* The prompt, between the behaviours and the rest of the file: it is
+          the Neuron's most-edited text, and it used to be buried in the
+          read-only chunks below with the imports. */}
+      {decl.kind === "neuron" && (
+        <PromptCard
+          prompt={model.prompt}
+          accent={accent}
+          busy={promptBusy}
+          error={promptError}
+          onSave={writePrompt}
+        />
+      )}
 
       <ReadOnlyChunks chunks={model.other} />
     </div>

@@ -47,7 +47,11 @@ from cosmonapse.effector.base import (
     EffectorError,
     EffectorNotBound,
 )
-from cosmonapse.effector.standards import TOOL_STANDARDS, extract_tool_call
+from cosmonapse.effector.schema import render_tools, validate_args
+from cosmonapse.effector.standards import (
+    TOOL_STANDARDS,
+    extract_tool_calls,
+)
 from cosmonapse.engram.base import EngramBinding, EngramNotBound
 from cosmonapse.envelope import (
     Directed,
@@ -161,6 +165,7 @@ class Axon(LifecycleHooks):
         engrams: list[EngramBinding] | None = None,
         effectors: list[EffectorBinding] | None = None,
         tool_standard: str | None = None,
+        parallel_tools: bool = False,
         output_parser: OutputParser | None = None,
     ) -> None:
         LifecycleHooks.__init__(self)
@@ -223,6 +228,13 @@ class Axon(LifecycleHooks):
         # so the bindings would be dead wiring - fail at construction,
         # not silently at runtime. tool_standard alone (no bindings) is
         # legal: pure translation, dispatch left to the host chain.
+        #
+        # An explicitly passed tool_standard ALWAYS wins. When it is
+        # omitted the dialect is inferred from the wired Neuron (its
+        # provider class, then its model name), so the caller does not
+        # have to restate a fact the wiring already determines. Inference
+        # only ever fires where construction used to raise, so no
+        # existing Axon changes behaviour.
         self._tool_standard: str | None = None
         if tool_standard is not None:
             std = tool_standard.lower()
@@ -233,12 +245,24 @@ class Axon(LifecycleHooks):
                     f"{sorted(TOOL_STANDARDS)}"
                 )
             self._tool_standard = std
+        else:
+            self._tool_standard = _infer_tool_standard(neuron_fn)
         if effectors and self._tool_standard is None:
             raise ValueError(
                 f"Axon {neuron_id!r}: effectors= requires tool_standard= "
                 f"(one of {sorted(TOOL_STANDARDS)}) so the Axon can "
-                f"recognise the Neuron's native tool calls"
+                f"recognise the Neuron's native tool calls; it could not "
+                f"be inferred from {type(neuron_fn).__name__}"
             )
+        # Run every recognised tool call in a reply, in order, instead of
+        # the first only. Off by default: the one-action-per-step
+        # contract is what the existing host chains are written against,
+        # and quietly running three tools where one used to run is not a
+        # change an Axon should make on its own. When off, the calls that
+        # did NOT run are reported on ``dropped_calls`` rather than
+        # vanishing.
+        self._parallel_tools = parallel_tools
+        self._provider = _provider_of(neuron_fn)
         self._effector_bindings: dict[str, EffectorBinding] = {}
         for eb in (effectors or []):
             if eb.name in self._effector_bindings:
@@ -247,6 +271,22 @@ class Axon(LifecycleHooks):
                     f"{eb.name!r}"
                 )
             self._effector_bindings[eb.name] = eb
+
+        # The provider-shaped tools= payload, rendered once from every
+        # binding's declared schemas. None when nothing declares one, and
+        # that None is the whole backward-compatibility guarantee: no
+        # schemas means no native payload, no injected input key, and the
+        # text-parsing path exactly as it was.
+        _schemas = [
+            s for b in self._effector_bindings.values() for s in b.schemas
+        ]
+        self._native_tools: list[dict[str, Any]] | None = (
+            render_tools(_schemas, self._provider) if _schemas else None
+        )
+        # Recognition runs at all only when this Axon is about tools.
+        self._tools_enabled = bool(
+            self._tool_standard or self._native_tools,
+        )
 
         # Whether the wrapped neuron_fn declares recall/imprint kwargs.
         # Detected once at construction; cached for hot-path use.
@@ -295,6 +335,7 @@ class Axon(LifecycleHooks):
         engrams: list[EngramBinding] | None = None,
         effectors: list[EffectorBinding] | None = None,
         tool_standard: str | None = None,
+        parallel_tools: bool = False,
         recognize: bool = True,
         teach_intents: bool | None = None,
         **source_kwargs: Any,
@@ -361,6 +402,7 @@ class Axon(LifecycleHooks):
             engrams=engrams,
             effectors=effectors,
             tool_standard=tool_standard,
+            parallel_tools=parallel_tools,
             output_parser=parser,
         )
 
@@ -593,22 +635,30 @@ class Axon(LifecycleHooks):
         try:
             if self._before_task_hooks:
                 input_data = await self._apply_before_task(input_data)
+            # Native tool channel: hand the provider its own tools=
+            # payload. Injected AFTER the before_task hooks so a hook
+            # that rebuilds the input from scratch (the usual prompt
+            # builder) cannot drop it. Only ever present when a binding
+            # declared schemas.
+            if self._native_tools is not None and isinstance(input_data, dict):
+                input_data = {**input_data, "tools": self._native_tools}
             if kwargs:
                 raw_output: dict[str, Any] = await self._fn(
                     input_data, context, **kwargs,
                 )
             else:
                 raw_output = await self._fn(input_data, context)
-            # Native tool-call recognition (tool_standard=). The model
-            # spoke its trained dialect; a match takes precedence over
-            # the cosmo parser and recognisers - a tool call IS the
-            # intent, there is nothing further to recognise.
-            native_call: dict[str, Any] | None = None
-            if self._tool_standard is not None:
-                native_call = extract_tool_call(
+            # Tool-call recognition. Structured calls off the provider's
+            # own channel first, then the declared/inferred text dialect.
+            # Either way a match takes precedence over the cosmo parser
+            # and the recognisers - a tool call IS the intent, there is
+            # nothing further to recognise.
+            native_calls: list[dict[str, Any]] = []
+            if self._tools_enabled:
+                native_calls = extract_tool_calls(
                     raw_output, self._tool_standard,
                 )
-            if native_call is None:
+            if not native_calls:
                 # Per-source recognition: turn the Neuron's native output
                 # (LLM text, MCP result) into the marker dict the branches
                 # below understand. Runs inside the try so a parser failure
@@ -635,9 +685,9 @@ class Axon(LifecycleHooks):
         # Axon dispatches through the EffectorClient and the AGENT_OUTPUT
         # carries the observation; with no bindings at all it carries the
         # translated call for the host chain to execute (pure translation).
-        if native_call is not None:
-            return await self._dispatch_native_tool_call(
-                native_call, trace_id=trace_id, parent_id=parent_id,
+        if native_calls:
+            return await self._dispatch_native_tool_calls(
+                native_calls, trace_id=trace_id, parent_id=parent_id,
             )
 
         # Error marker: a recogniser (e.g. MCP ``is_error``) can request an
@@ -828,22 +878,78 @@ class Axon(LifecycleHooks):
             )
         return _call_tool
 
-    async def _dispatch_native_tool_call(
+    async def _dispatch_native_tool_calls(
+        self,
+        calls: list[dict[str, Any]],
+        *,
+        trace_id: str,
+        parent_id: str,
+    ) -> Signal:
+        """Act on the recognised tool calls and wrap the observation(s).
+
+        The FIRST call's observation is always the top-level payload, so
+        every existing host chain reads exactly what it read before. What
+        is new is that the others are accounted for: with
+        ``parallel_tools=True`` they run too and every observation is
+        listed under ``calls``; with it off they are named under
+        ``dropped_calls``. A model that asked for three actions and got
+        one must not be told it got three.
+
+        Always returns AGENT_OUTPUT: a tool failure (timeout, tool-level
+        error, no serving binding, invalid arguments) rides ``error`` in
+        the output payload for the Neuron/host to react to - it never
+        terminates the TASK.
+        """
+        if self._parallel_tools:
+            # Sequential on purpose despite the name: the provider emits
+            # these as a batch, but they are still ORDERED, and tools
+            # have side effects (a write the next call reads back).
+            # Running them in reply order is the only interleaving the
+            # model can reason about.
+            observations = [
+                await self._run_tool_call(
+                    c, trace_id=trace_id, parent_id=parent_id,
+                )
+                for c in calls
+            ]
+            out = dict(observations[0])
+            if len(observations) > 1:
+                out["calls"] = observations
+        else:
+            out = await self._run_tool_call(
+                calls[0], trace_id=trace_id, parent_id=parent_id,
+            )
+            if len(calls) > 1:
+                out["dropped_calls"] = [
+                    {"tool": c["tool"], "args": c.get("args") or {},
+                     "call_id": c.get("call_id")}
+                    for c in calls[1:]
+                ]
+                logger.info(
+                    "Axon %s: %d tool call(s) not run (parallel_tools=False): %s",
+                    self.neuron_id, len(calls) - 1,
+                    [c["tool"] for c in calls[1:]],
+                )
+        return agent_output_signal(
+            trace_id=trace_id,
+            parent_id=parent_id,
+            directed=Directed(id=self.neuron_id),
+            output=out,
+        )
+
+    async def _run_tool_call(
         self,
         call: dict[str, Any],
         *,
         trace_id: str,
         parent_id: str,
-    ) -> Signal:
-        """Act on a recognised native tool call and wrap the observation.
+    ) -> dict[str, Any]:
+        """Resolve, validate and dispatch ONE call; return its observation.
 
-        Always returns AGENT_OUTPUT: a tool failure (timeout, tool-level
-        error, no serving binding) rides ``error`` in the output payload
-        for the Neuron/host to react to - it never terminates the TASK.
         With no bindings declared the translated call passes through
-        unexecuted (``{"tool", "args", "call_id"}``) for the host
-        chain to run - the pre-binding harness pattern, minus the
-        hand-written parser.
+        unexecuted (``{"tool", "args", "call_id"}``) for the host chain
+        to run - the pre-binding harness pattern, minus the hand-written
+        parser.
         """
         tool = call["tool"]
         args = call.get("args") or {}
@@ -853,12 +959,7 @@ class Axon(LifecycleHooks):
             out["call_id"] = call_id
 
         if not self._effector_bindings:
-            return agent_output_signal(
-                trace_id=trace_id,
-                parent_id=parent_id,
-                directed=Directed(id=self.neuron_id),
-                output=out,
-            )
+            return out
 
         binding = self._resolve_binding_for_tool(tool)
         if binding is None:
@@ -866,12 +967,23 @@ class Axon(LifecycleHooks):
                 f"no effector binding serves tool {tool!r}; "
                 f"bound: {sorted(self._effector_bindings)}"
             )
-            return agent_output_signal(
-                trace_id=trace_id,
-                parent_id=parent_id,
-                directed=Directed(id=self.neuron_id),
-                output=out,
-            )
+            return out
+
+        # Argument validation against the declared schema, before the
+        # call leaves the process. The message goes back as the tool
+        # observation, which is the one channel the model reliably reads
+        # and can correct from - far better than a stack trace from the
+        # far side of the wire, or a tool that half-runs on bad input.
+        schema = binding.schema_for(tool)
+        if schema is not None:
+            problem = validate_args(schema, args)
+            if problem is not None:
+                out["error"] = problem
+                logger.info(
+                    "Axon %s: rejected call to %r: %s",
+                    self.neuron_id, tool, problem,
+                )
+                return out
 
         try:
             outcome = await self._effector_client().call(
@@ -901,12 +1013,7 @@ class Axon(LifecycleHooks):
                 out["error"] = outcome.error
             else:
                 out["result"] = outcome.result
-        return agent_output_signal(
-            trace_id=trace_id,
-            parent_id=parent_id,
-            directed=Directed(id=self.neuron_id),
-            output=out,
-        )
+        return out
 
     @property
     def effector_bindings(self) -> dict[str, EffectorBinding]:
@@ -915,6 +1022,74 @@ class Axon(LifecycleHooks):
     @property
     def tool_standard(self) -> str | None:
         return self._tool_standard
+
+    @property
+    def native_tools(self) -> list[dict[str, Any]] | None:
+        """The provider-shaped ``tools=`` payload this Axon injects, or
+        None when no binding declared schemas."""
+        return self._native_tools
+
+
+# ---------------------------------------------------------------------------
+# Inferring the dialect from the wired Neuron
+# ---------------------------------------------------------------------------
+# Which tool-call dialect a model speaks, and which tools= shape its
+# endpoint takes, are facts about the Neuron that was wired in - not
+# separate decisions the caller should have to restate. Restating them
+# is how they drift: swap the model, forget the string, and every tool
+# call silently degrades into a final answer. An explicit tool_standard=
+# still wins; this only fills the gap where construction used to fail.
+
+#: Open models trained on the Nous/Hermes <tool_call> tag convention.
+_HERMES_MODELS = (
+    "qwen", "hermes", "nous", "functionary", "firefunction", "smollm",
+)
+#: Models trained on OpenAI-style function-calling JSON.
+_CODEX_MODELS = (
+    "gpt", "o1-", "o3", "o4", "llama", "mistral", "mixtral", "deepseek",
+    "gemma", "phi-", "command-r", "granite",
+)
+
+
+def _provider_of(fn: Any) -> str:
+    """Which provider's ``tools=`` shape this Neuron's endpoint takes."""
+    name = type(fn).__name__.lower()
+    if "anthropic" in name:
+        return "anthropic"
+    if "ollama" in name:
+        return "ollama"
+    # Everything else in the SDK speaks the OpenAI wire shape: OpenAI
+    # itself, TGI/vLLM/llama.cpp, and the groq / together / openrouter /
+    # mistral aliases that are _HuggingFaceNeuron pointed elsewhere.
+    return "openai"
+
+
+def _infer_tool_standard(fn: Any) -> str | None:
+    """The text dialect ``fn`` most likely emits, or None if unknowable.
+
+    None keeps the old contract intact: an Axon that declares effectors
+    around a Neuron nothing can be inferred from still fails loudly at
+    construction rather than parsing nothing at runtime. A recognised
+    LLM wrapper whose model name is unfamiliar falls back to ``auto``,
+    which tries every dialect - being unsure is not a reason to
+    recognise nothing.
+    """
+    cls = type(fn).__name__.lower()
+    if "mcp" in cls:
+        return None          # an MCP server is a tool, not a tool CALLER
+    if "anthropic" in cls:
+        return "claude"
+    model = getattr(fn, "model", None)
+    if isinstance(model, str) and model:
+        m = model.lower()
+        if any(k in m for k in _HERMES_MODELS):
+            return "hermes"
+        if any(k in m for k in _CODEX_MODELS):
+            return "codex"
+    # A provider wrapper we recognise but a model name we do not.
+    if cls.endswith("neuron"):
+        return "auto"
+    return None               # a plain callable: nothing to go on
 
 
 # ---------------------------------------------------------------------------

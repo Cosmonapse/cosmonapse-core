@@ -24,6 +24,28 @@ cosmo genesis             # opens the designer at 127.0.0.1:7072
 
 Cosmonapse models a multi-agent system on a nervous system rather than a supervisor. Components emit **Signals** and react to Signals on one bus; nobody holds the loop. You grow a system by adding a node, not by editing a god object - and because every interaction already crossed one bus in one envelope format, tracing costs nothing.
 
+<details open>
+<summary><b>The names are borrowed from biology. The parts are not new.</b></summary>
+
+<br />
+
+If you have ever written a service that consumes from a queue, you already know every idea in here. Only the labels are unfamiliar, and each one maps onto something you have used before:
+
+| Cosmonapse | In ordinary terms |
+| --- | --- |
+| **Signal** | a message, on a bus |
+| **Synapse** | the bus itself - in-memory, a local TCP broker, NATS or Kafka |
+| **Neuron** | an agent: one async function that takes input and returns output |
+| **Axon** | the handler registration around a Neuron - its id and what it can do |
+| **Dendrite** | the bus client your process runs. It connects, registers, listens, dispatches |
+| **Engram** | a shared store, reached over the bus instead of imported as a library |
+| **Effector** | a tool, or any side effect: the thing that services a function call |
+| **Receptor** | your entrypoint - a CLI, an HTTP route, a chat surface |
+
+There is no scheduler to configure, no graph to declare and no base class to inherit from. A Neuron is a plain function; everything else is one of the eight nouns above.
+
+</details>
+
 [cosmonapse.com](https://cosmonapse.com) · [PyPI](https://pypi.org/project/cosmonapse/) · [Envelope Spec](design/ENVELOPE_SPEC.md) · [Examples](https://github.com/Cosmonapse/cosmonapse-examples) · [Roadmap](design/ROADMAP.md) · [Changelog](CHANGELOG.md)
 
 ## Why this exists
@@ -175,7 +197,7 @@ A system, moving. A request arrives at a Receptor and crosses the bus into a Neu
 </picture>
 </div>
 
-Four kinds of participant hang off one Synapse, and the division of labour is the whole design: **Neurons think, Engrams remember, Effectors act, Receptors listen.** Each keeps one silhouette across the suite - you place that shape in Genesis and watch the same shape light up in Prism.
+Four kinds of participant hang off one Synapse, and the division of labour is the whole design: **Neurons think, Engrams remember, Effectors act, Receptors listen.** Each keeps one silhouette across the suite - you place that shape in Genesis and watch the same shape light up in Prism. This is the long version of the table at the top of this file.
 
 | Abstraction | Plays the role of | What it does |
 | --- | --- | --- |

@@ -233,13 +233,23 @@ class ApiReceptor(Receptor):
     @property
     def router(self) -> Any:
         """An ``APIRouter`` carrying the dispatch endpoint and extra routes."""
-        fastapi = _fastapi()
+        # _fastapi() first, purely for its error message: it turns a missing
+        # soft dependency into _FASTAPI_HINT instead of a bare ImportError.
+        # The names themselves are then imported statically, the way chat.py
+        # does it, so `router` is a real APIRouter rather than Any. That
+        # matters under `mypy --strict`: a decorator pulled off an Any is an
+        # untyped decorator, which taints every function it wraps and needs
+        # silencing - and the silencer that used to be here named an error
+        # code mypy has never had ("untyped-decorator"; the real one is
+        # "misc"), so it suppressed nothing and added an unused-ignore of its
+        # own. Typing the router removes the error instead of muting it.
+        _fastapi()
+        from fastapi import APIRouter
         from fastapi.responses import StreamingResponse
 
-        router = fastapi.APIRouter()
+        router = APIRouter()
 
-        # router is Any - fastapi is a soft dep, imported dynamically in _fastapi().
-        @router.post(self.path)  # type: ignore[untyped-decorator]
+        @router.post(self.path)
         async def dispatch(body: dict[str, Any] | None = None) -> Any:
             result = await self.handle(body)
             if hasattr(result, "__aiter__"):
@@ -250,7 +260,7 @@ class ApiReceptor(Receptor):
                 )
             return result
 
-        @router.get(self.path + "/{trace_id}")  # type: ignore[untyped-decorator]
+        @router.get(self.path + "/{trace_id}")
         async def observe(trace_id: str) -> Any:
             return StreamingResponse(
                 self.observe_stream(trace_id),

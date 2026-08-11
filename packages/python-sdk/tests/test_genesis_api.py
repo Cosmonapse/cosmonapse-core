@@ -310,3 +310,43 @@ async def test_warnings_clear_once_they_stop_being_true(api):
     (api.root / "brain.py").write_text("from cosmonapse import Dendrite\n", encoding="utf-8")
     _, verdict = await api.get("/api/detect", path=api.path)
     assert not any(w["id"] == "no-brain" for w in verdict["warnings"])
+
+
+async def test_writing_a_neuron_prompt_over_http(api):
+    """The prompt card's whole life cycle: absent, written, edited, refused."""
+    await _add(api, "neuron", "summarize-notes")
+    rel = "neurons/summarize_notes.py"
+
+    _, model = await api.get("/api/model", path=api.path, file=rel)
+    assert model["prompt"] is None
+
+    status, written = await api.post("/api/prompt", path=api.path, file=rel,
+                                     prompt="You are terse.\n\nAnswer in one line.")
+    assert status == 200, written
+    assert written["prompt"]["name"] == "SYSTEM"
+    assert written["prompt"]["text"] == "You are terse.\n\nAnswer in one line."
+    # Written, but not wired: nothing in the SDK looks for the name.
+    assert written["prompt"]["used"] is False
+    py_compile.compile(str(api.root / rel), doraise=True)
+
+    status, edited = await api.post("/api/prompt", path=api.path, file=rel,
+                                    prompt="You are terse.")
+    assert status == 200
+    assert edited["prompt"]["text"] == "You are terse."
+    assert (api.root / rel).read_text().count("SYSTEM = ") == 1
+
+    before = (api.root / rel).read_text()
+    status, body = await api.post("/api/prompt", path=api.path, file=rel, prompt="  ")
+    assert status == 400
+    assert "needs some text" in body["error"]
+    assert (api.root / rel).read_text() == before
+
+
+async def test_an_effector_has_no_prompt_to_write(api):
+    await _add(api, "effector", "http-tools")
+    rel = "effector/http_tools.py"
+    _, model = await api.get("/api/model", path=api.path, file=rel)
+    assert model["prompt"] is None
+    status, body = await api.post("/api/prompt", path=api.path, file=rel, prompt="hi")
+    assert status == 400
+    assert "doesn't declare an Axon" in body["error"]

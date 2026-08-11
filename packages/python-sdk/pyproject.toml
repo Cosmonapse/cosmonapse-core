@@ -180,3 +180,17 @@ ignore = [
 
 [tool.mypy]
 strict = true
+
+# Optional-dependency imports are checked in two different environments and
+# must pass in both: CI installs the extras, a plain `pip install cosmonapse`
+# does not. An inline `# type: ignore[import-not-found]` is correct only in the
+# second - once the package is present the ignore is dead, and `strict` turns
+# on warn_unused_ignores, so the comment that fixed one environment breaks the
+# other. Declaring the modules here instead is true in both: mypy stops
+# demanding stubs for them and never reports an ignore it did not need.
+[[tool.mypy.overrides]]
+module = [
+    "uvicorn",
+    "uvicorn.*",
+]
+ignore_missing_imports = true

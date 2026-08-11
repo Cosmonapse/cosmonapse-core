@@ -155,7 +155,15 @@ class Brain:
         except Exception as exc:
             self._emit(f"\n[genesis] stopped reading output: {exc}\n")
         finally:
+            # EOF on stdout and the child being reaped are two separate events,
+            # and the pipe usually closes first. Reading `returncode` here found
+            # None on that ordering and printed nothing at all, so a brain that
+            # died mid-session just went quiet. Wait for the status - the pipe
+            # is already at EOF, so the child is on its way out regardless.
             code = self.proc.returncode
+            if code is None:
+                with contextlib.suppress(Exception):
+                    code = await asyncio.wait_for(self.proc.wait(), timeout=_TERM_GRACE_S)
             if code is not None:
                 self._emit(f"\n[genesis] brain.py exited with code {code}\n")
 
@@ -239,14 +247,18 @@ def _key(project: Path) -> str:
 
 
 def get(raw_path: str) -> Brain | None:
-    """The brain for a project, if one is running. Reaps a dead one."""
+    """The brain for a project, if one has been started in this session.
+
+    A dead brain is deliberately kept rather than reaped: `status()` reports
+    its exit code, which is how the UI tells "never started" apart from
+    "died", and the terminal panel still has its scrollback to show. It is
+    dropped on the next `start()` for the same project, or on `stop()`.
+
+    (An earlier version branched on `alive` here and returned the same value
+    either way, which read as reaping and did nothing.)
+    """
     project = Path(raw_path).expanduser().resolve()
-    brain = _BRAINS.get(_key(project))
-    if brain is not None and not brain.alive:
-        # Keep it around long enough to report the exit, but stop calling it
-        # running - the UI distinguishes "never started" from "died".
-        return brain
-    return brain
+    return _BRAINS.get(_key(project))
 
 
 def status(raw_path: str) -> dict[str, Any]:
@@ -290,6 +302,12 @@ async def start(raw_path: str, *, synapse_url: str | None = None) -> dict[str, A
     existing = _BRAINS.get(_key(project))
     if existing is not None and existing.alive:
         return existing.status()
+    if existing is not None:
+        # Dead, and we are about to replace it. Drop its pump and scrollback
+        # now rather than letting the new Brain overwrite the key and orphan
+        # them.
+        await existing.stop()
+        _BRAINS.pop(_key(project), None)
 
     env = dict(os.environ)
     # Belt and braces with -u: some layers honour one and not the other.

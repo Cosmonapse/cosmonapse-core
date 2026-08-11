@@ -28,6 +28,16 @@ export default defineConfig({
   server: {
     port: 5175,
     proxy: {
+      // Listed before "/api" because vite matches proxy keys in order and
+      // "/api" would otherwise swallow this one. Without `ws: true` the
+      // upgrade is not proxied at all, so the Test tab's terminal is dead
+      // under `npm run dev` while every other route works - which reads as a
+      // Genesis bug rather than a dev-server config gap. prism-ui/vite.config
+      // has always set this for its own socket.
+      "/api/brain/ws": {
+        target: "ws://127.0.0.1:7072",
+        ws: true,
+      },
       "/api": {
         target: "http://127.0.0.1:7072",
       },

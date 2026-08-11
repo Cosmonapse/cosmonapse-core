@@ -47,6 +47,20 @@ export function useSignalStream(
   const clear = useCallback(() => {
     setSignals([]);
     setTotal(0);
+    // The registry itself is deliberately NOT wiped. It is built from REGISTER
+    // signals, which arrive once when a participant joins and never again, so
+    // dropping the Map would strip every node of its kind, capabilities and
+    // version with no way to recover them short of a reconnect - the Brain
+    // View would degrade permanently on a button labelled "clear". Zeroing the
+    // counters is what Clear actually means here: it resets what the signal
+    // log was counting, and leaves identity alone.
+    setNeurons((prev) => {
+      const next = new Map<string, NeuronView>();
+      for (const [id, n] of prev) {
+        next.set(id, { ...n, count: 0, lastType: undefined, lastTs: undefined });
+      }
+      return next;
+    });
   }, []);
 
   const ingest = useCallback(
@@ -131,7 +145,10 @@ export function useSignalStream(
         url: target.url,
         namespace: target.namespace,
       }).toString();
-      ws = new WebSocket(`ws://${location.host}/ws?${qs}`);
+      // Derived, not hardcoded: Prism is served over http on loopback today,
+      // but a `ws://` socket from an https page is blocked outright.
+      const scheme = location.protocol === "https:" ? "wss" : "ws";
+      ws = new WebSocket(`${scheme}://${location.host}/ws?${qs}`);
       ws.onopen = () => setConnected(true);
       ws.onclose = () => {
         setConnected(false);

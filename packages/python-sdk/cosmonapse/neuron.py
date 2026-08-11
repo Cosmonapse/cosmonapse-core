@@ -100,8 +100,15 @@ class _OllamaNeuron(_BaseNeuron):
 
     async def __call__(self, input: dict[str, Any], context: list[Any]) -> dict[str, Any]:
         prompt, messages = self._require_input(input, "Ollama")
+        tools = self._tools(input)
         if messages is not None:
-            return await self._chat(messages)
+            return await self._chat(messages, tools=tools)
+        if tools is not None:
+            # /api/generate has no tool channel; /api/chat does. Promote
+            # rather than drop the tools silently.
+            return await self._chat(
+                [{"role": "user", "content": prompt or ""}], tools=tools,
+            )
         return await self._generate(prompt)  # type: ignore[arg-type]
 
     def _options(self) -> dict[str, Any]:
@@ -131,7 +138,11 @@ class _OllamaNeuron(_BaseNeuron):
 
         return {"response": data.get("response", ""), "meta": data}
 
-    async def _chat(self, messages: list[dict[str, Any]]) -> dict[str, Any]:
+    async def _chat(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
         all_messages = messages
         if self.system:
             all_messages = [{"role": "system", "content": self.system}, *messages]
@@ -141,6 +152,8 @@ class _OllamaNeuron(_BaseNeuron):
             "messages": all_messages,
             "stream": False,
         }
+        if tools:
+            body["tools"] = tools
         opts = self._options()
         if opts:
             body["options"] = opts
@@ -232,6 +245,7 @@ class _HuggingFaceNeuron(_BaseNeuron):
 
     async def __call__(self, input: dict[str, Any], context: list[Any]) -> dict[str, Any]:
         prompt, messages = self._require_input(input, "HuggingFace")
+        tools = self._tools(input)
 
         if self.use_completions_api:
             if messages is not None:
@@ -243,9 +257,9 @@ class _HuggingFaceNeuron(_BaseNeuron):
                 )
             return await self._completions(prompt)  # type: ignore[arg-type]
 
-        if messages is not None or self.use_chat_api:
+        if messages is not None or self.use_chat_api or tools is not None:
             msgs = messages or [{"role": "user", "content": prompt or ""}]
-            return await self._chat(msgs)
+            return await self._chat(msgs, tools=tools)
 
         return await self._generate(prompt)  # type: ignore[arg-type]
 
@@ -272,12 +286,22 @@ class _HuggingFaceNeuron(_BaseNeuron):
 
         return {"response": text, "meta": data}
 
-    async def _chat(self, messages: list[dict[str, Any]]) -> dict[str, Any]:
-        """OpenAI-compatible /v1/chat/completions (TGI ≥ 1.4, vLLM, llama.cpp)."""
+    async def _chat(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        """OpenAI-compatible /v1/chat/completions (TGI ≥ 1.4, vLLM, llama.cpp).
+
+        ``tool_choice`` is deliberately not sent: every OpenAI-compatible
+        server defaults to "auto" when ``tools`` is present, and some
+        (older vLLM, llama.cpp) reject the field outright."""
         body: dict[str, Any] = {
             "messages": messages,
             "max_tokens": self.max_new_tokens,
         }
+        if tools:
+            body["tools"] = tools
         if self.model:
             body["model"] = self.model
         if self.temperature is not None:
@@ -404,6 +428,9 @@ class _OpenAINeuron(_BaseNeuron):
             msgs = [{"role": "system", "content": self.system}, *msgs]
 
         body: dict[str, Any] = {"model": self.model, "messages": msgs}
+        tools = self._tools(input)
+        if tools:
+            body["tools"] = tools
         if self.temperature is not None:
             body["temperature"] = self.temperature
         if self.max_tokens is not None:
@@ -519,6 +546,9 @@ class _AnthropicNeuron(_BaseNeuron):
         }
         if system:
             body["system"] = system
+        tools = self._tools(input)
+        if tools:
+            body["tools"] = tools
         if self.temperature is not None:
             body["temperature"] = self.temperature
 
@@ -531,6 +561,11 @@ class _AnthropicNeuron(_BaseNeuron):
         text = "".join(
             b.get("text", "") for b in blocks if b.get("type") == "text"
         )
+        # ``response`` is the TEXT half only. Any ``tool_use`` block stays
+        # in ``meta`` (the unmodified API response), which is where
+        # effector.standards.extract_native_calls reads structured calls
+        # from - joining it into the text would both corrupt the answer
+        # and hide the call.
         return {"response": text, "meta": data}
 
 

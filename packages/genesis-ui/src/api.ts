@@ -193,6 +193,16 @@ export function deleteBehavior(
   return edit<ComponentModel>("/api/behavior/delete", { path, file, behavior_id });
 }
 
+/** Write the Neuron's system prompt constant, adding it if there isn't one. */
+export function savePrompt(args: {
+  path: string;
+  file: string;
+  prompt: string;
+  name?: string;
+}): Promise<ComponentModel> {
+  return edit<ComponentModel>("/api/prompt", args);
+}
+
 export function setEngramShape(args: {
   path: string;
   file: string;

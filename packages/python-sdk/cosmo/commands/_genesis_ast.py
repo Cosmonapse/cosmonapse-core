@@ -34,7 +34,9 @@ that doesn't compile.
 from __future__ import annotations
 
 import ast
+import io
 import re
+import tokenize
 from typing import Any
 
 # The module-level names Genesis treats as "the component this file
@@ -44,6 +46,17 @@ TARGET_NAMES = ("AXON", "EFFECTOR", "ENGRAM", "RECEPTOR")
 
 #: Module-level name holding the storage an Engram front delegates to.
 BACKEND_NAME = "_backend"
+
+#: Module-level names Genesis reads as a Neuron's system prompt.
+#:
+#: An LLM Neuron's prompt is the one part of it that gets edited constantly
+#: and is never a constructor keyword: the four OpenAI-compatible sources
+#: take their system prompt as a ``messages`` entry, so the corpus writes it
+#: as a module constant that a ``@AXON.before_task`` hook folds into the
+#: request. That makes it invisible to a config form and it ends up buried in
+#: the read-only "rest of the file". These are the names it is written under
+#: (a leading underscore is ignored), in the order Genesis prefers them.
+PROMPT_NAMES = ("SYSTEM", "SYSTEM_PROMPT", "PROMPT", "INSTRUCTIONS")
 
 #: What each conventional target name is. A module is free to build a
 #: component from its own subclass - the SDK explicitly encourages it for tool
@@ -264,10 +277,18 @@ def _render_value(field: dict[str, Any]) -> str:
     raise EditError(f"can't render a {t!r} value")
 
 
+#: Everything that can't appear raw inside a double-quoted literal.
+#: Newlines matter here beyond the prompt card - a multi-line value in any
+#: form field used to render as a literal with a real line break in it, which
+#: is a SyntaxError the caller only found out about from _validate.
+_ESCAPES = str.maketrans({
+    "\\": "\\\\", '"': '\\"', "\n": "\\n", "\r": "\\r", "\t": "\\t",
+})
+
+
 def _py_str(s: str) -> str:
     """A double-quoted Python string literal (the house style)."""
-    body = s.replace("\\", "\\\\").replace('"', '\\"')
-    return f'"{body}"'
+    return '"' + s.translate(_ESCAPES) + '"'
 
 
 def _decorator_info(dec: ast.AST, source: str) -> dict[str, Any] | None:
@@ -424,6 +445,126 @@ def _defined_bases(tree: ast.Module) -> list[dict[str, Any]]:
     return out
 
 
+def _prompt_candidate(node: ast.AST, text: str) -> dict[str, Any] | None:
+    """A module-level string constant this file uses as its system prompt.
+
+    Only the conventional names, and ``editable`` is the whole point of the
+    return value. A plain string literal with nothing but string in it gets
+    a text box. Two shapes come back read-only, each with the reason:
+
+    * built rather than written - an f-string interpolating the date, a
+      ``dedent()``, a concatenation with another constant. Round-tripping
+      ``f"...{MODEL}..."`` through a text box flattens it to a quoted
+      literal and silently changes what the module does.
+    * commented from the inside - ``15-claude-harness/assistant.py`` explains
+      *why* each paragraph of its prompt is there, in comments between the
+      concatenated pieces. Saving replaces the constant as a unit, so those
+      comments would go, and they are the more valuable half of that file.
+
+    Reporting either read-only beats reporting nothing: the alternative is a
+    card offering to *add* a prompt to a module that visibly has one.
+    """
+    value: ast.expr | None
+    if isinstance(node, ast.Assign):
+        targets: list[ast.expr] = list(node.targets)
+        value = node.value
+    elif isinstance(node, ast.AnnAssign):
+        targets, value = [node.target], node.value
+    else:
+        return None
+    if len(targets) != 1 or not isinstance(targets[0], ast.Name):
+        return None
+    name = targets[0].id
+    if name.lstrip("_") not in PROMPT_NAMES:
+        return None
+    if value is None:
+        return None
+    end_lineno = node.end_lineno or node.lineno
+    if isinstance(value, ast.Constant) and isinstance(value.value, str):
+        body, note = value.value, ""
+        if _has_comment(text, node.lineno, end_lineno):
+            note = "written with comments between its pieces"
+    elif _looks_like_text(value):
+        body = ast.get_source_segment(text, value) or ""
+        note = "built rather than written"
+    else:
+        return None
+    return {
+        "name": name,
+        "editable": not note,
+        "note": note,
+        "text": body,
+        "source": "".join(_lines(text)[node.lineno - 1 : end_lineno]).rstrip("\n"),
+        "lineno": node.lineno,
+        "end_lineno": end_lineno,
+    }
+
+
+def _has_comment(text: str, lineno: int, end_lineno: int) -> bool:
+    """Does this statement carry a comment inside it?
+
+    Tokenised rather than scanned for a ``#``, which appears in plenty of
+    prompts (``"# Tools"`` is a heading in two of the examples) and would
+    otherwise lock those cards for no reason.
+    """
+    span = "".join(_lines(text)[lineno - 1 : end_lineno])
+    try:
+        tokens = list(tokenize.generate_tokens(io.StringIO(span).readline))
+    except (tokenize.TokenError, IndentationError, SyntaxError):
+        return True  # can't prove it's safe to replace, so don't
+    return any(t.type == tokenize.COMMENT for t in tokens)
+
+
+def _looks_like_text(value: ast.expr) -> bool:
+    """Is this right-hand side plausibly a prompt, just not an editable one?
+
+    Guards against claiming ``PROMPT = build(...)`` where the name happens to
+    match but the value is anyone's guess. An f-string, a concatenation and a
+    call whose arguments include a string all read as prompt-shaped.
+    """
+    if isinstance(value, ast.JoinedStr):
+        return True
+    if isinstance(value, ast.BinOp) and isinstance(value.op, ast.Add):
+        return _looks_like_text(value.left) or _looks_like_text(value.right)
+    if isinstance(value, ast.Constant):
+        return isinstance(value.value, str)
+    if isinstance(value, ast.Call):
+        return any(_looks_like_text(a) for a in value.args)
+    return False
+
+
+def _pick_prompt(candidates: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """The one prompt a module with several candidates is edited through.
+
+    Preference order beats file order: a module with both a ``PROMPT`` helper
+    and a ``SYSTEM`` constant means the second one, wherever it sits. The
+    others are left in the read-only chunks rather than silently merged.
+
+    Editability is deliberately *not* part of the ranking. If SYSTEM is an
+    f-string and INSTRUCTIONS below it is a plain literal, the card shows
+    SYSTEM read-only - quietly pointing the box at whichever constant happens
+    to be writable is how an edit lands somewhere the user never looked.
+    """
+    if not candidates:
+        return None
+    return min(candidates,
+               key=lambda c: (PROMPT_NAMES.index(c["name"].lstrip("_")), c["lineno"]))
+
+
+def _prompt_used(tree: ast.Module, name: str) -> bool:
+    """Is the constant read anywhere in the module?
+
+    Worth knowing, because writing a prompt is only half the job: nothing in
+    the SDK looks for a name called SYSTEM. It reaches the model because a
+    hook puts it there, and a prompt no one reads is the failure mode this
+    card would otherwise make easier to hit.
+    """
+    return any(
+        isinstance(n, ast.Name) and n.id == name and isinstance(n.ctx, ast.Load)
+        for n in ast.walk(tree)
+    )
+
+
 def parse_component(text: str) -> dict[str, Any]:
     """Read a component module into the Code tab's structured view."""
     try:
@@ -438,8 +579,12 @@ def parse_component(text: str) -> dict[str, Any]:
     async_fns: list[str] = []
     factories: list[tuple[dict[str, Any], Any]] = []
     loose: list[tuple[str, str, tuple[str, str], Any, ast.Call]] = []
+    prompts: list[dict[str, Any]] = []
 
     for node in tree.body:
+        found = _prompt_candidate(node, text)
+        if found:
+            prompts.append(found)
         names, call = _assigned(node)
         if call is not None:
             callee = _dotted(call.func) or ""
@@ -532,11 +677,21 @@ def parse_component(text: str) -> dict[str, Any]:
     defines = _defined_bases(tree)
     _annotate_axon(declaration)
 
+    # Only a Neuron gets a prompt section. An Effector named its constant
+    # PROMPT for its own reasons and that is none of Genesis's business;
+    # claiming it would move someone else's code into an editable box.
+    prompt = _pick_prompt(prompts) if declaration \
+        and declaration["kind"] == "neuron" else None
+    if prompt:
+        prompt["used"] = _prompt_used(tree, prompt["name"])
+        claimed.update(range(prompt["lineno"], prompt["end_lineno"] + 1))
+
     return {
         "kind": declaration["kind"] if declaration else (defines[0]["kind"] if defines else None),
         "shape": _effective_shape(declaration, backend),
         "defines": defines,
         "declaration": declaration,
+        "prompt": prompt,
         "backend": backend,
         "behaviors": behaviors,
         "async_fns": async_fns,
@@ -850,6 +1005,203 @@ def delete_behavior(text: str, behavior_id: str) -> str:
     out = re.sub(r"\n{4,}", "\n\n\n", out)
     return _validate(out.rstrip("\n") + "\n")
 
+
+# ---------------------------------------------------------------------------
+# Neuron prompt
+# ---------------------------------------------------------------------------
+#
+# The one edit that isn't a keyword and isn't a hook. Everything else in this
+# module rewrites either a constructor call or a decorated function; a prompt
+# is a bare module-level constant, which is exactly why it had nowhere to
+# live in the Code tab and ended up in the read-only chunks at the bottom.
+#
+# Genesis writes the constant and nothing more. It does NOT wire it into the
+# model - the SDK has no name it looks for, and how the prompt reaches the
+# provider differs by source (``system=`` for ollama/openai/anthropic, a
+# ``messages`` entry for the OpenAI-compatible four). Parsing tells the card
+# whether anything reads the name; connecting it stays the author's call.
+
+#: Where a wrapped prompt literal breaks - 72 leaves room for the four-space
+#: indent, the two quotes and a trailing space inside a 79-column line.
+_PROMPT_WIDTH = 72
+
+
+def _wrap_literal(line: str, width: int) -> list[str]:
+    """Split one physical line into chunks, breaking after a space.
+
+    Every chunk is a slice, so concatenating them returns the original line
+    character for character. That is why this isn't ``textwrap``: textwrap
+    normalises runs of whitespace, and a prompt that came back from a save
+    with its indentation quietly reflowed is a prompt the user can no longer
+    trust the box with.
+    """
+    out: list[str] = []
+    rest = line
+    while len(rest) > width:
+        cut = rest.rfind(" ", 0, width + 1)
+        cut = cut + 1 if cut >= 0 else width
+        out.append(rest[:cut])
+        rest = rest[cut:]
+    out.append(rest)
+    return out
+
+
+def _prompt_literal(chunk: str) -> str:
+    """One piece of a prompt, quoted the way the corpus quotes it.
+
+    Prompts are full of JSON examples, so the default double quote turns
+    ``{"route": "research"}`` into a wall of backslashes. Python has a second
+    quote character for exactly this and the examples already use it; the
+    escaped form is only reached when the chunk contains both kinds.
+    """
+    if '"' in chunk and "'" not in chunk:
+        body = chunk.replace("\\", "\\\\").replace("\n", "\\n") \
+                    .replace("\r", "\\r").replace("\t", "\\t")
+        return f"'{body}'"
+    return _py_str(chunk)
+
+
+def _render_prompt(name: str, value: str) -> str:
+    """``SYSTEM = (...)`` in the shape the examples are written in."""
+    one_line = f"{name} = {_prompt_literal(value)}"
+    if "\n" not in value and len(one_line) <= 79:
+        return one_line
+    parts: list[str] = []
+    lines = value.split("\n")
+    for i, line in enumerate(lines):
+        last = i == len(lines) - 1
+        if not line and not last and parts:
+            # A blank line is the end of a paragraph, not a piece of its own:
+            # carry it on the line before as the "...\\n\\n" the examples write.
+            parts[-1] += "\n"
+            continue
+        chunks = _wrap_literal(line, _PROMPT_WIDTH)
+        if not last:
+            chunks[-1] += "\n"
+        parts += chunks
+    # Only a trailing newline can leave an empty chunk - every other blank
+    # line went out on the piece before it.
+    parts = [p for p in parts if p] or [""]
+    body = "".join(f"    {_prompt_literal(p)}\n" for p in parts)
+    return f"{name} = (\n{body})"
+
+
+def _binds_name(tree: ast.Module, name: str) -> bool:
+    """Does anything at module level already bind this name?"""
+    return any(name in _bound_by(node) for node in tree.body)
+
+
+def _bound_by(node: ast.stmt) -> set[str]:
+    """The module-level names one statement introduces."""
+    if isinstance(node, ast.Assign):
+        return {t.id for t in node.targets if isinstance(t, ast.Name)}
+    if isinstance(node, ast.AnnAssign):
+        return {node.target.id} if isinstance(node.target, ast.Name) else set()
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        return {node.name}
+    if isinstance(node, (ast.Import, ast.ImportFrom)):
+        return {a.asname or a.name.split(".")[0] for a in node.names}
+    return set()
+
+
+def _prompt_anchor(tree: ast.Module, text: str) -> int:
+    """The line a new prompt constant is written above.
+
+    Top of the module body - after the docstring and the imports, before the
+    first statement of the author's own. Not above the declaration, which
+    reads as an afterthought halfway down the file and, for a factory-built
+    component, would land the constant inside a def.
+    """
+    for i, node in enumerate(tree.body):
+        docstring = (
+            i == 0
+            and isinstance(node, ast.Expr)
+            and isinstance(node.value, ast.Constant)
+            and isinstance(node.value.value, str)
+        )
+        if docstring or isinstance(node, (ast.Import, ast.ImportFrom)):
+            continue
+        return _above_comments(text, node.lineno)
+    return len(_lines(text)) + 1
+
+
+def _above_comments(text: str, lineno: int) -> int:
+    """Back up over the comment lines attached to a statement.
+
+    ``#:`` annotations sit directly on top of the constant they describe.
+    Inserting at the statement's own line would wedge the new block between
+    a comment and the thing it comments on.
+    """
+    lines = _lines(text)
+    while lineno > 1 and lines[lineno - 2].lstrip().startswith("#"):
+        lineno -= 1
+    return lineno
+
+
+def set_prompt(text: str, *, prompt: str, name: str = "") -> str:
+    """Write the Neuron's system prompt, replacing or inserting the constant.
+
+    Refuses an empty prompt rather than writing ``SYSTEM = ""``: the box is
+    the whole content of the card, so a stray select-all-delete followed by
+    save is a plausible accident and an unrecoverable one.
+    """
+    model = parse_component(text)
+    decl = model["declaration"]
+    if not decl or decl["kind"] != "neuron":
+        raise EditError("only a Neuron has a prompt - this module doesn't declare an Axon")
+    if not prompt.strip():
+        raise EditError("a prompt needs some text - Genesis won't write an empty one")
+
+    existing = model["prompt"]
+    if existing and existing["text"] == prompt:
+        # Nothing to do, and saying so is not pedantry: this rewrite is a
+        # re-render, so an unchanged save would still reflow every line and
+        # land in the diff as a change the user never made.
+        return text
+    if existing and not existing["editable"]:
+        raise EditError(
+            f"{existing['name']} is {existing['note']}, so saving it here would "
+            f"mean replacing the whole constant and losing that. It stays "
+            f"yours to edit in your editor.",
+        )
+    if existing:
+        rendered = _render_prompt(existing["name"], prompt)
+        out = _replace_span(text, existing["lineno"], existing["end_lineno"], rendered)
+    else:
+        chosen = name or PROMPT_NAMES[0]
+        if chosen.lstrip("_") not in PROMPT_NAMES:
+            raise EditError(
+                f"{chosen!r} isn't a name Genesis reads back as a prompt - "
+                f"use one of {', '.join(PROMPT_NAMES)}",
+            )
+        tree = ast.parse(text)
+        if _binds_name(tree, chosen):
+            raise EditError(
+                f"this module already binds {chosen} to something else - a "
+                f"second assignment would shadow it. Rename it, or write the "
+                f"prompt under another of {', '.join(PROMPT_NAMES)}.",
+            )
+        rendered = _render_prompt(chosen, prompt)
+        at = _prompt_anchor(tree, text)
+        if at > len(_lines(text)):
+            out = text.rstrip("\n") + "\n\n" + rendered + "\n"
+        else:
+            out = _insert_before(text, at, rendered + "\n\n")
+
+    out = _validate(out)
+    # The rewrite is only worth anything if it reads back as what was typed.
+    # Wrapping a literal is the sort of thing that loses a space at a break
+    # and nobody notices until a model starts answering differently.
+    written = parse_component(out)["prompt"]
+    if not written or written["text"] != prompt:
+        raise EditError("the prompt didn't round-trip through the file - nothing written")
+    return out
+
+
+def _insert_before(text: str, lineno: int, block: str) -> str:
+    lines = _lines(text)
+    at = sum(len(ln) for ln in lines[: lineno - 1])
+    return text[:at] + block + text[at:]
 
 # ---------------------------------------------------------------------------
 # Engram shape - the one structural rewrite Genesis performs

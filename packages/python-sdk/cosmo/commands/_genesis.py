@@ -28,6 +28,7 @@ dialog, run a scaffolder, or read a project off disk itself):
     GET  /api/model       -> parse a component into declaration + behaviours
     POST /api/declaration -> rewrite the declaration from the config form
     POST /api/behavior    -> add or replace one decorated behaviour
+    POST /api/prompt      -> write a Neuron's system prompt constant
     POST /api/behavior/delete -> remove a behaviour
     POST /api/engram-shape    -> convert an Engram between shapes
     POST /api/axon-source     -> repoint an Axon at another Neuron source
@@ -2121,6 +2122,12 @@ def build_app(dist: Path | None):
         lambda b: lambda text: _ga.delete_behavior(text, b["behavior_id"]),
     )
 
+    handle_prompt = _edit_route(
+        lambda b: lambda text: _ga.set_prompt(
+            text, prompt=b.get("prompt", ""), name=b.get("name", ""),
+        ),
+    )
+
     handle_engram_shape = _edit_route(
         lambda b: lambda text: _ga.set_engram_shape(
             text, shape=b["shape"], backend=b.get("backend", "in-memory"),
@@ -2221,10 +2228,17 @@ def build_app(dist: Path | None):
             # so a slow socket can never block the child's output.
             loop.call_soon_threadsafe(queue.put_nowait, chunk)
 
-        # Scrollback first, so a panel opened after the banner still shows it.
-        if brain.scrollback:
-            await ws.send_json({"type": "out", "text": brain.scrollback})
+        # Order matters. Snapshot the scrollback, register the listener, and
+        # only then await the send: anything the brain emits during that await
+        # lands in the queue rather than in the gap between "what the snapshot
+        # already had" and "what the listener started catching". Sending first
+        # and subscribing after drops exactly the output produced while the
+        # first frame was in flight, which on a chatty boot is the interesting
+        # part. The queue is drained by pump_out below, so ordering holds.
+        backlog = brain.scrollback
         brain.listeners.add(on_chunk)
+        if backlog:
+            await ws.send_json({"type": "out", "text": backlog})
 
         async def pump_out():
             while True:
@@ -2431,6 +2445,7 @@ def build_app(dist: Path | None):
     app.router.add_post("/api/declaration", handle_declaration)
     app.router.add_post("/api/behavior", handle_behavior)
     app.router.add_post("/api/behavior/delete", handle_behavior_delete)
+    app.router.add_post("/api/prompt", handle_prompt)
     app.router.add_post("/api/engram-shape", handle_engram_shape)
     app.router.add_post("/api/axon-source", handle_axon_source)
     app.router.add_get("/api/receptors", handle_receptors)

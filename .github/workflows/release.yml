@@ -31,7 +31,9 @@ jobs:
         with:
           node-version: "20"
           cache: npm
-          cache-dependency-path: packages/prism-ui/package-lock.json
+          cache-dependency-path: |
+            packages/prism-ui/package-lock.json
+            packages/genesis-ui/package-lock.json
 
       - name: Build Prism UI and copy into the Python package
         working-directory: packages/prism-ui
@@ -40,6 +42,24 @@ jobs:
           # Match the rest of the release: the bundled UI version is the tag.
           npm version "${GITHUB_REF_NAME#v}" --no-git-tag-version --allow-same-version
           npm run build:into-wheel   # vite build + copy-dist.mjs -> cosmo/commands/prism_dist
+
+      # Genesis is bundled exactly like Prism and was previously not built
+      # here at all - the wheel shipped whatever genesis_dist/ happened to be
+      # committed, so any UI change released without a manual
+      # `npm run build:into-wheel` went out stale and silent.
+      - name: Build Genesis UI and copy into the Python package
+        working-directory: packages/genesis-ui
+        run: |
+          npm ci || npm install
+          npm version "${GITHUB_REF_NAME#v}" --no-git-tag-version --allow-same-version
+          npm run build:into-wheel   # vite build + copy-dist.mjs -> cosmo/commands/genesis_dist
+
+      # Note: both dists are also tracked in git so a source checkout has a
+      # working UI without npm. The copies built above overwrite them for the
+      # wheel, so the committed ones are a convenience, never the release
+      # artifact - no staleness gate is needed or wanted here (the tag version
+      # is stamped into the bundle, so a fresh build never byte-matches one
+      # committed at a dev version).
 
       - uses: actions/setup-python@v5
         with:

@@ -93,6 +93,19 @@ def _stdout_is_console() -> bool:
         return False
 
 
+def _stderr_is_console() -> bool:
+    """Same question as `_stdout_is_console`, asked of stderr.
+
+    The two are answered separately on purpose: Genesis spawns children with
+    stdout at the null device and stderr on a pipe, so one being redirected
+    says nothing about the other.
+    """
+    try:
+        return bool(sys.stderr is not None and sys.stderr.isatty())
+    except Exception:  # detached or closed stream
+        return False
+
+
 def _rule_char() -> str:
     """``-`` unless stdout can actually encode a box-drawing dash.
 
@@ -122,6 +135,18 @@ if _HAS_RICH:
     # drive, so say so outright rather than letting detection guess wrong.
     _console = Console() if _stdout_is_console() else Console(legacy_windows=False)
 
+    # Errors get their own Console pointed at stderr. `Console()` writes to
+    # stdout, so routing _err through `_console` sent every failure to the same
+    # stream `--quiet` silences and Genesis points at the null device - which is
+    # exactly where a synapse's reason for dying must not go. `_drain_stderr`
+    # on the Genesis side reads the child's stderr and nothing else, so an
+    # error on stdout is an error nobody ever sees. Same legacy_windows
+    # reasoning as above, measured against stderr's own handle.
+    _err_console = (
+        Console(stderr=True) if _stderr_is_console()
+        else Console(stderr=True, legacy_windows=False)
+    )
+
     def _print_signal(subject: str, sig: Signal) -> None:
         colour = _TYPE_COLOURS.get(sig.type.value, "white")
         ts = sig.ts.strftime("%H:%M:%S.%f")[:-3]
@@ -146,7 +171,7 @@ if _HAS_RICH:
         _console.print(text, style=style)
 
     def _err(text: str) -> None:
-        _console.print(text, style="bold red")
+        _err_console.print(text, style="bold red")
 
 else:
 
@@ -179,6 +204,7 @@ __all__ = [
     "_hr",
     "_print_signal",
     "_rule_char",
+    "_stderr_is_console",
     "_stdout_is_console",
     "set_quiet",
 ]

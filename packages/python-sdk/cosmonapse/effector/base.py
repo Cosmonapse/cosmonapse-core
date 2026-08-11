@@ -60,6 +60,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from cosmonapse._hooks import LifecycleHooks
+from cosmonapse.effector.schema import ToolSchema
 from cosmonapse.envelope import SignalType
 
 if TYPE_CHECKING:
@@ -154,8 +155,16 @@ class EffectorBinding:
     routing; ``directed_type`` (the effector_kind) is for slot-based
     routing where deployment owns the concrete impl.
 
+    ``schemas`` optionally declares each tool's arguments as
+    :class:`~cosmonapse.effector.schema.ToolSchema`. Declaring them turns
+    on the native path: the Axon renders them into the provider's own
+    ``tools=`` payload, so the model emits a structured tool call under
+    constrained decoding instead of prose to be scraped, and validates
+    arguments against them before dispatch. Leaving it empty preserves
+    the text-parsing behaviour exactly.
+
     ``tools`` is the caller-side routing table: the tool names this
-    binding serves. The Axon resolves a native tool call to a binding
+    binding serves. It defaults to the names in ``schemas``. The Axon resolves a native tool call to a binding
     by (1) a binding whose ``tools`` lists the name, (2) a binding
     *named* after the tool, (3) the only binding, when there is
     exactly one. Leave it None on a single-binding Axon.
@@ -166,6 +175,7 @@ class EffectorBinding:
     directed_type: str | None = None
     default_deadline_ms: int | None = None
     tools: tuple[str, ...] | None = None
+    schemas: tuple[ToolSchema, ...] = ()
 
     def to_directed(self) -> Any:
         """Build a :class:`cosmonapse.envelope.Directed` addressing this Effector."""
@@ -178,6 +188,28 @@ class EffectorBinding:
                 f"EffectorBinding {self.name!r} requires directed_id= "
                 f"(effector_id) or directed_type= (effector_kind), or both"
             )
+        if self.schemas:
+            bad = [s for s in self.schemas if not isinstance(s, ToolSchema)]
+            if bad:
+                raise TypeError(
+                    f"EffectorBinding {self.name!r}: schemas= takes "
+                    f"ToolSchema instances, got "
+                    f"{[type(b).__name__ for b in bad]}"
+                )
+            object.__setattr__(self, "schemas", tuple(self.schemas))
+            # The advertised surface IS the routing table unless the
+            # caller overrode it, so the two cannot drift apart.
+            if self.tools is None:
+                object.__setattr__(
+                    self, "tools", tuple(s.name for s in self.schemas),
+                )
+
+    def schema_for(self, tool: str) -> ToolSchema | None:
+        """The declared schema for ``tool``, or None when undeclared."""
+        for s in self.schemas:
+            if s.name == tool:
+                return s
+        return None
 
 
 @dataclass(frozen=True)

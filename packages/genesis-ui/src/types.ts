@@ -235,6 +235,28 @@ export interface DefinedBase {
   kind: ComponentKind;
 }
 
+/**
+ * A Neuron's system prompt, as a module-level constant.
+ *
+ * `editable` is the whole point: a plain string literal gets a text box, while
+ * one that is built (an f-string, a dedent, a concatenation) or carries
+ * comments between its pieces comes back read-only with `note` saying which,
+ * because saving it would mean replacing the constant as a unit and losing
+ * whatever the box can't show. `used` is false when nothing in the module
+ * reads the name - the SDK doesn't look for it, a hook has to.
+ */
+export interface NeuronPrompt {
+  name: string;
+  text: string;
+  /** The assignment exactly as written, for the read-only case. */
+  source: string;
+  editable: boolean;
+  note: string;
+  used: boolean;
+  lineno: number;
+  end_lineno: number;
+}
+
 export interface ComponentModel {
   file: string;
   text: string;
@@ -243,6 +265,8 @@ export interface ComponentModel {
   /** Non-empty when the module defines a backend class (no instance to configure). */
   defines: DefinedBase[];
   declaration: Declaration | null;
+  /** Non-null only for a Neuron that has one. */
+  prompt: NeuronPrompt | null;
   backend: BackendDecl | null;
   behaviors: Behavior[];
   async_fns: string[];

@@ -38,6 +38,7 @@ import os
 import socket
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode, urlparse
@@ -100,6 +101,20 @@ def _port_is_open(host: str, port: int, timeout: float = 0.35) -> bool:
         return s.connect_ex((host, port)) == 0
 
 
+async def _aport_is_open(
+    host: str, port: int,
+    timeout: float = 0.35,  # noqa: ASYNC109 - socket timeout, not a cancel scope
+) -> bool:
+    """`_port_is_open` off the event loop.
+
+    The sync version blocks for up to `timeout` on a filtered or unroutable
+    address, and every caller inside Genesis is an aiohttp request handler -
+    so a probe that stalls stalls the whole UI, including the poll that draws
+    the liveness pill. A thread keeps the loop turning.
+    """
+    return await asyncio.to_thread(_port_is_open, host, port, timeout)
+
+
 def _resolve_timeout(explicit: float | None) -> float:
     """The start budget: what the caller asked for, the env, or the default."""
     if explicit is not None and explicit > 0:
@@ -114,18 +129,31 @@ def _resolve_timeout(explicit: float | None) -> float:
 
 
 def _drain_stderr(proc: subprocess.Popen) -> str:
-    """Everything the child wrote to stderr, or "" if it is still writing.
+    """Everything the child has written to stderr so far.
 
-    `proc.stderr.read()` blocks until the pipe closes, so this is only safe
-    once the process is gone. Every caller here kills first and reads second:
-    a child being given up on has nothing left to say that is worth waiting
-    for, and its traceback is usually the whole answer.
+    Reads the capture file `_spawn` gave the child. Unlike the pipe this
+    replaced, it is safe to call at any point in the child's life - a file
+    read returns what has been written and stops, where a pipe read would
+    have blocked until the writer closed it. Callers no longer have to kill
+    first and read second, though most still do: a child being given up on
+    has nothing left to say that is worth waiting for.
     """
-    if proc.stderr is None:
+    cap = _STDERR_FILES.get(proc.pid)
+    if cap is None:
         return ""
     with contextlib.suppress(Exception):
-        return (proc.stderr.read() or b"").decode("utf-8", "replace").strip()
+        return Path(cap.name).read_text(encoding="utf-8", errors="replace").strip()
     return ""
+
+
+def _release_stderr(proc: subprocess.Popen) -> None:
+    """Drop a reaped child's capture file. Best effort - a leftover temp file
+    is a far smaller problem than deleting one still being written to."""
+    cap = _STDERR_FILES.pop(proc.pid, None)
+    if cap is None:
+        return
+    with contextlib.suppress(Exception):
+        Path(cap.name).unlink()
 
 
 # ---------------------------------------------------------------------------
@@ -222,6 +250,10 @@ async def probe(url: str, namespace: str) -> dict:
 # Starting
 # ---------------------------------------------------------------------------
 
+#: stderr capture files for spawned children, keyed by pid. See `_spawn`.
+_STDERR_FILES: dict[int, Any] = {}
+
+
 def _spawn(args: list[str]) -> subprocess.Popen:
     """Launch a cosmo subcommand detached from Genesis' own stdio.
 
@@ -235,10 +267,33 @@ def _spawn(args: list[str]) -> subprocess.Popen:
     cosmo`` resolves against the working directory first  -  a project that
     happens to contain a ``cosmo/`` package or ``cosmo.py`` would shadow the
     SDK and launch something else entirely.
+
+    stderr goes to a temp file, not a pipe
+    -------------------------------------
+    ``stderr=PIPE`` is a fixed-size kernel buffer - 64KB on Linux, less on
+    Windows - and these children outlive the moments we read it. The parent
+    only drains on failure paths (`_drain_stderr` after a timeout or an
+    immediate exit), so a synapse that starts *successfully* has nobody
+    reading its stderr for the rest of the session. When the buffer fills,
+    the child's next write to stderr blocks inside the syscall and never
+    returns: the process stays alive, the port stays bound, and the namespace
+    silently stops answering. A hang with no crash and no traceback.
+
+    The constraint is stated in `_drain_stderr`'s own docstring - reading a
+    pipe is only safe once the child is gone - and it is unsatisfiable: we
+    cannot read until it exits, and it cannot keep running unless we read.
+    A regular file has no capacity ceiling and never blocks the writer, and
+    the parent can read it at any point, including while the child runs.
     """
+    # delete=False so the file survives the handle: the child holds its own
+    # descriptor, and the parent reopens by name to read. Cleaned up in
+    # `_release_stderr` when the child is reaped.
+    cap = tempfile.NamedTemporaryFile(  # noqa: SIM115 - lifetime is the child's
+        prefix="cosmo-child-", suffix=".stderr", delete=False,
+    )
     kwargs: dict[str, Any] = {
         "stdout": subprocess.DEVNULL,
-        "stderr": subprocess.PIPE,
+        "stderr": cap,
         "stdin": subprocess.DEVNULL,
     }
     if sys.platform == "win32":
@@ -249,7 +304,10 @@ def _spawn(args: list[str]) -> subprocess.Popen:
         kwargs["start_new_session"] = True
     # List-form argv (no shell=True), sys.executable is this interpreter, and
     # `args` is built by us above - not shell input.
-    return subprocess.Popen([sys.executable, "-m", "cosmo", *args], **kwargs)  # noqa: S603
+    proc = subprocess.Popen([sys.executable, "-m", "cosmo", *args], **kwargs)  # noqa: S603
+    _STDERR_FILES[proc.pid] = cap
+    cap.close()  # the child has its own descriptor; the parent reads by name
+    return proc
 
 
 async def start_dev_synapse(
@@ -277,7 +335,7 @@ async def start_dev_synapse(
     if existing["live"]:
         return existing
 
-    if _port_is_open(host, port):
+    if await _aport_is_open(host, port):
         raise RuntimeError(
             f"Port {port} is already in use by something that isn't serving "
             f"namespace {namespace!r}. Pick another port, or stop what's there."
@@ -301,6 +359,7 @@ async def start_dev_synapse(
         if proc.poll() is not None:
             _CHILDREN.pop(_key(url, namespace), None)
             err = _drain_stderr(proc)
+            _release_stderr(proc)
             raise RuntimeError(
                 f"The synapse exited immediately (exit code {proc.returncode})."
                 f"{(' ' + err) if err else ''}"
@@ -313,9 +372,11 @@ async def start_dev_synapse(
 
     # Timed out. Read the port *before* killing the child, or the answer is
     # always "nothing there" - we just closed it.
-    port_open = _port_is_open(host, port)
-    stop_child(url, namespace)
+    port_open = await _aport_is_open(host, port)
+    # Drain before stop_child: reaping the child also deletes its capture file,
+    # and this error message is mostly whatever is in it.
     err = _drain_stderr(proc)
+    stop_child(url, namespace)
 
     if port_open:
         hint = (
@@ -371,6 +432,7 @@ def stop_child(url: str, namespace: str) -> bool:
         proc.terminate()
     with contextlib.suppress(Exception):
         proc.wait(timeout=5)
+    _release_stderr(proc)
     return True
 
 
@@ -406,6 +468,7 @@ def shutdown() -> None:
     for proc in list(_CHILDREN.values()) + list(_PRISM.values()):
         with contextlib.suppress(Exception):
             proc.wait(timeout=3)
+        _release_stderr(proc)
     _CHILDREN.clear()
     _PRISM.clear()
 
@@ -439,7 +502,7 @@ async def launch_prism(
 
     target = prism_url(port, synapse_url, namespace)
 
-    if _port_is_open("127.0.0.1", port):
+    if await _aport_is_open("127.0.0.1", port):
         return {"url": target, "port": port, "started": False,
                 "reused": True, "namespace": namespace, "synapse_url": synapse_url}
 
@@ -459,11 +522,12 @@ async def launch_prism(
         if proc.poll() is not None:
             _PRISM.pop(port, None)
             err = _drain_stderr(proc)
+            _release_stderr(proc)
             raise RuntimeError(
                 f"Prism exited immediately (exit code {proc.returncode})."
                 f"{(' ' + err) if err else ''}"
             )
-        if _port_is_open("127.0.0.1", port):
+        if await _aport_is_open("127.0.0.1", port):
             return {"url": target, "port": port, "started": True,
                     "reused": False, "namespace": namespace,
                     "synapse_url": synapse_url}
@@ -475,6 +539,7 @@ async def launch_prism(
         proc.wait(timeout=5)
     _PRISM.pop(port, None)
     err = _drain_stderr(proc)
+    _release_stderr(proc)
     raise RuntimeError(
         f"Prism didn't come up on port {port} within {timeout:.0f}s."
         f"{(chr(10) + err) if err else ''}"

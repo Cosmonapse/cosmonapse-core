@@ -18,11 +18,14 @@ Wildcard matching supports two forms (same as NATS):
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections import defaultdict
 from typing import Any
 
 from cosmonapse.envelope import Signal
 from cosmonapse.synapse.base import MessageHandler, Subscription, Synapse
+
+logger = logging.getLogger(__name__)
 
 
 class MemorySubscription(Subscription):
@@ -158,8 +161,21 @@ class MemorySynapse(Synapse):
                 self._rr_counters[group] += 1
                 tasks.append(asyncio.create_task(_ensure_coro(handlers[idx], signal)))
 
-        if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
+        if not tasks:
+            return
+
+        # return_exceptions keeps one bad handler from cancelling its siblings
+        # mid-fan-out, but the results have to be read or the failure is gone.
+        # This is the default bus for `cosmo init` projects and for Genesis's
+        # Run button, so a handler that raises here is the first error a new
+        # user hits - and it used to arrive as silence. DevSynapse logs the
+        # same case; this matches it.
+        for result in await asyncio.gather(*tasks, return_exceptions=True):
+            if isinstance(result, BaseException):
+                logger.error(
+                    "MemorySynapse: handler for %r raised: %s",
+                    subject, result, exc_info=result,
+                )
 
     async def subscribe(
         self,

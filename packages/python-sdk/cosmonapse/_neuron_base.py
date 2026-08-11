@@ -47,6 +47,19 @@ class _BaseNeuron:
     # Input helpers (shared by every source)
     # ------------------------------------------------------------------
 
+    def _tools(self, input: dict[str, Any]) -> list[dict[str, Any]] | None:
+        """Provider-shaped tool definitions the Axon injected, or None.
+
+        The Axon renders its bindings' ToolSchemas into THIS provider's
+        shape before calling, so the wrapper forwards the list verbatim.
+        Absent (the default) means no native tool channel: the reply is
+        plain text and tool calls, if any, are recovered by the text
+        parsers in ``cosmonapse.effector.standards``."""
+        tools = input.get("tools")
+        if isinstance(tools, list) and tools:
+            return tools
+        return None
+
     def _prompt(self, input: dict[str, Any]) -> str | None:
         """Return a plain-text prompt from common input keys, or a rendered
         continuation when the input is a clarification / permission
