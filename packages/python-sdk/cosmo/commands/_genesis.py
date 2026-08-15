@@ -15,8 +15,7 @@ dialog, run a scaffolder, or read a project off disk itself):
     GET  /                -> the Genesis SPA (index.html)
     GET  /assets/*        -> the SPA's static JS/CSS bundle
     GET  /api/browse      -> list subdirectories of a path (folder picker)
-    POST /api/init        -> run the standard-skeleton scaffold at a path,
-                             optionally starting a git repository in it
+    POST /api/init        -> run the standard-skeleton scaffold at a path
     GET  /api/scaffold    -> read a scaffolded project back as graph nodes
     POST /api/component   -> add a Neuron/Effector/Engram module + wire it
     POST /api/component/delete  -> unwire it, then archive or delete it
@@ -44,26 +43,6 @@ dialog, run a scaffolder, or read a project off disk itself):
     POST /api/synapse/start   -> spawn a dev synapse on a chosen port
     POST /api/synapse/stop    -> stop the namespace on a running synapse
     POST /api/prism           -> open Prism on a live synapse
-    GET  /api/git             -> branch, HEAD and the working tree's state
-    POST /api/git/init        -> start a repository in this project
-    POST /api/git/identity    -> set user.name / user.email for this repo
-    POST /api/git/stage       -> add paths to the index, or take them out
-    POST /api/git/commit      -> commit the index
-    GET  /api/git/log         -> the commit list, optionally for one path
-    GET  /api/git/show        -> one commit: header, diffstat and diff
-    GET  /api/git/diff        -> one file's change: worktree, index or commit
-    POST /api/git/restore     -> put one file back to a commit
-    GET  /api/git/branches    -> local branches, and which one is checked out
-    POST /api/git/branch      -> switch to one, or create it from here
-    POST /api/git/remote      -> point this repository at a remote
-    POST /api/git/clone       -> clone a repository into a chosen folder
-    POST /api/git/push        -> publish the current branch
-    POST /api/git/pull        -> fast-forward onto the remote
-    GET  /api/forge           -> which git account is connected, if any
-    POST /api/forge/connect   -> check a token and hand it to git's credential
-                                 helper (Genesis never stores it itself)
-    POST /api/forge/disconnect-> forget it, and ask git to drop it too
-    GET  /api/forge/repos     -> the repositories that token can see
 
 This mirrors cosmo/commands/_prism.py: same bundling approach
 (``genesis_dist``, built by ``packages/genesis-ui``'s
@@ -87,8 +66,6 @@ from pathlib import Path
 import click
 
 from cosmo.commands import _genesis_ast as _ga
-from cosmo.commands import _genesis_forge as _gf
-from cosmo.commands import _genesis_git as _gg
 from cosmo.commands import _genesis_protocols as _gp
 from cosmo.commands import _genesis_run as _gr
 from cosmo.commands import _genesis_synapse as _gs
@@ -1884,7 +1861,6 @@ def build_app(dist: Path | None):
         folder = (body.get("path") or "").strip()
         namespace = (body.get("namespace") or "demo").strip() or "demo"
         force = bool(body.get("force", False))
-        want_git = bool(body.get("git", True))
 
         if not name:
             return web.json_response({"error": "name is required"}, status=400)
@@ -1901,28 +1877,9 @@ def build_app(dist: Path | None):
         except OSError as e:
             return web.json_response({"error": str(e)}, status=400)
 
-        reply: dict = {
+        return web.json_response({
             "target": str(target), "written": written, "namespace": namespace,
-        }
-
-        # After the scaffold, never instead of it. A repository that could
-        # not be started - no git on PATH, or the folder is already inside
-        # one - is worth reporting, not worth failing a scaffold that already
-        # succeeded and writing the project off.
-        if want_git:
-            try:
-                result = await _gg.init_repo(str(target))
-                reply["git"] = {
-                    "repo": True,
-                    "branch": result["branch"],
-                    "head": result["head"],
-                    "note": result.get("note"),
-                }
-            except (_gg.GitError, ValueError, OSError) as e:
-                reply["git"] = {"repo": False, "branch": None, "head": None,
-                                "note": str(e)}
-
-        return web.json_response(reply)
+        })
 
     async def handle_scaffold(request):
         raw_path = request.query.get("path")
@@ -2463,270 +2420,6 @@ def build_app(dist: Path | None):
         except RuntimeError as e:
             return web.json_response({"error": str(e)}, status=409)
 
-    # -- version control ---------------------------------------------------
-    #
-    # Genesis edits real files, and most of its edits are structural: one
-    # click writes a module and rewrites brain.py. So the undo it offers is
-    # the one people already trust rather than a second history only Genesis
-    # can read. Everything here runs the user's own git in their project
-    # (see _genesis_git for why), never over the network, and never on its
-    # own initiative - the panel shows what an edit left dirty, and turning
-    # that into a commit stays a decision.
-
-    async def _git_reply(coro):
-        """Await one git call and put its failures on the wire.
-
-        `GitError` is a 409 rather than a 500 on purpose: git ran, and
-        declined. That is the same distinction handle_brain_start draws for a
-        brain that exits - the request was fine, the world said no. The panel
-        renders `error` verbatim, so each message has to carry the whole
-        explanation rather than a category; `stderr` rides along so an
-        unexpected refusal is still diagnosable without opening a terminal.
-        """
-        try:
-            return web.json_response(await coro)
-        except _gg.GitError as e:
-            return web.json_response(
-                {"error": str(e), "code": e.code, "stderr": e.stderr}, status=409,
-            )
-        except FileNotFoundError as e:
-            return web.json_response({"error": str(e)}, status=404)
-        except PermissionError as e:
-            return web.json_response({"error": str(e)}, status=403)
-        except (ValueError, OSError) as e:
-            return web.json_response({"error": str(e)}, status=400)
-
-    def _git_path(request) -> str:
-        raw_path = (request.query.get("path") or "").strip()
-        if not raw_path:
-            raise ValueError("path is required")
-        return raw_path
-
-    async def handle_git_status(request):
-        # "There is no repository here", and even "there is no git on this
-        # machine", are answers rather than errors: each one is what the
-        # panel puts a button under. A 404 would leave it unable to offer the
-        # one thing it exists for.
-        try:
-            return web.json_response(await _gg.status(_git_path(request)))
-        except FileNotFoundError as e:
-            return web.json_response({"error": str(e)}, status=404)
-        except (ValueError, OSError) as e:
-            return web.json_response({"error": str(e)}, status=400)
-
-    async def handle_git_init(request):
-        try:
-            body = await request.json()
-        except Exception:
-            return web.json_response({"error": "invalid JSON body"}, status=400)
-        raw_path = (body.get("path") or "").strip()
-        if not raw_path:
-            return web.json_response({"error": "path is required"}, status=400)
-        return await _git_reply(_gg.init_repo(
-            raw_path,
-            initial_commit=bool(body.get("initial_commit", True)),
-            gitignore=bool(body.get("gitignore", True)),
-        ))
-
-    async def handle_git_identity(request):
-        try:
-            body = await request.json()
-        except Exception:
-            return web.json_response({"error": "invalid JSON body"}, status=400)
-        raw_path = (body.get("path") or "").strip()
-        if not raw_path:
-            return web.json_response({"error": "path is required"}, status=400)
-        return await _git_reply(_gg.set_identity(
-            raw_path, body.get("name") or "", body.get("email") or "",
-        ))
-
-    async def handle_git_stage(request):
-        try:
-            body = await request.json()
-        except Exception:
-            return web.json_response({"error": "invalid JSON body"}, status=400)
-        raw_path = (body.get("path") or "").strip()
-        if not raw_path:
-            return web.json_response({"error": "path is required"}, status=400)
-        files = body.get("files")
-        if not isinstance(files, list):
-            return web.json_response({"error": "files must be a list"}, status=400)
-        return await _git_reply(_gg.stage(
-            raw_path, [str(f) for f in files], staged=bool(body.get("staged", True)),
-        ))
-
-    async def handle_git_commit(request):
-        try:
-            body = await request.json()
-        except Exception:
-            return web.json_response({"error": "invalid JSON body"}, status=400)
-        raw_path = (body.get("path") or "").strip()
-        if not raw_path:
-            return web.json_response({"error": "path is required"}, status=400)
-        return await _git_reply(_gg.commit(
-            raw_path, str(body.get("message") or ""),
-            stage_all=bool(body.get("stage_all", False)),
-        ))
-
-    async def handle_git_log(request):
-        try:
-            raw_path = _git_path(request)
-            limit = int(request.query.get("limit") or _gg.DEFAULT_LOG_LIMIT)
-        except (TypeError, ValueError) as e:
-            return web.json_response({"error": str(e)}, status=400)
-        return await _git_reply(_gg.log(
-            raw_path, limit=limit, file=request.query.get("file") or "",
-        ))
-
-    async def handle_git_show(request):
-        try:
-            raw_path = _git_path(request)
-        except ValueError as e:
-            return web.json_response({"error": str(e)}, status=400)
-        return await _git_reply(
-            _gg.show(raw_path, request.query.get("sha") or ""),
-        )
-
-    async def handle_git_diff(request):
-        try:
-            raw_path = _git_path(request)
-        except ValueError as e:
-            return web.json_response({"error": str(e)}, status=400)
-        return await _git_reply(_gg.diff(
-            raw_path,
-            request.query.get("file") or "",
-            staged=request.query.get("staged") in ("1", "true", "yes"),
-            sha=request.query.get("sha") or "",
-        ))
-
-    async def handle_git_restore(request):
-        try:
-            body = await request.json()
-        except Exception:
-            return web.json_response({"error": "invalid JSON body"}, status=400)
-        raw_path = (body.get("path") or "").strip()
-        if not raw_path:
-            return web.json_response({"error": "path is required"}, status=400)
-        return await _git_reply(_gg.restore(
-            raw_path, str(body.get("file") or ""), sha=str(body.get("sha") or ""),
-        ))
-
-    async def handle_git_branches(request):
-        try:
-            raw_path = _git_path(request)
-        except ValueError as e:
-            return web.json_response({"error": str(e)}, status=400)
-        return await _git_reply(_gg.branches(raw_path))
-
-    async def handle_git_branch(request):
-        try:
-            body = await request.json()
-        except Exception:
-            return web.json_response({"error": "invalid JSON body"}, status=400)
-        raw_path = (body.get("path") or "").strip()
-        if not raw_path:
-            return web.json_response({"error": "path is required"}, status=400)
-        return await _git_reply(_gg.switch_branch(
-            raw_path, str(body.get("name") or ""),
-            create=bool(body.get("create", False)),
-        ))
-
-    async def handle_git_remote(request):
-        try:
-            body = await request.json()
-        except Exception:
-            return web.json_response({"error": "invalid JSON body"}, status=400)
-        raw_path = (body.get("path") or "").strip()
-        if not raw_path:
-            return web.json_response({"error": "path is required"}, status=400)
-        return await _git_reply(_gg.set_remote(
-            raw_path, str(body.get("url") or ""),
-            str(body.get("name") or "origin"),
-        ))
-
-    async def handle_git_clone(request):
-        """Clone into a chosen folder.
-
-        The one handler here that can take minutes. It is left to run rather
-        than bounded by a short timeout, because the alternative - reporting
-        a failure while git carries on writing into the destination - would
-        leave a half-clone that the next attempt then refuses to overwrite.
-        """
-        try:
-            body = await request.json()
-        except Exception:
-            return web.json_response({"error": "invalid JSON body"}, status=400)
-        parent = (body.get("path") or "").strip()
-        if not parent:
-            return web.json_response({"error": "path is required"}, status=400)
-        return await _git_reply(_gg.clone(
-            parent, str(body.get("url") or ""), str(body.get("name") or ""),
-        ))
-
-    async def handle_git_push(request):
-        try:
-            body = await request.json()
-        except Exception:
-            return web.json_response({"error": "invalid JSON body"}, status=400)
-        raw_path = (body.get("path") or "").strip()
-        if not raw_path:
-            return web.json_response({"error": "path is required"}, status=400)
-        return await _git_reply(_gg.push(
-            raw_path, remote=str(body.get("remote") or ""),
-            branch=str(body.get("branch") or ""),
-        ))
-
-    async def handle_git_pull(request):
-        try:
-            body = await request.json()
-        except Exception:
-            return web.json_response({"error": "invalid JSON body"}, status=400)
-        raw_path = (body.get("path") or "").strip()
-        if not raw_path:
-            return web.json_response({"error": "path is required"}, status=400)
-        return await _git_reply(_gg.pull(
-            raw_path, remote=str(body.get("remote") or ""),
-            branch=str(body.get("branch") or ""),
-        ))
-
-    # -- the git account ---------------------------------------------------
-    #
-    # Genesis never holds the token. `connect` checks it against the host,
-    # hands it to `git credential approve`, and remembers only which host and
-    # which login - see _genesis_forge. That is why there is no route here
-    # that returns a token, and why "am I connected" is answered by asking
-    # git's credential store rather than by reading a file Genesis wrote.
-
-    async def _forge_reply(coro):
-        try:
-            return web.json_response(await coro)
-        except _gf.ForgeError as e:
-            return web.json_response({"error": str(e)}, status=409)
-        except (ValueError, OSError) as e:
-            return web.json_response({"error": str(e)}, status=400)
-
-    async def handle_forge_status(request):
-        return await _forge_reply(_gf.status())
-
-    async def handle_forge_connect(request):
-        try:
-            body = await request.json()
-        except Exception:
-            return web.json_response({"error": "invalid JSON body"}, status=400)
-        return await _forge_reply(_gf.connect(
-            str(body.get("kind") or ""),
-            str(body.get("token") or ""),
-            base_url=str(body.get("base_url") or ""),
-            login=str(body.get("login") or ""),
-            enable_store=bool(body.get("enable_store", False)),
-        ))
-
-    async def handle_forge_disconnect(request):
-        return await _forge_reply(_gf.disconnect())
-
-    async def handle_forge_repos(request):
-        return await _forge_reply(_gf.repos(request.query.get("q") or ""))
-
     async def handle_mark(request):
 
         # The favicon lives at the bundle root, not under /assets.
@@ -2765,25 +2458,6 @@ def build_app(dist: Path | None):
     app.router.add_post("/api/synapse/start", handle_synapse_start)
     app.router.add_post("/api/synapse/stop", handle_synapse_stop)
     app.router.add_post("/api/prism", handle_prism)
-    app.router.add_get("/api/git", handle_git_status)
-    app.router.add_post("/api/git/init", handle_git_init)
-    app.router.add_post("/api/git/identity", handle_git_identity)
-    app.router.add_post("/api/git/stage", handle_git_stage)
-    app.router.add_post("/api/git/commit", handle_git_commit)
-    app.router.add_get("/api/git/log", handle_git_log)
-    app.router.add_get("/api/git/show", handle_git_show)
-    app.router.add_get("/api/git/diff", handle_git_diff)
-    app.router.add_post("/api/git/restore", handle_git_restore)
-    app.router.add_get("/api/git/branches", handle_git_branches)
-    app.router.add_post("/api/git/branch", handle_git_branch)
-    app.router.add_post("/api/git/remote", handle_git_remote)
-    app.router.add_post("/api/git/clone", handle_git_clone)
-    app.router.add_post("/api/git/push", handle_git_push)
-    app.router.add_post("/api/git/pull", handle_git_pull)
-    app.router.add_get("/api/forge", handle_forge_status)
-    app.router.add_post("/api/forge/connect", handle_forge_connect)
-    app.router.add_post("/api/forge/disconnect", handle_forge_disconnect)
-    app.router.add_get("/api/forge/repos", handle_forge_repos)
     if dist is not None:
         app.router.add_static("/assets", str(dist / "assets"))
     return app

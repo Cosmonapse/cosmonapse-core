@@ -4,17 +4,14 @@ import { SettingsMenu } from "./SettingsMenu";
 import { SynapseIndicator } from "./SynapseIndicator";
 
 // Which pane of the workspace is in front. "canvas" is the draw.io-style
-// layout, "code" the source browser over the same components, "test" the
-// place you actually run the thing and talk to its Receptors, and "history"
-// the git panel - what has changed since the last commit, and what it
-// changed from.
-export type GenesisView = "canvas" | "code" | "test" | "history";
+// layout, "code" the source browser over the same components, and "test" the
+// place you actually run the thing and talk to its Receptors.
+export type GenesisView = "canvas" | "code" | "test";
 
 export const VIEWS: { id: GenesisView; label: string }[] = [
   { id: "canvas", label: "Canvas" },
   { id: "code", label: "Code" },
   { id: "test", label: "Test" },
-  { id: "history", label: "History" },
 ];
 
 interface Props {
@@ -72,7 +69,7 @@ export function Header({
 
       <span style={{ color: C.textFaint, fontWeight: 600, flexShrink: 0 }}>│</span>
 
-      {/* Canvas / Code / Test / History - four lenses on one project */}
+      {/* Canvas / Code - the two ways of looking at the same brain */}
       <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
         {VIEWS.map((v) => {
           const on = v.id === view;

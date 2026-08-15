@@ -6,24 +6,17 @@ import { C, MONO } from "../theme";
 import type { Detection, InitError, InitResult, RecentProject } from "../types";
 import { FolderBrowser, pushRecent } from "./FolderBrowser";
 import { kindColor } from "./CanvasNode";
-import { GitProject } from "./GitProject";
 import { Logo } from "./Logo";
 import { ThemeToggle } from "./ThemeToggle";
 
 /**
- * One screen for every way in.
+ * One screen for both ways in.
  *
- * Two tabs, and they are the two genuinely different questions: is the
- * project already on this machine, or is it on GitHub? Everything else about
- * "where" is a folder, and Genesis answers that by looking rather than
- * asking - it probes each folder as you browse it, so the primary action
- * follows what is actually there. A folder that already holds a project
- * offers to open it, a folder of projects offers those, and anywhere else
- * offers to scaffold something new. You find out what a folder is by looking
- * at it, not by picking a mode up front.
- *
- * The Git tab is the one thing that could not be reduced to a folder, since
- * it needs an account before it can show you anything.
+ * Genesis probes each folder as you browse it, so the primary action follows
+ * what's actually there rather than a mode you had to pick up front: a folder
+ * that already holds a project offers to open it, a folder of projects offers
+ * those, and anywhere else offers to scaffold something new. The point is
+ * that you find out what a folder is by looking at it, not by guessing.
  */
 export function StartScreen({
   onScaffolded,
@@ -35,14 +28,12 @@ export function StartScreen({
   const [name, setName] = useState("cosmonapse-app");
   const [folder, setFolder] = useState("");
   const [namespace, setNamespace] = useState("demo");
-  const [git, setGit] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [conflict, setConflict] = useState(false);
   const [probe, setProbe] = useState<Detection | null>(null);
   const [probing, setProbing] = useState(false);
   const [recents, setRecents] = useState<RecentProject[]>(loadRecents);
-  const [mode, setMode] = useState<"local" | "git">("local");
 
   // Probe whatever folder the browser is sitting on. Debounced, because the
   // browser fires on every keystroke of its filter and every arrow press.
@@ -75,7 +66,6 @@ export function StartScreen({
         path: folder,
         namespace: namespace.trim() || "demo",
         force,
-        git,
       });
       pushRecent(folder);
       onScaffolded(result);
@@ -106,40 +96,12 @@ export function StartScreen({
             <span style={{ color: C.textDim, fontWeight: 500, fontSize: 18 }}>Genesis</span>
           </div>
           <p style={{ color: C.textDim, fontWeight: 600, fontSize: 15, marginTop: 10, lineHeight: 1.55 }}>
-            Start a new brain, open one you already have, or clone one from GitHub. Genesis lays
-            it out as a canvas you can grow — one Synapse, its Neurons, Engrams and Effectors.
+            Start a new brain or open one you already have. Name it, choose where it lives, and
+            Genesis lays it out as a canvas you can grow — one Synapse, its Neurons, Engrams and
+            Effectors.
           </p>
         </div>
 
-        <div style={{ display: "flex", gap: 6, marginBottom: 18 }}>
-          {(["local", "git"] as const).map((m) => {
-            const on = m === mode;
-            return (
-              <div
-                key={m}
-                onClick={() => setMode(m)}
-                style={{
-                  padding: "6px 16px",
-                  borderRadius: 9,
-                  cursor: "pointer",
-                  fontFamily: MONO,
-                  fontSize: 14.5,
-                  color: on ? C.accent2 : C.textDim,
-                  background: on ? "rgba(var(--accent2-rgb), 0.12)" : "transparent",
-                  border: "1px solid " + (on ? "rgba(var(--accent2-rgb), 0.4)" : C.border),
-                  transition: "all 0.15s",
-                }}
-              >
-                {m === "local" ? "This computer" : "From git"}
-              </div>
-            );
-          })}
-        </div>
-
-        {mode === "git" && <GitProject onOpen={onOpen} />}
-
-        {mode === "local" && (
-        <>
         {recents.length > 0 && (
           <Field label="Recent">
             <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
@@ -203,29 +165,6 @@ export function StartScreen({
           </div>
         )}
 
-        {/* Genesis rewrites brain.py on every add and remove, so a repository
-            is the undo for most of what it does. Defaulted on, but still a
-            tick: scaffolding inside a repo somebody already has is common
-            enough that starting a second one silently would be wrong. The
-            .gitignore is written either way - it costs nothing, and it is
-            wanted whether or not this project is the repository root. */}
-        {!isProject && (
-          <label style={gitToggleStyle}>
-            <input
-              type="checkbox"
-              checked={git}
-              onChange={(e) => setGit(e.target.checked)}
-              style={{ accentColor: C.accent2 }}
-            />
-            <span style={{ fontFamily: MONO, fontSize: 14, color: C.text }}>
-              Start a git repository
-            </span>
-            <span style={{ fontSize: 13, color: C.textFaint, fontWeight: 600 }}>
-              first commit included · skipped if this folder is already in one
-            </span>
-          </label>
-        )}
-
         {error && (
           <div style={errorStyle}>
             {error}
@@ -247,8 +186,6 @@ export function StartScreen({
           <button disabled={!canCreate} onClick={() => create(false)} style={primaryBtnStyle(canCreate)}>
             {busy ? "Scaffolding…" : folder ? `Create ${name.trim() || "…"} here` : "Create"}
           </button>
-        )}
-        </>
         )}
       </div>
     </div>
@@ -409,15 +346,6 @@ const verdictStyle: CSSProperties = {
   marginBottom: 16,
   fontSize: 14.5,
   background: "rgba(var(--fg-rgb), 0.015)",
-};
-
-const gitToggleStyle: CSSProperties = {
-  display: "flex",
-  alignItems: "baseline",
-  gap: 9,
-  flexWrap: "wrap",
-  margin: "2px 0 16px",
-  cursor: "pointer",
 };
 
 const recentChip: CSSProperties = {
