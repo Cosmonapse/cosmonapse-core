@@ -16,6 +16,7 @@ Scaffold a runnable Cosmonapse project in the **standard package skeleton**
         terminal.py
       brain.py         the only entry - who hosts what, and `python brain.py`
       README.md
+      .gitignore       caches, virtualenvs, .env, _archive/
 
 One of each primitive, so every folder has a worked example to copy rather
 than a README paragraph to interpret.
@@ -24,6 +25,7 @@ than a README paragraph to interpret.
     cosmo init my-app           # scaffold ./my-app
     cosmo init my-app -n demo   # choose the namespace
     cosmo init . --force        # scaffold into the current directory
+    cosmo init my-app --no-git  # skip the repository, keep the .gitignore
 
 The generated project is intentionally tiny: `python brain.py` gives a
 working Axon + Dendrite round-trip AND a tool call in ONE process
@@ -40,9 +42,12 @@ Four primitives, four folders: Neurons think (neurons/), Engrams remember
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 import click
+
+from cosmo.commands import _genesis_git as _gg
 
 # ---------------------------------------------------------------------------
 # File templates. Placeholders (__NAMESPACE__, __PROJECT__) are substituted
@@ -639,6 +644,15 @@ def scaffold_project(
                         encoding="utf-8")
         written.append(filename)
 
+    # Written apart from _FILES, and never over an existing one. _FILES is
+    # also the list `_files_present` checks for the "this directory already
+    # has a project in it" refusal, and a lone .gitignore - which any folder
+    # someone has thought about for five minutes already has - is not a
+    # project. Adding it there would turn a harmless file into a scaffold
+    # that refuses to run.
+    if _gg.write_gitignore(target):
+        written.append(".gitignore")
+
     return target, written
 
 
@@ -650,7 +664,11 @@ def scaffold_project(
               help="Write into the target directory even if it already "
                    "contains files (existing files with the same names are "
                    "overwritten).")
-def init(name: str, namespace: str, force: bool) -> None:
+@click.option("--git/--no-git", "use_git", default=True, show_default=True,
+              help="Start a git repository in the new project and make the "
+                   "first commit. Skipped, with a note, if the folder is "
+                   "already inside one.")
+def init(name: str, namespace: str, force: bool, use_git: bool) -> None:
     """Scaffold a standard-skeleton Cosmonapse project in ./NAME.
 
     \b
@@ -662,6 +680,7 @@ def init(name: str, namespace: str, force: bool) -> None:
       cosmo init my-app
       cosmo init my-app --namespace=demo
       cosmo init . --force
+      cosmo init my-app --no-git
     """
     try:
         target, written = scaffold_project(name, namespace=namespace, force=force)
@@ -674,9 +693,16 @@ def init(name: str, namespace: str, force: bool) -> None:
 
     project = target.name
 
+    # After the scaffold, never instead of it. A repository that could not be
+    # started (no git on PATH, or the folder is already inside one) is worth
+    # a line of output, not a failed init that leaves the user with nothing.
+    git_note = _init_repo(target) if use_git else None
+
     click.echo(f"Scaffolded {project} in {target}")
     for filename in written:
         click.echo(f"  + {filename}")
+    if git_note:
+        click.echo(f"  {git_note}")
     click.echo()
     click.echo("Next steps:")
     if target != Path.cwd():
@@ -687,6 +713,24 @@ def init(name: str, namespace: str, force: bool) -> None:
     click.echo("Same code over a real synapse:")
     click.echo(f"  cosmo synapse start memory --namespace={namespace}")
     click.echo("  SYNAPSE_URL=cosmo://127.0.0.1:7070 python brain.py")
+
+
+def _init_repo(target: Path) -> str:
+    """`git init` + a first commit, reported as one line either way.
+
+    Shares `cosmo genesis`' implementation rather than shelling out here, so
+    the repository a terminal makes and the one the Genesis form makes are
+    the same repository: same default branch, same .gitignore, same first
+    commit message.
+    """
+    try:
+        result = asyncio.run(_gg.init_repo(str(target)))
+    except _gg.GitError as e:
+        return f"git: no repository - {e}"
+    head = result.get("head")
+    if head is None:
+        return f"git: {result.get('note', 'repository started, nothing committed')}"
+    return f"git: repository on {result['branch']}, first commit {head['short']}"
 
 
 def _files_present(target: Path) -> list[Path]:

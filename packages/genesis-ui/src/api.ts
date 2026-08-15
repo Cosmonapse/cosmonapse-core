@@ -11,6 +11,14 @@ import type {
   EngramShape,
   Field,
   FileResult,
+  ForgeAccount,
+  ForgeKind,
+  ForgeRepoList,
+  GitBranches,
+  GitCommitDetail,
+  GitDiff,
+  GitLog,
+  GitStatus,
   InitError,
   BrainStatus,
   InitResult,
@@ -58,6 +66,9 @@ export function initProject(args: {
   path: string;
   namespace: string;
   force?: boolean;
+  /** Start a repository in the new project. Defaults to true server-side; a
+   *  failure lands on the result, never as a failed scaffold. */
+  git?: boolean;
 }): Promise<InitResult> {
   return fetch("/api/init", {
     method: "POST",
@@ -311,4 +322,165 @@ export function receptorHttp(args: {
 export function brainSocketUrl(path: string): string {
   const proto = location.protocol === "https:" ? "wss:" : "ws:";
   return `${proto}//${location.host}/api/brain/ws?path=${encodeURIComponent(path)}`;
+}
+
+// ── version control ───────────────────────────────────────────────────────
+// Every call returns the *re-read* status, for the same reason the structured
+// edits return the re-read component model: the server is the only thing that
+// decides what the repository now looks like, and a UI patching its own copy
+// would drift the moment the user also did something in a terminal.
+
+/** Branch, HEAD and the working tree, in one round trip. */
+export function gitStatus(path: string): Promise<GitStatus> {
+  return fetch(`/api/git?path=${encodeURIComponent(path)}`).then((r) =>
+    asJson<GitStatus>(r),
+  );
+}
+
+/** `git init` in the project, plus a .gitignore and a first commit. */
+export function gitInit(args: {
+  path: string;
+  initial_commit?: boolean;
+  gitignore?: boolean;
+}): Promise<GitStatus> {
+  return post<GitStatus>("/api/git/init", args);
+}
+
+/** Set user.name / user.email for *this repository* - never --global. */
+export function gitIdentity(path: string, name: string, email: string): Promise<GitStatus> {
+  return post<GitStatus>("/api/git/identity", { path, name, email });
+}
+
+/** Add paths to the index, or take them back out of it. */
+export function gitStage(path: string, files: string[], staged: boolean): Promise<GitStatus> {
+  return post<GitStatus>("/api/git/stage", { path, files, staged });
+}
+
+/**
+ * Commit the index. `stage_all` is the one-click checkpoint - it stages
+ * everything in the repository first, and the button that sends it says so
+ * rather than hiding the difference.
+ */
+export function gitCommit(args: {
+  path: string;
+  message: string;
+  stage_all?: boolean;
+}): Promise<GitStatus> {
+  return post<GitStatus>("/api/git/commit", args);
+}
+
+export function gitLog(
+  path: string,
+  opts: { limit?: number; file?: string } = {},
+): Promise<GitLog> {
+  const qs = new URLSearchParams({ path });
+  if (opts.limit) qs.set("limit", String(opts.limit));
+  if (opts.file) qs.set("file", opts.file);
+  return fetch(`/api/git/log?${qs}`).then((r) => asJson<GitLog>(r));
+}
+
+/** One commit: header, what it touched, and the diff. */
+export function gitShow(path: string, sha: string): Promise<GitCommitDetail> {
+  return fetch(
+    `/api/git/show?path=${encodeURIComponent(path)}&sha=${encodeURIComponent(sha)}`,
+  ).then((r) => asJson<GitCommitDetail>(r));
+}
+
+/** One file's change: against the index, against HEAD, or inside a commit. */
+export function gitDiff(args: {
+  path: string;
+  file: string;
+  staged?: boolean;
+  sha?: string;
+}): Promise<GitDiff> {
+  const qs = new URLSearchParams({ path: args.path, file: args.file });
+  if (args.staged) qs.set("staged", "1");
+  if (args.sha) qs.set("sha", args.sha);
+  return fetch(`/api/git/diff?${qs}`).then((r) => asJson<GitDiff>(r));
+}
+
+/**
+ * Put one file back - to the last commit, or to a chosen one.
+ *
+ * Always exactly one path, because this is the end of the API that
+ * overwrites uncommitted work. The guarantee that makes it safe behind a
+ * button is that it can only ever touch the file named on that button.
+ */
+export function gitRestore(path: string, file: string, sha?: string): Promise<GitStatus> {
+  return post<GitStatus>("/api/git/restore", { path, file, sha });
+}
+
+/** Local branches, and which one is checked out. */
+export function gitBranches(path: string): Promise<GitBranches> {
+  return fetch(`/api/git/branches?path=${encodeURIComponent(path)}`).then((r) =>
+    asJson<GitBranches>(r),
+  );
+}
+
+/**
+ * Check out a branch, or create one from where you are.
+ *
+ * The two differ in how they treat uncommitted work, and deliberately so:
+ * creating carries it across, switching to an existing branch is refused
+ * while the tree is dirty. The server owns that rule; this just sends the
+ * flag.
+ */
+export function gitBranch(path: string, name: string, create = false): Promise<GitStatus> {
+  return post<GitStatus>("/api/git/branch", { path, name, create });
+}
+
+/** Point this repository at a remote, adding or replacing it. */
+export function gitRemote(path: string, url: string, name = "origin"): Promise<GitStatus> {
+  return post<GitStatus>("/api/git/remote", { path, url, name });
+}
+
+/** Clone into `path/name`. Never into `path` itself. */
+export function gitClone(args: {
+  path: string;
+  url: string;
+  name?: string;
+}): Promise<GitStatus> {
+  return post<GitStatus>("/api/git/clone", args);
+}
+
+export function gitPush(path: string): Promise<GitStatus> {
+  return post<GitStatus>("/api/git/push", { path });
+}
+
+/** Fast-forward onto the remote, or come back with why it can't. */
+export function gitPull(path: string): Promise<GitStatus> {
+  return post<GitStatus>("/api/git/pull", { path });
+}
+
+// ── the git account ───────────────────────────────────────────────────────
+
+export function forgeStatus(): Promise<ForgeAccount> {
+  return fetch("/api/forge").then((r) => asJson<ForgeAccount>(r));
+}
+
+/**
+ * Hand a token to git's credential helper, after checking it works.
+ *
+ * The token goes over localhost to the Genesis server and from there into
+ * `git credential approve`. It is never written to a Genesis file and never
+ * comes back out of any endpoint - see _genesis_forge.py's docstring.
+ */
+export function forgeConnect(args: {
+  kind: ForgeKind;
+  token: string;
+  base_url?: string;
+  login?: string;
+  /** Turn on git's plaintext `store` helper, for machines with no keyring. */
+  enable_store?: boolean;
+}): Promise<ForgeAccount> {
+  return post<ForgeAccount>("/api/forge/connect", args);
+}
+
+export function forgeDisconnect(): Promise<ForgeAccount> {
+  return post<ForgeAccount>("/api/forge/disconnect", {});
+}
+
+export function forgeRepos(q = ""): Promise<ForgeRepoList> {
+  const qs = q ? `?q=${encodeURIComponent(q)}` : "";
+  return fetch(`/api/forge/repos${qs}`).then((r) => asJson<ForgeRepoList>(r));
 }

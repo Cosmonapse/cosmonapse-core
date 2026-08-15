@@ -14,6 +14,7 @@ import { GenesisCanvas, loadLayout } from "./GenesisCanvas";
 import type { CanvasNodeData } from "./CanvasNode";
 import { CodeView } from "./CodeView";
 import { TestView } from "./TestView";
+import { HistoryView } from "./HistoryView";
 import { ImportNotes } from "./ImportNotes";
 
 /**
@@ -25,9 +26,13 @@ import { ImportNotes } from "./ImportNotes";
 export function Workspace({
   projectPath,
   onBack,
+  notice,
 }: {
   projectPath: string;
   onBack: () => void;
+  /** Something the screen before this one needs to say once - currently only
+   *  "the project was scaffolded, but its repository wasn't started". */
+  notice?: string | null;
 }) {
   const [scaffold, setScaffold] = useState<ScaffoldResult | null>(null);
   const [nodes, setNodes] = useState<CanvasNodeData[]>([]);
@@ -35,6 +40,10 @@ export function Workspace({
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [warnings, setWarnings] = useState<ImportWarning[]>([]);
+
+  useEffect(() => {
+    if (notice) setToast(notice);
+  }, [notice]);
 
   const load = useCallback(() => {
     readScaffold(projectPath)
@@ -129,6 +138,14 @@ export function Workspace({
       )}
 
       {!error && scaffold && view === "test" && <TestView scaffold={scaffold} />}
+
+      {/* `onChanged` is load-bearing: restoring a file from git rewrites it
+          on disk, and that file is often brain.py - so the canvas and the
+          Code tab are looking at something that no longer exists until the
+          project is re-read. */}
+      {!error && scaffold && view === "history" && (
+        <HistoryView scaffold={scaffold} onChanged={load} />
+      )}
 
       {toast && (
         <div
