@@ -13,11 +13,24 @@ export interface InitResult {
   target: string;
   written: string[];
   namespace: string;
+  /** Only present when the new-brain form asked for a repository. `repo`
+   *  false carries the reason in `note` - the scaffold still happened. */
+  git?: {
+    repo: boolean;
+    branch: string | null;
+    head: GitCommit | null;
+    note: string | null;
+  };
 }
 
 export interface InitError {
   error: string;
   exists?: boolean;
+  /** git's own exit code and stderr, on the 409 a refused git call returns.
+   *  The message is always the thing to show; these are for the rare case
+   *  where it isn't enough. */
+  code?: number;
+  stderr?: string;
 }
 
 export interface ScaffoldNode {
@@ -443,4 +456,181 @@ export interface PrismLaunch {
   reused: boolean;
   namespace: string;
   synapse_url: string;
+}
+
+// ── version control ────────────────────────────────────────────────────
+// Genesis edits real files, and most of its edits are structural - one click
+// writes a module and rewrites brain.py. So the undo it offers is the one
+// people already trust: the server drives the user's own git
+// (cosmo/commands/_genesis_git.py). Nothing here is ever networked, and
+// nothing commits on its own.
+
+export interface GitFile {
+  /** Repo-root-relative: what git calls it, and what every call sends back. */
+  file: string;
+  /** The same path relative to the project, or null when it lives elsewhere
+   *  in the repository. The panel groups on exactly this. */
+  rel: string | null;
+  /** The two porcelain columns, kept raw for the cases `label` flattens. */
+  index: string;
+  worktree: string;
+  /** The status code said in words - "modified", "untracked", "renamed". */
+  label: string;
+  staged: boolean;
+  unstaged: boolean;
+  untracked: boolean;
+  conflicted: boolean;
+  /** Where a rename or a copy came from. */
+  origin: string | null;
+}
+
+export interface GitCommit {
+  sha: string;
+  short: string;
+  author: string;
+  email: string;
+  /** ISO-8601, as git's %aI gives it. */
+  date: string;
+  subject: string;
+  parents: string[];
+  /** A root commit has no parent, so there is no "before" to diff against. */
+  root: boolean;
+}
+
+export interface GitStatus {
+  /** Is there a git binary on this machine at all? */
+  available: boolean;
+  version: string | null;
+  repo: boolean;
+  root: string | null;
+  /** The project's path relative to the repo root; "" when they're the same. */
+  prefix: string;
+  branch: string | null;
+  detached: boolean;
+  /** A repository with no commits yet: the branch exists in name only. */
+  unborn: boolean;
+  head: GitCommit | null;
+  files: GitFile[];
+  staged: number;
+  unstaged: number;
+  untracked: number;
+  conflicted: number;
+  clean: boolean;
+  /** Who commits here get attributed to, or null when git has neither
+   *  user.name nor user.email - which is a thing to fix before committing,
+   *  not during. */
+  identity: { name: string; email: string } | null;
+  remotes: GitRemote[];
+  has_gitignore: boolean;
+  /** The remote-tracking branch this one follows, e.g. "origin/main". */
+  upstream: string | null;
+  /** Counted against the tracking ref already on disk, so these cost nothing
+   *  and are only as fresh as the last fetch. The UI says so. */
+  ahead: number;
+  behind: number;
+  /** Why there is nothing to act on, in words the panel shows as-is. */
+  reason: string | null;
+  /** Set on the reply to an init, a commit or a restore; never on a poll. */
+  note?: string;
+  committed?: GitCommit | null;
+  restored?: { file: string; from: string };
+  /** Set on the reply to a clone: where it landed. */
+  cloned_to?: string;
+}
+
+export interface GitRemote {
+  name: string;
+  url: string;
+}
+
+export interface GitBranch {
+  name: string;
+  upstream: string | null;
+  short: string;
+  date: string;
+  subject: string;
+  current: boolean;
+}
+
+export interface GitBranches {
+  branches: GitBranch[];
+  current: string | null;
+  remotes: GitRemote[];
+}
+
+export interface GitDiff {
+  file: string;
+  rel: string | null;
+  /** Unified diff text. Empty when there is nothing to show. */
+  diff: string;
+  binary: boolean;
+  truncated: boolean;
+  empty: boolean;
+  /** The commit this diff came out of, when it came from history. */
+  sha: string | null;
+  staged: boolean;
+}
+
+export interface GitLog {
+  commits: GitCommit[];
+  limit: number;
+  file: string | null;
+}
+
+export interface GitChange {
+  file: string;
+  /** null for a binary file, where there are no lines to count. */
+  added: number | null;
+  removed: number | null;
+  binary: boolean;
+}
+
+export interface GitCommitDetail {
+  commit: GitCommit;
+  changes: GitChange[];
+  diff: string;
+  truncated: boolean;
+}
+
+// ── the git account ────────────────────────────────────────────────────
+// Genesis never holds the token. `connect` checks it against the host and
+// hands it to `git credential approve`; what comes back here is only ever
+// which host, which login, and whether git has somewhere to keep secrets.
+// See cosmo/commands/_genesis_forge.py.
+
+export type ForgeKind = "github" | "gitlab" | "other";
+
+export interface ForgeAccount {
+  connected: boolean;
+  kind: ForgeKind | null;
+  /** The API address - https://api.github.com, or a self-hosted one. */
+  base_url: string | null;
+  /** The host a clone URL names, which is what the credential is keyed on. */
+  host: string | null;
+  login: string | null;
+  /** git's configured credential helpers. Empty is the interesting case. */
+  helpers: string[];
+  /** True when there is no helper, so the UI can offer git's plaintext
+   *  store - explicitly, with the word "plaintext" next to it. */
+  can_store: boolean;
+  token_help: Record<string, { url: string; scopes: string }>;
+  kinds: ForgeKind[];
+  reason: string | null;
+}
+
+export interface ForgeRepo {
+  name: string;
+  full_name: string;
+  url: string;
+  ssh_url: string;
+  private: boolean;
+  description: string;
+  default_branch: string;
+  updated_at: string;
+}
+
+export interface ForgeRepoList {
+  repos: ForgeRepo[];
+  host: string;
+  login: string;
 }
