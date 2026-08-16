@@ -1346,8 +1346,7 @@ async def _remote_for(target: Path, remote: str) -> str:
             "Add one first - the Publish button does it in one step.",
         )
     names = {r["name"] for r in known}
-    clean = (remote or "").strip() or ("origin" if "origin" in names else
-                                       sorted(names)[0])
+    clean = (remote or "").strip() or ("origin" if "origin" in names else min(names))
     if clean not in names:
         raise GitError(f"There is no remote called {clean!r} in this repository.")
     return clean
