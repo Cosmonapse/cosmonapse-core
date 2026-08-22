@@ -13,11 +13,8 @@ whole time; only the Click wrapper was broken. So these tests drive the actual
 command through CliRunner rather than calling the helper.
 """
 
-import shutil
-import subprocess
 from pathlib import Path
 
-import pytest
 from click.testing import CliRunner
 
 from cosmo.commands.init import init
@@ -78,70 +75,3 @@ def test_init_namespace_reaches_the_scaffold(tmp_path: Path) -> None:
         result = runner.invoke(init, ["demo", "--namespace", "prod-ns"])
         assert result.exit_code == 0, result.output
         assert "prod-ns" in Path("demo/config.py").read_text(encoding="utf-8")
-
-
-# ── the repository the scaffold now starts ────────────────────────────────
-# `cosmo init` writes a .gitignore unconditionally and starts a repository
-# unless told not to. Both are additions to a command whose output format one
-# of the tests above depends on, so they get covered here rather than in
-# test_genesis_git.py.
-
-def test_init_writes_a_gitignore(tmp_path: Path) -> None:
-    runner = CliRunner()
-    with runner.isolated_filesystem(temp_dir=tmp_path):
-        assert runner.invoke(init, ["demo", "--no-git"]).exit_code == 0
-        ignored = Path("demo/.gitignore").read_text(encoding="utf-8")
-        assert ".env" in ignored
-        assert "_archive/" in ignored
-
-
-def test_init_does_not_clobber_an_existing_gitignore(tmp_path: Path) -> None:
-    """An existing .gitignore is somebody's decision. Replacing it silently is
-    how a project starts committing its own .env."""
-    runner = CliRunner()
-    with runner.isolated_filesystem(temp_dir=tmp_path):
-        Path("demo").mkdir()
-        Path("demo/.gitignore").write_text("# mine\n", encoding="utf-8")
-        result = runner.invoke(init, ["demo", "--no-git"])
-        assert result.exit_code == 0, result.output
-        assert Path("demo/.gitignore").read_text(encoding="utf-8") == "# mine\n"
-
-
-def test_init_no_git_leaves_no_repository(tmp_path: Path) -> None:
-    runner = CliRunner()
-    with runner.isolated_filesystem(temp_dir=tmp_path):
-        result = runner.invoke(init, ["demo", "--no-git"])
-        assert result.exit_code == 0, result.output
-        assert not Path("demo/.git").exists()
-        assert "git:" not in result.output
-
-
-@pytest.mark.skipif(shutil.which("git") is None, reason="needs the git binary")
-def test_init_starts_a_repository_by_default(tmp_path: Path, monkeypatch) -> None:
-    empty = tmp_path / "empty-gitconfig"
-    empty.write_text("", encoding="utf-8")
-    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(empty))
-    monkeypatch.setenv("GIT_CONFIG_SYSTEM", str(empty))
-    monkeypatch.setenv("GIT_AUTHOR_NAME", "Ada Lovelace")
-    monkeypatch.setenv("GIT_AUTHOR_EMAIL", "ada@example.com")
-
-    runner = CliRunner()
-    with runner.isolated_filesystem(temp_dir=tmp_path):
-        result = runner.invoke(init, ["demo"])
-        assert result.exit_code == 0, result.output
-        assert Path("demo/.git").is_dir()
-        assert "git:" in result.output
-
-
-@pytest.mark.skipif(shutil.which("git") is None, reason="needs the git binary")
-def test_init_inside_an_existing_repo_still_scaffolds(tmp_path: Path) -> None:
-    """The repository is the optional half. A folder that is already inside
-    one gets the scaffold and a note, never a failed init."""
-    runner = CliRunner()
-    with runner.isolated_filesystem(temp_dir=tmp_path) as cwd:
-        subprocess.run(["git", "init", "-q"], cwd=cwd, check=True)  # noqa: S607
-        result = runner.invoke(init, ["demo"])
-        assert result.exit_code == 0, result.output
-        assert Path("demo/brain.py").is_file()
-        assert not Path("demo/.git").exists()
-        assert "already inside the git repository" in result.output

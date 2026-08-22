@@ -13,6 +13,13 @@ cosmo prism       Open Prism, the live browser view onto a Synapse namespace
 cosmo validate    Validate that Signals on the Synapse conform to the envelope spec
 cosmo genesis     Open Genesis - name a brain, scaffold it, grow it on a canvas
 cosmo completion  Print a shell-completion script (bash / zsh / fish)
+
+Genesis and Prism are the two commands an edition swaps out: a cloud image
+installs its own build of them in place of the ones bundled here. They are
+therefore imported defensively - with either absent, `cosmo` still starts,
+every other command still works, and the missing one fails as a plain
+"No such command" rather than a traceback on every single invocation. This
+module is the only place in the package that imports them.
 """
 
 import click
@@ -20,13 +27,22 @@ import click
 from cosmo.commands.answer import answer
 from cosmo.commands.completion import completion
 from cosmo.commands.dispatch import dispatch
-from cosmo.commands.genesis import genesis
 from cosmo.commands.init import init
-from cosmo.commands.prism import doppler, prism
 from cosmo.commands.registry import registry
 from cosmo.commands.schema import schema
 from cosmo.commands.synapse import synapse
 from cosmo.commands.validate import validate
+
+try:
+    # doppler is a deprecated alias for `cosmo prism`; hidden from --help.
+    from cosmo.commands.prism import doppler, prism
+except ImportError:
+    prism = doppler = None
+
+try:
+    from cosmo.commands.genesis import genesis
+except ImportError:
+    genesis = None
 
 
 @click.group()
@@ -41,12 +57,13 @@ cli.add_command(dispatch)
 cli.add_command(registry)
 cli.add_command(answer)
 cli.add_command(schema)
-cli.add_command(prism)
-# Deprecated alias for `cosmo prism`; hidden from --help.
-cli.add_command(doppler)
 cli.add_command(validate)
-cli.add_command(genesis)
 cli.add_command(completion)
+
+# Registered only when whatever wheel provides them is installed.
+for _command in (prism, doppler, genesis):
+    if _command is not None:
+        cli.add_command(_command)
 
 
 if __name__ == "__main__":
