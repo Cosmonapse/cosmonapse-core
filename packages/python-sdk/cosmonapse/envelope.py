@@ -116,7 +116,7 @@ class SignalType(str, Enum):
     TASK_DECLINED = "TASK_DECLINED"
 
     # Cognition [C]
-    THOUGHT_DELTA = "THOUGHT_DELTA"
+    AUDIT = "AUDIT"
     PLAN = "PLAN"
     TOOL_CALL = "TOOL_CALL"
     TOOL_RESULT = "TOOL_RESULT"
@@ -184,7 +184,7 @@ SYNAPSE_TYPES: frozenset[SignalType] = frozenset({
     SignalType.BID,
     SignalType.TASK_AWARDED,
     SignalType.TASK_DECLINED,
-    SignalType.THOUGHT_DELTA,
+    SignalType.AUDIT,
     SignalType.PLAN,
     SignalType.TOOL_CALL,
     SignalType.TOOL_RESULT,
@@ -843,21 +843,79 @@ def plan_signal(
     )
 
 
-def thought_delta_signal(
+def audit_signal(
     *,
     trace_id: str,
     parent_id: str,
     directed: Directed | None = None,
-    delta: str,
-    seq: int | None = None,
+    kind: str,
+    domain: str,
+    outcome: str,
+    attempt: int = 1,
+    component: str | None = None,
+    direction: str | None = None,
+    signal: str | None = None,
+    policy_id: str | None = None,
+    policy_version: str | None = None,
+    card_id: str | None = None,
+    reason: str | None = None,
+    hash: str | None = None,
+    took_ms: int | None = None,
     meta: dict[str, Any] | None = None,
 ) -> Signal:
-    """Streaming reasoning chunk."""
-    payload: dict[str, Any] = {"delta": delta}
-    if seq is not None:
-        payload["seq"] = seq
+    """[C] One policy or repair event, on its own subject, for auditing.
+
+    A AUDIT is a RECORD, not an instruction: nothing waits on it, nothing
+    routes on it, and dropping one changes no behaviour. It exists so a
+    compliance consumer can subscribe to ``cosmonapse.<ns>.AUDIT`` and
+    nothing else, instead of decoding every signal in the namespace to
+    filter for ``meta.glia``. The authoritative verdict still rides the
+    terminal reply's ``meta.glia``; this is the addressable copy.
+
+    ``kind`` is the audit category (``GUARD_RETRY``, ``GUARDED``,
+    ``EVAL_RETRY``, ``TOOL_RETRY``, ``TRANSIENT_RETRY``, ``LIMIT_REFUSED``,
+    ``DEADLINE_ABANDONED``) and ``audit`` is the domain it rolls up to
+    (``security``, ``eval``, ``tool``, ``reliability``, ``governance``),
+    carried in the payload so a consumer reading only this subject needs
+    no other lookup. ``outcome`` says what happened to the event:
+    re-asked, resent, recovered, exhausted, uncorrectable, refused,
+    redacted, escalated, or would_block in audit mode. ``direction`` and
+    ``signal`` are the scope of the gate event: which way the signal was
+    crossing the component, and its type.
+
+    ``reason`` is the policy's own author-written text, which is what a
+    refusal already shows the model. ``hash`` is the digest of the
+    matched content, so an auditor can join this record to the component's
+    local journal line. The matched content ITSELF never rides here.
+
+    NOTE on compatibility: AUDIT is a signal type added after 1.0, so a
+    peer running an SDK that predates it logs one warning per AUDIT and
+    drops it (every Synapse adapter wraps ``Signal.decode`` and
+    continues). Nothing breaks, but an audit record can go missing in a
+    mixed-version namespace, which is why the verdict is also on the
+    reply. See design/GLIA_DESIGN.md section 3, constraint 1.
+    """
+    payload: dict[str, Any] = {
+        "kind": kind,
+        "domain": domain,
+        "outcome": outcome,
+        "attempt": attempt,
+    }
+    for key, value in (
+        ("component", component),
+        ("direction", direction),
+        ("signal", signal),
+        ("policy_id", policy_id),
+        ("policy_version", policy_version),
+        ("card_id", card_id),
+        ("reason", reason),
+        ("hash", hash),
+        ("took_ms", took_ms),
+    ):
+        if value is not None:
+            payload[key] = value
     return Signal(
-        type=SignalType.THOUGHT_DELTA,
+        type=SignalType.AUDIT,
         trace_id=trace_id,
         parent_id=parent_id,
         directed=directed,
@@ -1065,6 +1123,7 @@ def recalled_signal(
     hits: list[dict[str, Any]],
     truncated: bool = False,
     took_ms: int | None = None,
+    error: str | None = None,
     directed: Directed | None = None,
     meta: dict[str, Any] | None = None,
 ) -> Signal:
@@ -1083,6 +1142,8 @@ def recalled_signal(
     }
     if took_ms is not None:
         payload["took_ms"] = took_ms
+    if error is not None:
+        payload["error"] = error
     return Signal(
         type=SignalType.RECALLED,
         trace_id=trace_id,

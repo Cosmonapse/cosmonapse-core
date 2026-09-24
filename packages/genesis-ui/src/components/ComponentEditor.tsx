@@ -118,8 +118,8 @@ const FORMS: { id: AxonForm; label: string; blurb: string }[] = [
  * that's what this shows: the declaration as a config form, each behaviour as
  * its own small code box, and one button listing every protocol the node can
  * still service. Whatever the file contains that Genesis doesn't model is
- * shown at the bottom, verbatim and read-only - it's the author's, and no
- * edit here touches it.
+ * shown at the bottom, verbatim - no edit in this form touches it, and the
+ * Source view next to this one is where it is edited.
  */
 export function ComponentEditor({
   projectPath,
@@ -225,12 +225,12 @@ export function ComponentEditor({
               ))}{" "}
               — a component type, not a component. There's no declaration to configure and no
               instance to attach behaviour to; both happen in whichever module constructs it.
-              The class itself is yours to edit in your editor.
+              Edit the class itself in the Source view above.
             </>
           ) : (
             <>
               Genesis can't find a component declaration in this file — nothing assigned to AXON,
-              EFFECTOR or ENGRAM, and no factory returning one. It's shown read-only below.
+              EFFECTOR or ENGRAM, and no factory returning one. Edit it in the Source view above.
             </>
           )}
         </div>
@@ -854,7 +854,7 @@ function FormFields({
   );
 }
 
-/** Everything in the file Genesis doesn't model - shown, never touched. */
+/** Everything in the file the form doesn't model - shown here, edited in Source. */
 function ReadOnlyChunks({ chunks }: { chunks: { label: string; text: string }[] }) {
   const [open, setOpen] = useState(false);
   if (chunks.length === 0) return null;
@@ -868,7 +868,7 @@ function ReadOnlyChunks({ chunks }: { chunks: { label: string; text: string }[] 
           {open ? "▾" : "▸"} Rest of the file
         </span>
         <span style={{ fontSize: 13, color: C.textFaint, fontWeight: 600, }}>
-          {chunks.map((c) => c.label).join(" · ")} — read-only here, yours to edit in your editor
+          {chunks.map((c) => c.label).join(" · ")} — edit these in the Source view above
         </span>
       </div>
       {open &&

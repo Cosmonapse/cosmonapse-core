@@ -35,6 +35,7 @@
   --neuron: #8b5cf6;
   --effector: #f59e0b;
   --engram: #a78bfa;
+  --glia: #d4af37;
   --tk-string: #7dd3a0;
   --tk-number: #f0a868;
   --scroll-thumb: #1e2433;
@@ -48,6 +49,7 @@
   --accent3-rgb: 244, 114, 182;
   --engram-rgb: 167, 139, 250;
   --effector-rgb: 245, 158, 11;
+  --glia-rgb: 212, 175, 55;
   --danger-rgb: 248, 113, 113;
   --font-brand: "Michroma", "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 }

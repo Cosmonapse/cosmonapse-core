@@ -23,6 +23,10 @@ export interface InitError {
 export interface ScaffoldNode {
   id: string;
   file: string;
+  /** A Glia card is mounted on it, in its module (`glia=` on the
+   *  constructor) or in brain.py (`attach_*(..., glia=)`). Optional so an
+   *  older backend's scaffold still typechecks; absent reads as no card. */
+  glia?: boolean;
 }
 
 export interface ScaffoldResult {

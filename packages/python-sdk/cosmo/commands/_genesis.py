@@ -234,12 +234,89 @@ def _project_files(target: Path) -> list[str]:
     return out
 
 
+# ---------------------------------------------------------------------------
+# Glia: which components carry a policy card
+# ---------------------------------------------------------------------------
+#
+# A card is mounted one of two ways (design/GLIA_DESIGN.md section 4.2): at
+# construction, ``Axon(..., glia=CARD)`` / ``Effector.serve(..., glia=CARD)``
+# / ``Engram.serve(..., glia=CARD)`` in the component's own module, or at
+# attach time, ``node.attach_axon(hello.AXON, glia=CARD)`` in brain.py. The
+# canvas draws a gold layer on either. Read with ``ast`` rather than a regex
+# so ``glia=None``, a ``def f(glia=None)`` signature and a comment mentioning
+# glia are all correctly not a card. Whether the card's mode is ``off`` lives
+# in the card file, not the source, so this answers "is a card mounted", and
+# Prism, which sees the REGISTER, is where mode shows.
+
+_GLIA_ATTACH = frozenset({"attach_axon", "attach_effector", "attach_engram"})
+
+
+def _passes_glia(call: ast.Call) -> bool:
+    for kw in call.keywords:
+        if kw.arg == "glia":
+            return not (isinstance(kw.value, ast.Constant) and kw.value.value is None)
+    return False
+
+
+def _parse_quiet(py: Path) -> ast.AST | None:
+    try:
+        return ast.parse(py.read_text(encoding="utf-8", errors="ignore"))
+    except (SyntaxError, ValueError, OSError):
+        return None
+
+
+def _module_mounts_glia(py: Path) -> bool:
+    tree = _parse_quiet(py)
+    return tree is not None and any(
+        isinstance(n, ast.Call) and _passes_glia(n) for n in ast.walk(tree)
+    )
+
+
+def _brain_glia_modules(target: Path) -> set[str]:
+    """Module names brain.py attaches with a card, e.g. ``{"hello"}``.
+
+    Resolves ``from neurons import hello as h`` so ``attach_axon(h.AXON,
+    glia=CARD)`` still names ``hello``. Only the module is recovered, which
+    is what a canvas node is keyed on.
+    """
+    tree = _parse_quiet(target / "brain.py")
+    if tree is None:
+        return set()
+    alias: dict[str, str] = {}
+    for n in ast.walk(tree):
+        if isinstance(n, ast.ImportFrom):
+            for a in n.names:
+                alias[a.asname or a.name] = a.name
+    out: set[str] = set()
+    for n in ast.walk(tree):
+        if not (isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+                and n.func.attr in _GLIA_ATTACH and n.args and _passes_glia(n)):
+            continue
+        arg = n.args[0]
+        name = None
+        if isinstance(arg, ast.Attribute) and isinstance(arg.value, ast.Name):
+            name = arg.value.id
+        elif isinstance(arg, ast.Name):
+            name = arg.id
+        if name:
+            out.add(alias.get(name, name))
+    return out
+
+
+def _mark_glia(folder: Path, nodes: list[dict], brain_refs: set[str]) -> list[dict]:
+    for node in nodes:
+        rel = Path(node["file"])
+        node["glia"] = rel.stem in brain_refs or _module_mounts_glia(folder / rel)
+    return nodes
+
+
 def _read_scaffold(raw_path: str) -> dict:
     """Read a scaffolded project directory back into Genesis's node shape."""
     target = Path(raw_path).expanduser().resolve()
     if not target.is_dir():
         raise FileNotFoundError(f"{target} is not a directory")
 
+    refs = _brain_glia_modules(target)
     return {
         "project": target.name,
         "path": str(target),
@@ -248,9 +325,13 @@ def _read_scaffold(raw_path: str) -> dict:
         # show it locked: the project already made this decision.
         "namespace": _gs.read_namespace(target),
         "synapse": {"id": target.name},
-        "neurons": _module_nodes(target / "neurons", _NEURON_ID_RE),
-        "effectors": _module_nodes(target / "effector", _EFFECTOR_ID_RE),
-        "engrams": _module_nodes(target / "engram", _ENGRAM_ID_RE),
+        "neurons": _mark_glia(target / "neurons",
+                              _module_nodes(target / "neurons", _NEURON_ID_RE), refs),
+        "effectors": _mark_glia(target / "effector",
+                                _module_nodes(target / "effector", _EFFECTOR_ID_RE), refs),
+        "engrams": _mark_glia(target / "engram",
+                              _module_nodes(target / "engram", _ENGRAM_ID_RE), refs),
+        # No _mark_glia: a Receptor is caller-side and takes no card.
         "receptors": _module_nodes(target / "receptors", _RECEPTOR_ID_RE),
         "files": _project_files(target),
     }

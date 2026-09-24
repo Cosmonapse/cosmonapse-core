@@ -70,7 +70,7 @@ An **HTTP API is deliberately *not* a Neuron.** Earlier versions shipped a Flask
 | `PERMISSION`        | Neuron's output contained the `__permission__` marker |
 | `ERROR`             | Neuron raised an exception                      |
 
-The Axon never produces `REGISTER`, `HEARTBEAT`, `DEREGISTER`, `FINAL`, `THOUGHT_DELTA`, or any routing Signal. Those belong to the Dendrite and the Cortex.
+The Axon never produces `REGISTER`, `HEARTBEAT`, `DEREGISTER`, `FINAL`, `AUDIT`, or any routing Signal. Those belong to the Dendrite and the Cortex. An Axon's repair loop *triggers* an `AUDIT`, but the hosting Dendrite publishes it, exactly as it does `REGISTER`.
 
 **Rationale:** Decoupling Signal *content* from Signal *transmission* lets the Axon ship as a small in-process helper today and as an MCP server in v0.3  -  the agent never knows the difference because the Axon's interface to the agent stays identical.
 

@@ -20,11 +20,12 @@ function layoutKey(path: string) {
 /** Flatten a scaffold into orbit entries in a stable order. */
 function orbitOf(scaffold: ScaffoldResult) {
   return [
-    ...scaffold.neurons.map((n) => ({ kind: "neuron" as NodeKind, id: n.id, sublabel: n.file })),
-    ...scaffold.engrams.map((e) => ({ kind: "engram" as NodeKind, id: e.id, sublabel: e.file })),
-    ...scaffold.effectors.map((e) => ({ kind: "effector" as NodeKind, id: e.id, sublabel: e.file })),
+    ...scaffold.neurons.map((n) => ({ kind: "neuron" as NodeKind, id: n.id, sublabel: n.file, glia: !!n.glia })),
+    ...scaffold.engrams.map((e) => ({ kind: "engram" as NodeKind, id: e.id, sublabel: e.file, glia: !!e.glia })),
+    ...scaffold.effectors.map((e) => ({ kind: "effector" as NodeKind, id: e.id, sublabel: e.file, glia: !!e.glia })),
     // Guarded: a scaffold read by an older backend has no receptors key.
-    ...(scaffold.receptors ?? []).map((r) => ({ kind: "receptor" as NodeKind, id: r.id, sublabel: r.file })),
+    // Receptors take no Glia card, so they never carry the layer.
+    ...(scaffold.receptors ?? []).map((r) => ({ kind: "receptor" as NodeKind, id: r.id, sublabel: r.file, glia: false })),
   ];
 }
 
@@ -45,6 +46,7 @@ function initialLayout(scaffold: ScaffoldResult): CanvasNodeData[] {
       kind: item.kind,
       id: item.id,
       sublabel: item.sublabel,
+      glia: item.glia,
       x: cx + RADIUS * Math.cos(angle),
       y: cy + RADIUS * Math.sin(angle),
     });
@@ -212,7 +214,7 @@ export function GenesisCanvas({
       </div>
 
       <AddComponent projectPath={scaffold.path} onAdded={onAdded} />
-      <Legend />
+      <Legend glia={nodes.some((n) => n.glia)} />
 
       {selectedNode && (
         <div
@@ -264,7 +266,7 @@ export function GenesisCanvas({
 }
 
 /** Shape key - the silhouettes carry the meaning, so name them. */
-function Legend() {
+function Legend({ glia }: { glia: boolean }) {
   const items: { kind: NodeKind; label: string }[] = [
     { kind: "neuron", label: "Neuron · thinks" },
     { kind: "engram", label: "Engram · remembers" },
@@ -307,6 +309,16 @@ function Legend() {
           {i.label}
         </div>
       ))}
+      {/* Only once a card is mounted somewhere: the key names what is on
+          the canvas, and an empty project has no gold to explain. */}
+      {glia && (
+        <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+          <svg width="12" height="12" viewBox="-10 -10 20 20">
+            <circle r="7" fill="none" stroke={C.glia} strokeWidth="2.4" />
+          </svg>
+          Glia · policy card
+        </div>
+      )}
     </div>
   );
 }

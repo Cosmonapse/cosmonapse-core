@@ -61,6 +61,9 @@ type Palette = {
   /** Receptor - the listening edge. The only free hue left once neuron and
    *  engram took violet, effector amber and synapse cyan. */
   receptor: string;
+  /** Glia - the gold layer on a component with a policy card mounted. Same
+   *  values as Prism's, so the layer is one colour across both tools. */
+  glia: string;
   /* Python syntax tokens in the code preview. */
   tkString: string;
   tkNumber: string;
@@ -77,6 +80,7 @@ type Palette = {
   engramRgb: string;
   effectorRgb: string;
   receptorRgb: string;
+  gliaRgb: string;
   dangerRgb: string;
 };
 
@@ -113,6 +117,7 @@ const DARK: Palette = {
   effector: "#f59e0b",
   engram: "#a78bfa",
   receptor: "#a3e635",
+  glia: "#d4af37",
   tkString: "#7dd3a0",
   tkNumber: "#f0a868",
   scrollThumb: "#1e2433",
@@ -127,6 +132,7 @@ const DARK: Palette = {
   engramRgb: "167,139,250",
   effectorRgb: "245,158,11",
   receptorRgb: "163,230,53",
+  gliaRgb: "212,175,55",
   dangerRgb: "248,113,113",
 };
 
@@ -171,6 +177,7 @@ const LIGHT: Palette = {
   effector: "#b45309",
   engram: "#6d28d9",
   receptor: "#4d7c0f",
+  glia: "#a67c00",
   tkString: "#15803d",
   tkNumber: "#b45309",
   scrollThumb: "#cbd5e1",
@@ -185,6 +192,7 @@ const LIGHT: Palette = {
   engramRgb: "109,40,217",
   effectorRgb: "180,83,9",
   receptorRgb: "77,124,15",
+  gliaRgb: "166,124,0",
   dangerRgb: "192,38,38",
 };
 

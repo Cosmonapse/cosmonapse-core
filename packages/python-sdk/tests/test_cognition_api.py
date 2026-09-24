@@ -55,8 +55,8 @@ async def _make_orch(*, registry: bool = False):
     [
         ("on_plan", SignalType.PLAN, "emit_plan",
          {"steps": [{"id": 1, "do": "search"}]}),
-        ("on_thought_delta", SignalType.THOUGHT_DELTA, "emit_thought_delta",
-         {"delta": "hello"}),
+        ("on_audit", SignalType.AUDIT, "emit_audit",
+         {"kind": "GUARD_RETRY", "domain": "security", "outcome": "refused"}),
         ("on_tool_call", SignalType.TOOL_CALL, "emit_tool_call",
          {"tool": "search", "args": {"q": "x"}}),
         ("on_tool_result", SignalType.TOOL_RESULT, "emit_tool_result",

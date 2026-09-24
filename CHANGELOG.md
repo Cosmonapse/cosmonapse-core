@@ -6,6 +6,85 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- **Glia: a two-way policy gate on each component** (`cosmonapse.glia`).
+  An Axon, an Effector or an Engram may carry one card, inserted into the
+  component rather than written into it. The card reads every signal
+  entering and leaving its component and refuses, rewrites or escalates
+  it. Each policy has a scope, `direction` (inbound / outbound / both,
+  default both) and `types` (signal types, default all), a verdict, and a
+  `retry` for what a violation does next: `reask` the Neuron, `resend` the
+  request behind a `TOOL_RESULT` or `RECALLED`, or `none` (the default).
+  Every violation emits an `AUDIT` record. There are no checkpoints:
+  decorators are `@card.on_signal(direction=..., types=...)` and handlers
+  receive a read-only `SignalView`. The Effector and Engram gates run in
+  `Effector.handle` and `Engram.handle`; the Axon gates its own `recall`,
+  `imprint` and `call_tool` through the clients. The Dendrite routes and
+  publishes and has no policy role. Mode defaults to
+  `off`, so every existing brain is unaffected until a deployment asks for
+  `audit` and then `enforce`. There is no central policy process and no
+  `centralized` flag: a card is a local object, never consulted over the
+  wire. See `design/GLIA_DESIGN.md`.
+
+  A card also carries the repair budgets, the trace limits, the journal and
+  the audit rate, which is why the primitive is `Glia` rather than the
+  `Myelin` the design was written against: myelin sheathes axons, and a card
+  mounts on an Axon, an Effector, an Engram and a Dendrite. The rationale is
+  recorded in `GLIA_DESIGN.md` section 0. The wire field is `meta.glia`.
+  A Dendrite's card is read for trace limits only. The current model is
+  `GLIA_DESIGN.md` section 17.
+
+  Glia does not authenticate signals. `directed.id` is a claim, so a
+  policy on it stops mistakes and misrouted traffic, not an attacker on a
+  shared broker. Treat a shared broker as a trusted zone until signing
+  ships.
+- **The correction repair loop** in the Axon. One loop serves three
+  callers: an output nothing claimed (under the new opt-in
+  `strict_output` and `InvalidOutput`), tool arguments that failed their
+  schema, and a policy refusal whose policy asks to `reask`. Bounded by
+  the lower of the policy's `max_attempts` and `repair.max_attempts`, and
+  optionally `repair.deadline_s`; a next attempt whose input would be
+  identical is not made at all. Transient retry for Effector and Engram is
+  a separate knob on purpose - a policy refusal never feeds it, because
+  retrying an identical request against a deterministic policy is N
+  guaranteed denials.
+- **Trace-wide limits** on the Dendrite, in `component` mode (exact for
+  what this Dendrite emitted, no subscription, the default) and `trace`
+  mode (approximate, needs the broadcast subscription). No mode is named
+  `exact`, and `trace_strict` is deliberately not built.
+- **`AUDIT`, a new signal type**: one record per policy or repair event, on
+  its own subject, so a compliance consumer can subscribe to
+  `cosmonapse.<ns>.AUDIT` and nothing else. Seven audit kinds -
+  `GUARD_RETRY` and `GUARDED` (security), `EVAL_RETRY` (eval), `TOOL_RETRY` (tool
+  contract), `TRANSIENT_RETRY` and `DEADLINE_ABANDONED` (reliability),
+  `LIMIT_REFUSED` (governance) - each carrying its `audit` domain in the
+  payload. Emitted at the event, one per event, so the absence of any
+  `AUDIT` on a trace means nothing fired. `Dendrite.emit_audit` /
+  `@dendrite.on_audit`.
+
+### Removed
+- **BREAKING: the `THOUGHT_DELTA` signal type**, along with
+  `thought_delta_signal`, `Dendrite.emit_thought_delta`,
+  `@dendrite.on_thought_delta`, and `ChatReceptor`'s `event: delta` SSE
+  frame. Nothing in the SDK produced it - no provider streamed tokens
+  through it - and it had one consumer. `AUDIT` takes its slot in
+  `SYNAPSE_TYPES`.
+
+  Migration: replace `@dendrite.on_thought_delta` with
+  `@dendrite.on_audit` where you were observing repair progress, and
+  `emit_thought_delta` with your own signal type or `emit_audit` where you
+  were producing progress text. A page that read `event: delta` now reads
+  the record off `event: signal`, or off the reply's `meta.glia`.
+
+  Compatibility, measured rather than assumed: a peer on an older SDK
+  meeting an `AUDIT` logs one warning and drops it, because every Synapse
+  adapter wraps `Signal.decode` and continues. Nothing crashes and no
+  subscription dies. But an audit record CAN go missing in a
+  mixed-version namespace, which is why the verdict also rides the
+  terminal reply's `meta.glia` - that copy is correlated by `parent_id`
+  and is never dropped. This overrides `GLIA_DESIGN.md` hard constraint
+  1, deliberately and on the record.
+
 ## [0.1.12] - 2026-08-11
 
 Tool-call recognition was text scraping only: an Axon parsed a Neuron's reply

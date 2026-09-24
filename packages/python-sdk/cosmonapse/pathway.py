@@ -17,8 +17,8 @@ one that fits the workflow:
   (AGENT_OUTPUT, CLARIFICATION, ERROR, or FINAL). The classic
   request/reply shape.
 * ``@pathway.on(SignalType.X)``  -  register a callback that fires for each
-  matching Signal as it arrives. The reactive shape  -  useful for streams
-  like THOUGHT_DELTA or for cognition signals (PLAN / TOOL_CALL / …).
+  matching Signal as it arrives. The reactive shape  -  useful for
+  cognition signals (PLAN / TOOL_CALL / …) and for AUDIT audit records.
 * ``async for sig in pathway:``  -  iterate over every Signal on this trace
   until the Pathway closes. The streaming shape.
 

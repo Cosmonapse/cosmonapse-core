@@ -42,7 +42,7 @@ _TYPE_COLOURS: dict[str, str] = {
     "BID": "magenta",
     "TASK_AWARDED": "bold magenta",
     "TASK_DECLINED": "dim magenta",
-    "THOUGHT_DELTA": "dim white",
+    "AUDIT": "yellow",
     "PLAN": "white",
     "TOOL_CALL": "bright_white",
     "TOOL_RESULT": "bright_white",

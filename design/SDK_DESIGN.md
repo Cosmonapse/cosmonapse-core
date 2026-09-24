@@ -475,7 +475,8 @@ See **ENVELOPE_SPEC.md** for the full spec. Summary:
 | `FINAL`        | Cortex    | workflow terminated successfully                                     |
 | `REGISTER` / `DEREGISTER` / `HEARTBEAT` | Dendrite | per-Axon lifecycle                          |
 | `TASK_OFFER` / `BID` / `TASK_AWARDED` / `TASK_DECLINED` | Cortex | optional bid-based routing |
-| `THOUGHT_DELTA` / `PLAN` / `TOOL_CALL` / `TOOL_RESULT` / `MEMORY_APPEND` / `CRITIQUE` / `ESCALATION` / `CONSENSUS` / `CONTEXT_SYNC` | Cortex | optional cognition-style envelopes for richer workflows |
+| `PLAN` / `TOOL_CALL` / `TOOL_RESULT` / `MEMORY_APPEND` / `CRITIQUE` / `ESCALATION` / `CONSENSUS` / `CONTEXT_SYNC` | Cortex | optional cognition-style envelopes for richer workflows |
+| `AUDIT` | Dendrite | one policy or repair event, for auditing. A record, never an instruction. |
 
 The Cortex refuses to emit any Signal whose type isn't in `SYNAPSE_TYPES`; the Axon only ever returns `AGENT_OUTPUT / CLARIFICATION / PERMISSION / ERROR`. This is enforced in code, not just convention.
 

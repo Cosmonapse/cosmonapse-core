@@ -29,7 +29,7 @@ export type SignalType =
   | "TASK_AWARDED"
   | "TASK_DECLINED"
   // ── Core: cognition ───────────────────────────────────────────────────
-  | "THOUGHT_DELTA"
+  | "AUDIT"
   | "PLAN"
   | "TOOL_CALL"
   | "TOOL_RESULT"
@@ -92,7 +92,51 @@ export interface NeuronView {
   lastType?: SignalType;
   lastTs?: string;
   deregistered?: boolean;
+  /** The Glia card this participant announced, if any. See `gliaOf`. */
+  glia?: GliaView;
+  /** AUDIT records attributed to this participant since the last clear. */
+  audits?: number;
 }
+
+/**
+ * What Prism knows about a participant's Glia card.
+ *
+ * The authoritative source is `meta.glia` on the participant's REGISTER
+ * (`register_meta` in the SDK): card id, mode, and the policy version an
+ * audit record is attributed to. An AUDIT carrying `card_id` is weaker
+ * evidence, used only when Prism joined after the REGISTER went by, and is
+ * marked `inferred` so the tooltip can say so. The card's policies never
+ * ride the wire, so neither appears here.
+ */
+export interface GliaView {
+  card_id: string;
+  /** "off" | "audit" | "enforce"; absent when inferred from an AUDIT. */
+  mode?: string;
+  policy_version?: string;
+  inferred?: boolean;
+}
+
+/** The card a REGISTER announced under `meta.glia`, or null for none. */
+export function gliaOf(sig: Signal): GliaView | null {
+  const g = sig.meta?.glia;
+  if (!g || typeof g !== "object") return null;
+  const rec = g as Record<string, unknown>;
+  const id = rec.card_id;
+  if (typeof id !== "string" || !id) return null;
+  return {
+    card_id: id,
+    mode: typeof rec.mode === "string" ? rec.mode : undefined,
+    policy_version: typeof rec.policy_version === "string" ? rec.policy_version : undefined,
+  };
+}
+
+/**
+ * Whether the gold layer is drawn. A card mounted in mode "off" reads
+ * nothing (GLIA_DESIGN section 5), so it is announced but not enabled, and
+ * the canvas does not claim otherwise.
+ */
+export const gliaEnabled = (n: NeuronView): boolean =>
+  !!n.glia && n.glia.mode !== "off";
 
 // Prism-side control/error envelopes carry meta.source === "prism".
 export function isPrismError(sig: Signal): boolean {

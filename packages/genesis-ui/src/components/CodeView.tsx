@@ -1,9 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
-import { readArchived, readFile } from "../api";
+import { readArchived } from "../api";
 import type {
   ArchivedEntry,
-  InitError,
   RemoveResult,
   RestoreResult,
   ScaffoldResult,
@@ -11,8 +10,8 @@ import type {
 import { C, MONO } from "../theme";
 import { kindColor } from "./CanvasNode";
 import type { NodeKind } from "./CanvasNode";
-import { CodeEditor } from "./CodeEditor";
 import { ComponentEditor } from "./ComponentEditor";
+import { FileEditor } from "./FileEditor";
 import { HelpersEditor } from "./HelpersEditor";
 import { RemoveComponent, RestoreComponent } from "./RemoveComponent";
 
@@ -23,6 +22,8 @@ interface Item {
   file: string;
   label: string;
   kind: NodeKind | "wiring";
+  /** A package's __init__.py: editable, but not a component to remove. */
+  init?: boolean;
 }
 
 interface Group {
@@ -38,11 +39,11 @@ interface Group {
  * and it's the one file everything else can reach.
  */
 function groupsOf(scaffold: ScaffoldResult): Group[] {
-  const inPkg = (pkg: string) =>
-    scaffold.files.filter((f) => f.startsWith(pkg + "/") && !f.endsWith("__init__.py"));
+  const inPkg = (pkg: string) => scaffold.files.filter((f) => f.startsWith(pkg + "/"));
 
   const byFile = (nodes: { id: string; file: string }[], pkg: string, kind: NodeKind): Item[] =>
     inPkg(pkg).map((f) => {
+      if (f === `${pkg}/__init__.py`) return { file: f, label: "__init__.py", kind, init: true };
       const node = nodes.find((n) => `${pkg}/${n.file}` === f);
       return { file: f, label: node?.id ?? f.split("/")[1], kind };
     });
@@ -66,9 +67,12 @@ function groupsOf(scaffold: ScaffoldResult): Group[] {
  * Two ways of working, because there are two kinds of file. A component is a
  * protocol surface - an identity plus a set of decorators - so it gets a
  * config form and one code box per behaviour. helpers.py is ordinary Python
- * every component can import, so it gets an ordinary editor. The wiring
- * files are read-only here; brain.py in particular is maintained for you
- * when components are added - and when they're taken away.
+ * every component can import, so it gets an ordinary editor. Every other
+ * file is editable as plain text too: the wiring files, each package's
+ * __init__.py, and a component's own source through its Source view, for
+ * whatever the form doesn't model. brain.py is still maintained for you when
+ * components are added and taken away; hand edits to it are kept, and the
+ * next add or remove works from whatever is on disk.
  *
  * Removal lives in the sidebar rather than in the editor pane on purpose: the
  * sidebar is the list of what this project has, so adding to it and taking
@@ -92,6 +96,9 @@ export function CodeView({
   const [menuFor, setMenuFor] = useState<string | null>(null);
   const [archived, setArchived] = useState<ArchivedEntry[]>([]);
   const [openArchive, setOpenArchive] = useState(false);
+  // How a component module is shown. Kept across files, so someone reading
+  // raw source stays in Source as they move down the sidebar.
+  const [componentView, setComponentView] = useState<"form" | "source">("form");
 
   // The archive is read separately from the scaffold because it deliberately
   // isn't part of it - _archive is in the backend's skip list, so nothing in
@@ -111,7 +118,8 @@ export function CodeView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scaffold]);
 
-  const isComponent = /^(neurons|effector|engram|receptors)\//.test(file);
+  const isComponent =
+    /^(neurons|effector|engram|receptors)\//.test(file) && !file.endsWith("__init__.py");
 
   function afterRemove(r: RemoveResult) {
     setMenuFor(null);
@@ -155,8 +163,9 @@ export function CodeView({
                 onClick={() => setFile(item.file)}
                 // Wiring files are the project's spine - brain.py is where
                 // everything else is unwired *to*, so it is not itself a
-                // thing this menu can take away.
-                onMenu={item.kind === "wiring" ? undefined : () =>
+                // thing this menu can take away. Nor is a package's
+                // __init__.py, which is not a component.
+                onMenu={item.kind === "wiring" || item.init ? undefined : () =>
                   setMenuFor((m) => (m === item.file ? null : item.file))
                 }
                 menu={
@@ -235,14 +244,49 @@ export function CodeView({
       {file === HELPERS ? (
         <HelpersEditor projectPath={scaffold.path} exists={hasHelpers} onCreated={onChanged} />
       ) : isComponent ? (
-        <ComponentEditor
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, minHeight: 0 }}>
+          <div style={viewTabs}>
+            {(["form", "source"] as const).map((v) => (
+              <button
+                key={v}
+                onClick={() => setComponentView(v)}
+                style={viewTab(componentView === v)}
+              >
+                {v === "form" ? "Form" : "Source"}
+              </button>
+            ))}
+          </div>
+          {componentView === "form" ? (
+            // Keyed on the file only: switching back from Source remounts it,
+            // which re-reads the module, so a raw edit shows up in the form.
+            <ComponentEditor
+              key={file}
+              projectPath={scaffold.path}
+              file={file}
+              onChanged={onChanged}
+            />
+          ) : (
+            <FileEditor
+              key={file}
+              projectPath={scaffold.path}
+              file={file}
+              note="the whole module, including what the form doesn't model"
+              onSaved={onChanged}
+            />
+          )}
+        </div>
+      ) : (
+        <FileEditor
           key={file}
           projectPath={scaffold.path}
           file={file}
-          onChanged={onChanged}
+          note={
+            file === "brain.py"
+              ? "Genesis also edits this as components come and go · your edits are kept"
+              : undefined
+          }
+          onSaved={onChanged}
         />
-      ) : (
-        <ReadOnlyFile projectPath={scaffold.path} file={file} />
       )}
     </div>
   );
@@ -335,53 +379,25 @@ function SidebarItem({
   );
 }
 
-/** brain.py, config.py, README - shown, not edited here. */
-function ReadOnlyFile({ projectPath, file }: { projectPath: string; file: string }) {
-  const [text, setText] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+const viewTabs: CSSProperties = {
+  display: "flex",
+  gap: 4,
+  padding: "8px 16px 0",
+  borderBottom: "1px solid var(--border)",
+};
 
-  useEffect(() => {
-    let cancelled = false;
-    setText(null);
-    setError(null);
-    readFile(projectPath, file)
-      .then((r) => !cancelled && setText(r.text))
-      .catch((e) => !cancelled && setError((e as InitError).error || "Couldn't read that file."));
-    return () => {
-      cancelled = true;
-    };
-  }, [projectPath, file]);
-
-  return (
-    <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          padding: "9px 16px",
-          borderBottom: `1px solid ${C.border}`,
-          fontFamily: MONO,
-          fontSize: 13.5,
-          color: C.textDim, fontWeight: 600,
-        }}
-      >
-        <span>{file}</span>
-        <span style={{ color: C.textFaint, fontWeight: 600, }}>
-          {file === "brain.py"
-            ? "read-only · Genesis maintains this as components come and go"
-            : "read-only"}
-        </span>
-      </div>
-      <div style={{ flex: 1, overflow: "auto", minHeight: 0, padding: 14 }}>
-        {error && <div style={{ color: C.accent3, fontSize: 15 }}>{error}</div>}
-        {!error && text === null && <div style={{ color: C.textFaint, fontWeight: 600, fontSize: 15 }}>Reading…</div>}
-        {!error && text !== null && (
-          <CodeEditor value={text} onChange={() => {}} readOnly minRows={1} maxRows={4000} />
-        )}
-      </div>
-    </div>
-  );
+function viewTab(on: boolean): CSSProperties {
+  return {
+    background: "transparent",
+    border: "none",
+    borderBottom: `2px solid ${on ? "var(--accent2)" : "transparent"}`,
+    color: on ? "var(--text)" : "var(--text-dim)",
+    padding: "5px 10px 7px",
+    fontFamily: MONO,
+    fontSize: 13.5,
+    fontWeight: 600,
+    cursor: "pointer",
+  };
 }
 
 const sidebarStyle: CSSProperties = {

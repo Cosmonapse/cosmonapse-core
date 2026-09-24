@@ -128,6 +128,24 @@ export function Tooltip({ neuron, x, y }: Props) {
             <span>{neuron.version}</span>
           </>
         )}
+        {neuron.glia && (
+          <>
+            <span style={{ color: C.textFaint, fontWeight: 600, }}>glia</span>
+            <span style={{ color: C.glia, wordBreak: "break-all" }}>
+              {[
+                neuron.glia.card_id,
+                neuron.glia.mode ?? (neuron.glia.inferred ? "seen via AUDIT" : undefined),
+                neuron.glia.policy_version ? `v${neuron.glia.policy_version}` : undefined,
+              ].filter(Boolean).join(" · ")}
+            </span>
+          </>
+        )}
+        {!!neuron.audits && (
+          <>
+            <span style={{ color: C.textFaint, fontWeight: 600, }}>audits</span>
+            <span style={{ color: C.glia }}>{neuron.audits}</span>
+          </>
+        )}
       </div>
     </div>
   );

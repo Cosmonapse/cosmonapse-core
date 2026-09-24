@@ -252,9 +252,9 @@ print(sig.payload["output"])
 # 2. Reactive - trace-scoped callbacks.
 pw = await orch.dispatch_and_subscribe(capabilities=["plan"], input={"goal": "..."})
 
-@pw.on(SignalType.THOUGHT_DELTA)
-async def stream(s):
-    print(s.payload["delta"], end="")
+@pw.on(SignalType.AUDIT)
+async def audit(s):
+    print(s.payload["kind"], s.payload["domain"], s.payload["outcome"])
 
 # 3. Streaming iteration.
 async with await orch.dispatch(capabilities=["plan"], input={"goal": "..."}) as pw:

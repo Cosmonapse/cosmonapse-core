@@ -42,6 +42,8 @@ export interface CanvasNodeData {
   id: string;
   /** Path of the module this node came from, relative to the project root. */
   sublabel?: string;
+  /** A Glia card is mounted on this component: draw the gold layer. */
+  glia?: boolean;
   x: number;
   y: number;
 }
@@ -117,9 +119,9 @@ export function CanvasNode({
   return (
     <g transform={`translate(${node.x},${node.y})`} {...handlers}>
       {node.kind === "synapse" && <SynapseShape selected={selected} />}
-      {node.kind === "neuron" && <NeuronShape selected={selected} />}
-      {node.kind === "engram" && <EngramShape selected={selected} />}
-      {node.kind === "effector" && <EffectorShape selected={selected} />}
+      {node.kind === "neuron" && <NeuronShape selected={selected} glia={!!node.glia} />}
+      {node.kind === "engram" && <EngramShape selected={selected} glia={!!node.glia} />}
+      {node.kind === "effector" && <EffectorShape selected={selected} glia={!!node.glia} />}
       {node.kind === "receptor" && <ReceptorShape selected={selected} />}
       <Label node={node} />
     </g>
@@ -254,13 +256,14 @@ function SynapseShape({ selected }: { selected: boolean }) {
 }
 
 // ── neuron (circle) ───────────────────────────────────────────────────────
-function NeuronShape({ selected }: { selected: boolean }) {
+function NeuronShape({ selected, glia }: { selected: boolean; glia: boolean }) {
   const R = 22;
   const color = C.neuron;
   return (
     <>
       <circle r={R * 2.8} fill={color} fillOpacity="0.07" filter="url(#blur-md)" />
       <circle r={R * 1.35} fill="none" stroke={color} strokeOpacity="0.2" strokeWidth="0.8" />
+      {glia && <GliaLayer kind="neuron" R={R} />}
       <circle r={R} fill={C.bg} stroke={color} strokeWidth="1.5"
         style={{ filter: `drop-shadow(0 0 7px ${color})` }} />
       <circle r={R * 0.6} fill={color} fillOpacity="0.12" />
@@ -273,7 +276,7 @@ function NeuronShape({ selected }: { selected: boolean }) {
 }
 
 // ── engram (diamond) ──────────────────────────────────────────────────────
-function EngramShape({ selected }: { selected: boolean }) {
+function EngramShape({ selected, glia }: { selected: boolean; glia: boolean }) {
   const R = 22;
   const color = C.engram;
   const D = R * 1.22;
@@ -284,6 +287,7 @@ function EngramShape({ selected }: { selected: boolean }) {
         fill={color} fillOpacity="0.06" filter="url(#blur-md)" />
       <polygon points={`0,${-D * 1.4} ${D * 1.4},0 0,${D * 1.4} ${-D * 1.4},0`}
         fill="none" stroke={color} strokeOpacity="0.2" strokeWidth="0.8" />
+      {glia && <GliaLayer kind="engram" R={R} />}
       <polygon points={pts} fill={C.bg} stroke={color} strokeWidth="1.5"
         style={{ filter: `drop-shadow(0 0 7px ${color})` }} />
       <polygon points={`0,${-D * 0.6} ${D * 0.6},0 0,${D * 0.6} ${-D * 0.6},0`}
@@ -301,7 +305,7 @@ function EngramShape({ selected }: { selected: boolean }) {
 }
 
 // ── effector (triangle) ───────────────────────────────────────────────────
-function EffectorShape({ selected }: { selected: boolean }) {
+function EffectorShape({ selected, glia }: { selected: boolean; glia: boolean }) {
   const R = 22;
   const color = C.effector;
   // Upward-pointing equilateral triangle inscribed in radius r.
@@ -314,6 +318,7 @@ function EffectorShape({ selected }: { selected: boolean }) {
     <>
       <polygon points={tri(R * 2.6)} fill={color} fillOpacity="0.06" filter="url(#blur-md)" />
       <polygon points={tri(R * 1.55)} fill="none" stroke={color} strokeOpacity="0.2" strokeWidth="0.8" />
+      {glia && <GliaLayer kind="effector" R={R} />}
       <polygon points={tri(R * 1.22)} fill={C.bg} stroke={color} strokeWidth="1.5"
         style={{ filter: `drop-shadow(0 0 7px ${color})` }} />
       <polygon points={tri(R * 0.7)} fill={color} fillOpacity="0.13" />
@@ -325,6 +330,36 @@ function EffectorShape({ selected }: { selected: boolean }) {
       </circle>
       {selected && <SelectRing r={R * 1.9} color={color} shape="triangle" />}
     </>
+  );
+}
+
+// ── glia layer ────────────────────────────────────────────────────────────
+// A gold shell hugging the body of a component with a Glia card mounted: the
+// card wraps the component, so the layer wraps the shape. It follows the
+// silhouette, sits inside the faint outer ring, and leaves the kind colour
+// alone, so a carded Effector is still an amber triangle inside a gold
+// layer. Geometrically identical to GliaLayer in prism-ui's PrismCanvas.tsx,
+// so the layer you see here is the one Prism draws once the brain runs.
+// No receptor case: a Receptor is caller-side and takes no card.
+function GliaLayer({ kind, R }: { kind: "neuron" | "engram" | "effector"; R: number }) {
+  const gold = C.glia;
+  const shape = (strokeWidth: number, strokeOpacity: number, filter?: string) => {
+    const common = { fill: "none", stroke: gold, strokeWidth, strokeOpacity, filter };
+    if (kind === "engram") {
+      const D = R * 1.22 * 1.2;
+      return <polygon points={`0,${-D} ${D},0 0,${D} ${-D},0`} {...common} />;
+    }
+    if (kind === "effector") {
+      const r = R * 1.48;
+      return <polygon points={`0,${-r} ${r * 0.8660254},${r * 0.5} ${-r * 0.8660254},${r * 0.5}`} {...common} />;
+    }
+    return <circle r={R * 1.17} {...common} />;
+  };
+  return (
+    <g style={{ pointerEvents: "none" }}>
+      {shape(6, 0.28, "url(#blur-sm)")}
+      {shape(2, 0.95)}
+    </g>
   );
 }
 

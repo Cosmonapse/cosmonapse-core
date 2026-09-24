@@ -19,6 +19,12 @@ Dendrite, not here:
   the parent TASK's terminal event (or Dendrite shutdown) to
   :class:`EngramCancelled`.
 
+When the call is made from inside an Axon's TASK and that Axon carries a
+Glia card, the RECALL / IMPRINT passes the Axon's gate outbound before it
+is published, and each RECALLED / IMPRINTED passes it inbound before the
+caller sees it. A violation raises :class:`cosmonapse.glia.PolicyRefusal`;
+a ``retry: resend`` policy on a RECALLED sends the recall again.
+
 Because correlation is per-operation (``parent_id``) and lives in the
 generic Pathway primitive, any future request/reply client can be built the
 same way. This module imports the Dendrite lazily via TYPE_CHECKING to avoid
@@ -46,6 +52,7 @@ from cosmonapse.envelope import (
     imprint_signal,
     recall_signal,
 )
+from cosmonapse.glia.base import CallerGate, PolicyRefusal, current_caller_gate
 from cosmonapse.pathway import Pathway, PathwayClosedError
 
 if TYPE_CHECKING:
@@ -86,6 +93,7 @@ class EngramClient:
         parent_id: str,
         neuron: str | None = None,
         meta: dict[str, Any] | None = None,
+        gate: CallerGate | None = None,
     ) -> RecallResult:
         """Emit RECALL, await matching RECALLED(s) per recall_mode, return.
 
@@ -103,31 +111,43 @@ class EngramClient:
         if recall_mode is None:
             recall_mode = "first"
 
-        sig = recall_signal(
-            trace_id=trace_id,
-            parent_id=parent_id,
-            directed=Directed(id=engram_id, type=engram_kind),
-            query=query,
-            filters=filters,
-            context_ref=context_ref,
-            deadline_ms=deadline_ms,
-            min_confidence=min_confidence,
-            recall_mode=recall_mode,
-            meta=meta,
-        )
-
-        # Open the op-Pathway BEFORE publishing so an inline (in-memory)
-        # RECALLED is buffered, never lost. The Dendrite routes RECALLED by
-        # parent_id == sig.id back to this Pathway.
-        pw = self._dendrite._open_op_pathway(op_id=sig.id, trace_id=trace_id)
+        gate = gate or current_caller_gate()
         deadline_s = (deadline_ms / 1000.0) if deadline_ms else None
-        try:
-            await self._dendrite._publish(sig)
-            if recall_mode == "first":
-                return await self._await_first_recalled(pw, deadline_s)
-            return await self._collect_recalled(pw, deadline_s)
-        finally:
-            await pw.close()
+        resent = 0
+        while True:
+            sig = recall_signal(
+                trace_id=trace_id,
+                parent_id=parent_id,
+                directed=Directed(id=engram_id, type=engram_kind),
+                query=query,
+                filters=filters,
+                context_ref=context_ref,
+                deadline_ms=deadline_ms,
+                min_confidence=min_confidence,
+                recall_mode=recall_mode,
+                meta=meta,
+            )
+            if gate is not None:
+                sig = await gate.outbound(sig)
+
+            # Open the op-Pathway BEFORE publishing so an inline (in-memory)
+            # RECALLED is buffered, never lost. The Dendrite routes RECALLED
+            # by parent_id == sig.id back to this Pathway.
+            pw = self._dendrite._open_op_pathway(op_id=sig.id, trace_id=trace_id)
+            try:
+                await self._dendrite._publish(sig)
+                if recall_mode != "first":
+                    return await self._collect_recalled(pw, deadline_s, gate)
+                recv = await self._await_first_recalled(pw, deadline_s)
+            finally:
+                await pw.close()
+            if gate is not None:
+                checked = await gate.inbound(recv, resent=resent)
+                if checked is None:
+                    resent += 1
+                    continue
+                recv = checked
+            return _recall_result_from(recv)
 
     async def imprint(
         self,
@@ -144,6 +164,7 @@ class EngramClient:
         parent_id: str,
         neuron: str | None = None,
         meta: dict[str, Any] | None = None,
+        gate: CallerGate | None = None,
     ) -> ImprintReceipt | None:
         """Emit IMPRINT. With ``await_ack=False`` (default) return as soon as
         the envelope is on the wire. With ``await_ack=True`` await the
@@ -166,6 +187,9 @@ class EngramClient:
             merge_key=merge_key,
             meta=meta,
         )
+        gate = gate or current_caller_gate()
+        if gate is not None:
+            sig = await gate.outbound(sig)
 
         if not await_ack:
             await self._dendrite._publish(sig)
@@ -187,6 +211,10 @@ class EngramClient:
                 raise EngramCancelled(
                     "trace terminated while IMPRINT was in flight"
                 ) from None
+            if gate is not None:
+                # IMPRINTED is never resent: resending an IMPRINT repeats a
+                # write, and not every backend's writes are idempotent.
+                recv = await gate.inbound(recv, retry_allowed=False) or recv
             return ImprintReceipt(
                 engram_id=recv.payload.get("engram_id") or "",
                 op=recv.payload.get("op") or "",
@@ -204,7 +232,7 @@ class EngramClient:
 
     async def _await_first_recalled(
         self, pw: Pathway, deadline_s: float | None,
-    ) -> RecallResult:
+    ) -> Signal:
         """recall_mode='first': resolve on the first RECALLED."""
         try:
             sig = await pw.wait_for(SignalType.RECALLED, timeout_s=deadline_s)
@@ -216,10 +244,11 @@ class EngramClient:
             raise EngramCancelled(
                 "trace terminated while RECALL was in flight"
             ) from None
-        return _recall_result_from(sig)
+        return sig
 
     async def _collect_recalled(
         self, pw: Pathway, deadline_s: float | None,
+        gate: CallerGate | None = None,
     ) -> RecallResult:
         """recall_mode='merge'/'all': accumulate hits across every responder
         until the deadline elapses, then return them merged and score-sorted.
@@ -244,6 +273,14 @@ class EngramClient:
                 raise EngramCancelled(
                     "trace terminated while RECALL was in flight"
                 ) from None
+            if gate is not None:
+                # One responder among several: a violation drops that
+                # responder's hits rather than failing the whole recall,
+                # and is not resent, because the others already answered.
+                try:
+                    sig = await gate.inbound(sig, retry_allowed=False) or sig
+                except PolicyRefusal:
+                    continue
             hits.extend(_hits_from_payload(sig.payload.get("hits") or []))
             eid = sig.payload.get("engram_id")
             if eid:

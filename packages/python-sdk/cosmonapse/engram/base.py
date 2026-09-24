@@ -71,7 +71,25 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from cosmonapse._hooks import LifecycleHooks
-from cosmonapse.envelope import SignalType
+from cosmonapse.envelope import (
+    Directed,
+    Signal,
+    SignalType,
+    imprinted_signal,
+    recalled_signal,
+)
+from cosmonapse.glia import (
+    F_ATTEMPT,
+    F_ATTEMPTS,
+    META_KEY,
+    AuditKind,
+    AuditOutcome,
+    Glia,
+    PolicyOutcome,
+    publish_audit,
+    run_with_transient_retry,
+)
+from cosmonapse.glia.base import serve_gated
 
 if TYPE_CHECKING:
     from cosmonapse.dendrite import Dendrite
@@ -308,6 +326,18 @@ class Engram(ABC):
     # tool) without a hand-wired module-level reference.
     _dendrite: Dendrite | None = None
 
+    # The Glia card, or None. A CLASS-LEVEL default because this ABC has
+    # no ``__init__`` - ``Engram.serve(glia=...)`` and
+    # ``Dendrite.attach_engram(..., glia=...)`` set it per instance, so
+    # every hand-rolled backend inherits the None unchanged. ``handle``
+    # goes straight to the backend when it is None.
+    _glia: Glia | None = None
+
+    @property
+    def glia(self) -> Glia | None:
+        """The mounted policy card, if any."""
+        return self._glia
+
     @property
     def dendrite(self) -> Dendrite | None:
         """The hosting Dendrite, once attached - see ``_dendrite`` above."""
@@ -382,6 +412,189 @@ class Engram(ABC):
         trace can be reversed by :meth:`compensate`. A ``None`` trace_id
         means "do not journal" - which is exactly how :meth:`compensate`
         replays inverse ops without re-journaling them."""
+
+    # ------------------------------------------------------------------
+    # Servicing, through the card's gate
+    # ------------------------------------------------------------------
+    # Concrete on the ABC, because ``recall`` and ``imprint`` are
+    # ``@abstractmethod`` and the gate therefore cannot be wrapped inside
+    # them. With no card this is the backend call plus the envelope, so
+    # behaviour is identical and every hand-rolled backend keeps working
+    # unchanged. The Engram refuses for itself, whatever the caller
+    # claimed to be.
+
+    async def handle(self, signal: Signal) -> Signal | None:
+        """Service one RECALL or IMPRINT and return the reply to publish.
+
+        None when this Engram does not serve the request (``can_serve``
+        declined a recall), so another host may answer. The card's gate
+        reads the request arriving and the reply leaving: RECALL /
+        RECALLED, IMPRINT / IMPRINTED. A refusal answers RECALLED or
+        IMPRINTED carrying ``error``, never an ERROR signal, so the parent
+        TASK survives. ``escalate`` is not offered: an Engram has no
+        escalation channel.
+        """
+        if signal.type is SignalType.RECALL:
+            if not await self.can_serve(signal.payload.get("query") or {}):
+                return None
+            run = self._service_recall
+        elif signal.type is SignalType.IMPRINT:
+            run = self._service_imprint
+        else:
+            return None
+        return await serve_gated(
+            self._glia, signal,
+            component=self.engram_id,
+            dendrite=self._dendrite,
+            run=run,
+            refuse=self._refusal,
+        )
+
+    def _attribution(self) -> Directed:
+        # Attribute the reply to the Engram that answered, not the host
+        # Dendrite, so observers (Prism) classify it by the Engram's own
+        # REGISTER instead of inventing a node for the host id.
+        return Directed(id=self.engram_id, type=self.engram_kind)
+
+    def _refusal(self, request: Signal, oc: PolicyOutcome) -> Signal:
+        reason = oc.reason or "refused by policy"
+        if request.type is SignalType.RECALL:
+            return recalled_signal(
+                trace_id=request.trace_id, parent_id=request.id,
+                engram_id=self.engram_id, hits=[], error=reason,
+                directed=self._attribution(),
+            )
+        return imprinted_signal(
+            trace_id=request.trace_id, parent_id=request.id,
+            engram_id=self.engram_id, op=request.payload.get("op", ""),
+            error=reason, directed=self._attribution(),
+        )
+
+    async def _with_transient(
+        self, call: Any, *, label: str, request: Signal,
+    ) -> tuple[Any, dict[str, Any] | None]:
+        repair = None if self._glia is None else self._glia.repair
+        if repair is None or repair.transient_attempts <= 0:
+            return await call(), None
+        # Identical input, bounded by attempts and backoff. A policy
+        # refusal never comes here; it is the gate's business.
+        try:
+            value, tries = await run_with_transient_retry(
+                call, repair, label=label,
+            )
+        except Exception:
+            await self._emit_transient_audit(
+                AuditOutcome.EXHAUSTED, repair.transient_attempts + 1,
+                trace_id=request.trace_id, parent_id=request.id,
+            )
+            raise
+        if not tries:
+            return value, None
+        await self._emit_transient_audit(
+            AuditOutcome.RECOVERED, len(tries),
+            trace_id=request.trace_id, parent_id=request.id,
+        )
+        return value, {F_ATTEMPTS: tries, F_ATTEMPT: len(tries)}
+
+    async def _service_recall(self, request: Signal) -> Signal:
+        p = request.payload
+        query = p.get("query") or {}
+        # A backend fault propagates: the Dendrite logs it and sends no
+        # RECALLED, exactly as before the gate existed, so the caller's
+        # recall_mode decides what a silent responder means.
+        hits, record = await self._with_transient(
+            lambda: self.recall(
+                query,
+                filters=p.get("filters"),
+                context_ref=p.get("context_ref"),
+                deadline_ms=p.get("deadline_ms"),
+                min_confidence=p.get("min_confidence"),
+            ),
+            label=f"Engram {self.engram_id}.recall",
+            request=request,
+        )
+        return recalled_signal(
+            trace_id=request.trace_id,
+            parent_id=request.id,
+            engram_id=self.engram_id,
+            hits=[
+                {"id": h.id, "entry": h.entry, "score": h.score}
+                for h in hits
+            ],
+            directed=self._attribution(),
+            meta=None if record is None else {META_KEY: record},
+        )
+
+    async def _service_imprint(self, request: Signal) -> Signal:
+        p = request.payload
+        op = p.get("op", "")
+        try:
+            receipt, record = await self._with_transient(
+                lambda: self.imprint(
+                    op, p.get("entry") or {},
+                    merge_key=p.get("merge_key"),
+                    imprint_id=request.id,
+                    trace_id=request.trace_id,
+                ),
+                label=f"Engram {self.engram_id}.imprint",
+                request=request,
+            )
+        except Exception as exc:
+            logger.exception(
+                "Engram %s.imprint raised: %s", self.engram_id, exc,
+            )
+            return imprinted_signal(
+                trace_id=request.trace_id, parent_id=request.id,
+                engram_id=self.engram_id, op=op,
+                error=f"engram_exception: {exc}",
+                directed=self._attribution(),
+            )
+        return imprinted_signal(
+            trace_id=request.trace_id,
+            parent_id=request.id,
+            engram_id=receipt.engram_id or self.engram_id,
+            op=receipt.op,
+            id=receipt.id,
+            version=receipt.version,
+            took_ms=receipt.took_ms,
+            error=receipt.error,
+            directed=self._attribution(),
+            meta=None if record is None else {META_KEY: record},
+        )
+
+    async def _emit_transient_audit(
+        self,
+        outcome: AuditOutcome,
+        attempt: int,
+        *,
+        trace_id: str | None,
+        parent_id: str | None,
+        took_ms: int | None = None,
+    ) -> None:
+        """One TRANSIENT_RETRY record: the reliability audit.
+
+        Distinct from GUARD_RETRY on purpose. A transient retry says the
+        backend faulted and an identical request was tried again; a guard
+        retry says a policy refused. Rolling them together would make a
+        flaky database read as a compliance event.
+
+        Skipped without both ids: better no record than one hung off a
+        fabricated parent, which would put a phantom edge in an
+        observer's lineage graph.
+        """
+        if not parent_id or not trace_id:
+            return
+        await publish_audit(
+            self._dendrite,
+            kind=AuditKind.TRANSIENT_RETRY,
+            outcome=outcome,
+            trace_id=trace_id,
+            parent_id=parent_id,
+            component=self.engram_id,
+            attempt=attempt,
+            card=self._glia,
+            took_ms=took_ms,
+        )
 
     # ------------------------------------------------------------------
     # Saga / compensating-log rollback
@@ -473,6 +686,7 @@ class Engram(ABC):
         engram_kind: str = "context",
         capabilities: list[str] | None = None,
         version: str | None = None,
+        glia: Glia | None = None,
     ) -> _ServedEngram:
         """Build an Engram from the two protocol hooks that matter.
 
@@ -507,6 +721,7 @@ class Engram(ABC):
             engram_kind=engram_kind,
             capabilities=capabilities,
             version=version,
+            glia=glia,
         )
 
 
@@ -557,12 +772,14 @@ class _ServedEngram(Engram, LifecycleHooks):
         engram_kind: str,
         capabilities: list[str] | None,
         version: str | None,
+        glia: Glia | None = None,
     ) -> None:
         LifecycleHooks.__init__(self)
         self.engram_id = engram_id
         self.engram_kind = engram_kind
         self.capabilities = capabilities or []
         self.version = version
+        self._glia = glia
         self._recall_handlers: list[tuple[Callable[..., Any], frozenset[str]]] = []
         self._imprint_handlers: list[tuple[Callable[..., Any], frozenset[str]]] = []
         self._serve_gate: Callable[..., Any] | None = None

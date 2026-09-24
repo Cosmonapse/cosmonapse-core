@@ -38,7 +38,9 @@ import inspect
 import json
 import logging
 import re
+import time
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
 from cosmonapse._hooks import LifecycleHooks, RefreshEvent
@@ -62,6 +64,34 @@ from cosmonapse.envelope import (
     error_signal,
     permission_signal,
     trace_context,
+)
+from cosmonapse.glia import (
+    AUDIT_DOMAIN,
+    F_ATTEMPT,
+    F_ATTEMPTS,
+    F_HASH,
+    META_KEY,
+    AuditKind,
+    AuditOutcome,
+    CallerGate,
+    Decision,
+    Direction,
+    Glia,
+    Mode,
+    PolicyOutcome,
+    PolicyRefusal,
+    RepairPolicy,
+    Retry,
+    allowed_retry,
+    audit_outcome,
+    caller_gate,
+    canonical_text,
+    is_exempt,
+    mark_exempt,
+    outcome_for,
+    publish_audit,
+    with_glia_record,
+    with_payload,
 )
 
 if TYPE_CHECKING:
@@ -88,6 +118,149 @@ DEFAULT_TOOL_DEADLINE_MS = 30_000
 
 async def _noop_context_fetcher(ref: str) -> list[Any]:
     return []
+
+
+def _jsonable(value: Any) -> Any:
+    """Shape a pending output for a PERMISSION's ``context``. Signals are
+    serialised by pydantic, so anything put on one has to survive
+    ``model_dump_json``; a repr is a lossy but always-encodable fallback."""
+    if isinstance(value, (str, int, float, bool, type(None))):
+        return value
+    if isinstance(value, dict):
+        return {str(k): _jsonable(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_jsonable(v) for v in value]
+    return repr(value)
+
+
+class InvalidOutput(Exception):
+    """A Neuron's output was not claimed by anything that could claim it.
+
+    Raised only when the Axon was built with ``strict_output=True``.
+    Without it, ``_apply_recognisers`` returns the raw output both when
+    nothing matched AND when the output is a perfectly good plain answer,
+    so an unclaimed output is not detectable and the repair loop has
+    nothing to trigger on (GLIA_DESIGN section 8.2).
+
+    An unrecognised tool call is the case worth the flag:
+    ``extract_tool_calls`` returns ``[]`` on no match, the raw text falls
+    through, and the model's attempted call becomes the AGENT_OUTPUT
+    answer. Once a miss costs one more round of prompting, the text
+    parsers can afford to be STRICTER rather than more permissive, which
+    is what you want from something that must never misfire on ordinary
+    JSON.
+    """
+
+    #: The output nothing claimed, carried so the handler can wrap it as
+    #: the fallback reply without relying on loop-local bindings.
+    output: Any = None
+
+
+#: Which audit categories the correction loop can produce. Only these
+#: three: a guard refusal, an output nothing claimed, and arguments that
+#: failed validation. A tool that timed out or failed is NOT here - that
+#: is transient territory, on the Effector and Engram side, and re-asking
+#: the model about it is a different decision.
+REPAIR_KINDS: frozenset[AuditKind] = frozenset({
+    AuditKind.GUARD_RETRY, AuditKind.EVAL_RETRY, AuditKind.TOOL_RETRY,
+})
+
+#: Bound on how many traces one Axon remembers a repair count for.
+_MAX_REPAIR_TRACES = 4096
+
+
+def _raise_unclaimed(output: Any) -> None:
+    """Raise :class:`InvalidOutput` carrying the output nothing claimed."""
+    exc = InvalidOutput(
+        "no recogniser, parser or tool dialect claimed this output"
+    )
+    exc.output = output
+    raise exc
+
+
+@dataclass
+class _Repair:
+    """A pass that should be re-asked, and the reply to send if it cannot
+    be. ``fallback`` is exactly what this Axon would have returned before
+    the loop existed, so exhausting the loop is never worse than not
+    having it."""
+
+    kind: AuditKind
+    problem: str
+    #: The reply to send when the loop cannot fix it. Optional only
+    #: because the tool-call path learns it one frame up, where the
+    #: observation has been wrapped into an AGENT_OUTPUT.
+    fallback: Signal | None = None
+    policy_id: str | None = None
+    #: The gate scope a policy refusal came from: which way the signal was
+    #: crossing, and its type. None for a repair no policy caused.
+    direction: Direction | None = None
+    signal_type: SignalType | None = None
+    #: Digest of the matched content, so this record joins the
+    #: component's local journal line. Never the content itself.
+    digest: str | None = None
+    #: The refusing policy's own retry budget. The card's
+    #: ``repair.max_attempts`` is still the ceiling.
+    max_attempts: int | None = None
+    #: The refusal this repair answers, so the pass's gate does not record
+    #: it a second time.
+    refusal: PolicyRefusal | None = None
+
+    @classmethod
+    def from_refusal(
+        cls, exc: PolicyRefusal, fallback: Signal | None = None,
+    ) -> _Repair:
+        oc = exc.outcome
+        return cls(
+            kind=AuditKind.GUARD_RETRY,
+            problem=exc.reason,
+            fallback=fallback,
+            policy_id=oc.declared.policy_id,
+            direction=oc.direction,
+            signal_type=oc.signal_type,
+            digest=oc.record.get(F_HASH),
+            max_attempts=oc.max_attempts,
+            refusal=exc,
+        )
+
+    def as_record(self, attempt: int, took_ms: int) -> dict[str, Any]:
+        """One entry for ``meta.glia.attempts``: the attempt number,
+        the audit category, the outcome and the duration. The policy id,
+        never the model's rejected output.
+
+        Deliberately the same words the AUDIT signal uses, so a reader
+        holding either one is reading one vocabulary.
+        """
+        rec: dict[str, Any] = {
+            "attempt": attempt,
+            "kind": self.kind.value,
+            "domain": AUDIT_DOMAIN[self.kind],
+            # Overwritten by the loop when this was the last attempt.
+            "outcome": AuditOutcome.RE_ASKED.value,
+            "took_ms": took_ms,
+        }
+        if self.policy_id:
+            rec["policy_id"] = self.policy_id
+        if self.direction is not None:
+            rec["direction"] = self.direction.value
+        if self.signal_type is not None:
+            rec["signal"] = self.signal_type.value
+        return rec
+
+
+class _ToolCallEscalation(Exception):
+    """Internal: a policy on an outbound TOOL_CALL asked to escalate.
+
+    Raised out of ``_run_tool_call`` because that method returns a tool
+    OBSERVATION (a dict inside an AGENT_OUTPUT payload) and an escalation
+    has to replace the whole reply with a PERMISSION. Caught in
+    ``_dispatch_native_tool_calls``; never seen by a caller.
+    """
+
+    def __init__(self, outcome: PolicyOutcome, tool: str) -> None:
+        self.outcome = outcome
+        self.tool = tool
+        super().__init__(outcome.reason or "escalated by policy")
 
 
 class _HostProxy:
@@ -167,6 +340,9 @@ class Axon(LifecycleHooks):
         tool_standard: str | None = None,
         parallel_tools: bool = False,
         output_parser: OutputParser | None = None,
+        glia: Glia | None = None,
+        strict_output: bool = False,
+        repair: RepairPolicy | None = None,
     ) -> None:
         LifecycleHooks.__init__(self)
         self.neuron_id = neuron_id
@@ -206,6 +382,29 @@ class Axon(LifecycleHooks):
         # Pre-task hooks (@axon.before_task): transform/validate/reject the
         # TASK input before the Neuron runs.
         self._before_task_hooks: list[Callable[[dict[str, Any]], Any]] = []
+
+        # The Glia card, or None. The gate sits behind a null check on
+        # this, so an Axon with no card does zero extra work -
+        # the same shape as ``if self._before_task_hooks`` above and the
+        # ``if not any(rec.values())`` early-out in _apply_recognisers.
+        self._glia = glia
+        # Strict recognition: an output no recogniser claimed raises
+        # InvalidOutput instead of passing through as the answer, which
+        # is what makes an unclaimed output detectable at all. Opt-in,
+        # because passing it through is the behaviour every existing
+        # brain is written against. See GLIA_DESIGN section 8.2.
+        self._strict_output = bool(strict_output)
+        # Correction repair. An explicit policy wins over the card's, and
+        # with neither there is NO loop: the Axon behaves exactly as it
+        # did before this existed.
+        self._repair = repair
+        # Builders for the next attempt's input (@axon.repairs).
+        self._repair_builders: list[Callable[..., Any]] = []
+        # Refusals and corrections seen per trace, as the attempt records
+        # themselves so a failure path can carry what happened. Bounded:
+        # an Axon that runs forever must not grow a row per trace it
+        # ever saw.
+        self._repair_counts: dict[str, list[dict[str, Any]]] = {}
 
         # Engram bindings the Neuron may address. Keyed by binding.name  -
         # the Neuron passes that name to recall(...) / imprint(...). The
@@ -315,6 +514,41 @@ class Axon(LifecycleHooks):
             # helper injection and fall back to the 2-arg legacy call.
             pass
 
+        self._warn_repair_deadlines()
+
+    def _warn_repair_deadlines(self) -> None:
+        """Warn when repair attempts could outlast the caller's timeout.
+
+        Inner attempts multiplied by their cost must stay under the
+        caller's ``timeout_s``, and under ``DEFAULT_TOOL_DEADLINE_MS``
+        per tool call within them. Exceed it and the OUTER retry
+        (RetryStrategy) times out mid-repair, re-dispatches on a fresh
+        trace, and STOPs an attempt that was about to succeed. Nothing
+        checked this before, and the Axon cannot know ``timeout_s`` at
+        construction - so it states the worst case and leaves the
+        arithmetic to the caller (GLIA_DESIGN section 8.3).
+        """
+        repair = self.repair
+        if repair is None or repair.max_attempts <= 0 or not self._tools_enabled:
+            return
+        per_call = max(
+            [
+                b.default_deadline_ms or DEFAULT_TOOL_DEADLINE_MS
+                for b in self._effector_bindings.values()
+            ] or [DEFAULT_TOOL_DEADLINE_MS]
+        )
+        worst_ms = per_call * (repair.max_attempts + 1)
+        logger.warning(
+            "Axon %s: repair is on (max_attempts=%d) and tool calls are "
+            "enabled, so one TASK can take up to %.1fs of tool deadlines "
+            "(%d attempts x %dms). Keep dispatch timeout_s above that, or "
+            "the outer RetryStrategy will time out mid-repair, re-dispatch "
+            "on a fresh trace and STOP an attempt that was about to "
+            "succeed.",
+            self.neuron_id, repair.max_attempts, worst_ms / 1000.0,
+            repair.max_attempts + 1, per_call,
+        )
+
     # -- source-paired factories --------------------------------------
     # An Axon wraps a Neuron. These build an Axon already paired with one
     # of the existing ``Neuron(source=...)`` providers AND wired with the
@@ -338,6 +572,8 @@ class Axon(LifecycleHooks):
         parallel_tools: bool = False,
         recognize: bool = True,
         teach_intents: bool | None = None,
+        glia: Glia | None = None,
+        strict_output: bool = False,
         **source_kwargs: Any,
     ) -> Axon:
         """Build an Axon around ``Neuron(source=source, **source_kwargs)``.
@@ -404,6 +640,8 @@ class Axon(LifecycleHooks):
             tool_standard=tool_standard,
             parallel_tools=parallel_tools,
             output_parser=parser,
+            glia=glia,
+            strict_output=strict_output,
         )
 
     @classmethod
@@ -465,8 +703,12 @@ class Axon(LifecycleHooks):
         * raise               -  the TASK is rejected; the exception
           surfaces as an ERROR Signal (code ``NEURON_EXCEPTION``).
 
-        The natural place for input normalisation (e.g. reshaping a
-        re-dispatched clarification follow-up) or per-Axon policy checks.
+        The natural place for input normalisation - e.g. reshaping a
+        re-dispatched clarification follow-up. NOT the place for policy
+        checks: those belong on a Glia card, whose gate reads the inbound
+        TASK BEFORE these hooks so a policy sees what actually arrived
+        rather than what a prompt builder reshaped. See ``cosmonapse.glia``
+        and design/GLIA_DESIGN.md section 17.
         """
         self._before_task_hooks.append(fn)
         return fn
@@ -504,12 +746,18 @@ class Axon(LifecycleHooks):
         self._recognisers["error"].append(fn)
         return fn
 
-    async def _apply_recognisers(self, raw: Any) -> Any:
-        """Run registered detectors in precedence; return a marker dict on the
-        first match, else the unchanged ``raw``."""
+    async def _apply_recognisers(self, raw: Any) -> tuple[Any, bool]:
+        """Run registered detectors in precedence.
+
+        Returns the marker dict from the first match and True, or the
+        unchanged ``raw`` and False. The flag is what makes an UNCLAIMED
+        output distinguishable from a plain answer that simply needed no
+        recognising - the prerequisite for the repair loop, because
+        otherwise both look identical here (GLIA_DESIGN section 8.2).
+        """
         rec = self._recognisers
         if not any(rec.values()):
-            return raw
+            return raw, False
 
         async def _first(fns: list[Callable[[Any], Any]]) -> Any:
             for fn in fns:
@@ -522,17 +770,17 @@ class Axon(LifecycleHooks):
 
         hit = await _first(rec["error"])
         if hit is not None:
-            return {"__error__": True, **hit}
+            return {"__error__": True, **hit}, True
         hit = await _first(rec["clarification"])
         if hit is not None:
-            return {"__clarification__": True, **hit}
+            return {"__clarification__": True, **hit}, True
         hit = await _first(rec["permission"])
         if hit is not None:
-            return {"__permission__": True, **hit}
+            return {"__permission__": True, **hit}, True
         hit = await _first(rec["output"])
         if hit is not None:
-            return hit
-        return raw
+            return hit, True
+        return raw, False
 
     # -- attachment ----------------------------------------------------
 
@@ -599,25 +847,36 @@ class Axon(LifecycleHooks):
         lifecycle hooks included - so engram calls made without explicit
         trace plumbing (e.g. ``dendrite.imprint`` from a
         ``@detects_output`` hook) are attributed to this task's trace.
-        """
-        with trace_context(task.trace_id, task.id):
-            return await self._handle_task_inner(task)
 
-    async def _handle_task_inner(self, task: Signal) -> Signal:
+        With a Glia card mounted, also binds this Axon's caller gate for
+        the same pass, so every ``recall`` / ``imprint`` / ``call_tool``
+        the Neuron makes, however it reaches the Dendrite, is read
+        outbound and its reply inbound.
+        """
+        gate = self._caller_gate(task)
+        with trace_context(task.trace_id, task.id), caller_gate(gate):
+            return await self._handle_task_inner(task, gate)
+
+    def _caller_gate(self, task: Signal) -> CallerGate | None:
+        card = self._glia
+        if card is None or card.mode is Mode.OFF or not card.has_policies:
+            return None
+        return CallerGate(
+            card,
+            component=self.neuron_id,
+            dendrite=self._dendrite,
+            trace_id=task.trace_id,
+            parent_id=task.id,
+            can_reask=self.repair is not None,
+        )
+
+    async def _handle_task_inner(
+        self, task: Signal, gate: CallerGate | None = None,
+    ) -> Signal:
         trace_id = task.trace_id
         parent_id = task.id
         input_data: dict[str, Any] = task.payload.get("input", {})
         context_ref: str | None = task.payload.get("context_ref")
-
-        context: list[Any] = []
-        if context_ref:
-            try:
-                context = await self._context_fetcher(context_ref)
-            except Exception as exc:
-                logger.warning(
-                    "Axon %s: context fetch failed for %r: %s",
-                    self.neuron_id, context_ref, exc,
-                )
 
         # Build helpers bound to this TASK's trace/parent context. The
         # helpers are no-ops (raise EngramNotBound) when no bindings are
@@ -632,6 +891,208 @@ class Axon(LifecycleHooks):
                 trace_id, parent_id,
             )
 
+        # The gate, inbound: the TASK as it arrived. Deliberately BEFORE
+        # the before_task hooks, so policy sees what actually arrived, not
+        # what the developer's prompt builder reshaped. The whole gate
+        # sits behind a null check on the card, the same shape as the
+        # ``if self._before_task_hooks`` below, so an Axon with no card
+        # executes no extra branches.
+        card = self._glia
+        # meta.glia accumulated over this pass and attached to whichever
+        # Signal the TASK finally produces.
+        pol: dict[str, Any] = {}
+        if card is not None:
+            oc = await card.check(
+                task, direction=Direction.INBOUND, component=self.neuron_id,
+            )
+            if oc is not None:
+                if oc.record:
+                    pol.update(oc.record)
+                # One AUDIT per gate event, at the event. This is what
+                # makes the absence of a AUDIT on a trace mean "nothing
+                # fired" instead of "nothing was recorded". There is no
+                # retry for an inbound TASK: the input arrived from
+                # outside and no attempt of ours changes what arrived.
+                await self._emit_guard_audit(
+                    oc, card, trace_id=trace_id, parent_id=parent_id,
+                )
+                if oc.denied:
+                    return self._policy_refusal(
+                        oc, trace_id=trace_id, parent_id=parent_id, pol=pol,
+                    )
+                if oc.escalated:
+                    return self._policy_escalation(
+                        oc, trace_id=trace_id, parent_id=parent_id, pol=pol,
+                        action=f"run {self.neuron_id!r} on this input",
+                    )
+                if oc.redacted and isinstance(oc.replacement, dict):
+                    # A redaction is the new payload, applied to a COPY,
+                    # never in place: MemorySynapse hands the same Signal
+                    # object to every in-process subscriber (hard
+                    # constraint 7).
+                    input_data = oc.replacement.get("input") or {}
+                    context_ref = oc.replacement.get("context_ref")
+
+        context: list[Any] = []
+        if context_ref:
+            try:
+                context = await self._context_fetcher(context_ref)
+            except Exception as exc:
+                logger.warning(
+                    "Axon %s: context fetch failed for %r: %s",
+                    self.neuron_id, context_ref, exc,
+                )
+
+        # --- the repair loop ----------------------------------------
+        # One loop, three callers: an unclaimed output, a tool call whose
+        # arguments failed validation, and a policy refusal. All three
+        # are correctable by re-asking the generator, which is why the
+        # loop lives HERE and nowhere else - only the Axon holds a
+        # generator it can re-ask, so the input CHANGES between attempts.
+        #
+        # Deliberately not the Effector/Engram transient retry: there the
+        # input is identical and the hope is that the world changed. A
+        # policy refusal never feeds that one, because retrying an
+        # identical request against a deterministic policy is N
+        # guaranteed denials (GLIA_DESIGN section 8.1).
+        repair = self.repair
+
+        # A trace already past the limit is the LOOP being broken rather
+        # than the request, and that is the one legitimate ERROR here.
+        if repair is not None and self._repair_count(trace_id) > repair.max_attempts:
+            return self._repair_exhausted_error(
+                trace_id=trace_id, parent_id=parent_id, pol=pol,
+                limit=repair.max_attempts,
+            )
+
+        attempts: list[dict[str, Any]] = []
+        pass_input = input_data
+        attempt = 0
+        loop_started = time.monotonic()
+        while True:
+            started = time.monotonic()
+            result = await self._one_pass(
+                pass_input, context, kwargs,
+                trace_id=trace_id, parent_id=parent_id, pol=pol, card=card,
+            )
+            if isinstance(result, Signal):
+                # The gate, outbound: whatever this pass is about to reply.
+                result = await self._gate_reply(
+                    result, trace_id=trace_id, parent_id=parent_id, pol=pol,
+                    allow_reask=repair is not None,
+                )
+            took_ms = int((time.monotonic() - started) * 1000)
+            if gate is not None:
+                # Refusals the Neuron caught and swallowed still happened.
+                await gate.flush(
+                    consumed=result.refusal
+                    if isinstance(result, _Repair) else None,
+                )
+            if isinstance(result, Signal):
+                return self._with_attempts(result, attempts, pol)
+
+            record = result.as_record(attempt + 1, took_ms)
+            attempts.append(record)
+            self._record_repair(trace_id, record)
+
+            out_of_attempts = (
+                repair is None
+                or attempt >= repair.max_attempts
+                or (
+                    result.max_attempts is not None
+                    and attempt >= result.max_attempts
+                )
+            )
+            over_budget = (
+                repair is not None
+                and repair.deadline_s is not None
+                and (time.monotonic() - loop_started) >= repair.deadline_s
+            )
+            if out_of_attempts or over_budget:
+                if over_budget and not out_of_attempts:
+                    # The time budget ran out before the attempts did.
+                    # Recorded as its own category: nothing was retried
+                    # here, the loop gave up, and an auditor must not
+                    # read that as a generator that would not comply.
+                    kind = AuditKind.DEADLINE_ABANDONED
+                    record["kind"] = kind.value
+                    record["domain"] = AUDIT_DOMAIN[kind]
+                else:
+                    kind = result.kind
+                record["outcome"] = AuditOutcome.EXHAUSTED.value
+                await self._emit_audit(
+                    kind, AuditOutcome.EXHAUSTED, result,
+                    attempt=attempt + 1, took_ms=took_ms,
+                    trace_id=trace_id, parent_id=parent_id,
+                )
+                return self._with_attempts(
+                    await self._final_fallback(
+                        result, trace_id=trace_id, parent_id=parent_id,
+                        pol=pol,
+                    ),
+                    attempts, pol,
+                )
+
+            next_input = await self._build_repair_input(
+                pass_input, result, attempt + 1,
+            )
+            if canonical_text(next_input) == canonical_text(pass_input):
+                # Nothing changed, so the next attempt cannot differ.
+                # Stopping is the same rule that keeps a policy refusal
+                # out of transient retry.
+                record["outcome"] = AuditOutcome.UNCORRECTABLE.value
+                await self._emit_audit(
+                    result.kind, AuditOutcome.UNCORRECTABLE, result,
+                    attempt=attempt + 1, took_ms=took_ms,
+                    trace_id=trace_id, parent_id=parent_id,
+                )
+                logger.info(
+                    "Axon %s: repair produced an identical input; not "
+                    "re-asking. Register @axon.repairs, or fold "
+                    "input['repair'] into the prompt in @axon.before_task, "
+                    "so an attempt can actually differ.",
+                    self.neuron_id,
+                )
+                return self._with_attempts(
+                    await self._final_fallback(
+                        result, trace_id=trace_id, parent_id=parent_id,
+                        pol=pol,
+                    ),
+                    attempts, pol,
+                )
+            # Re-asking. The record goes out now, not when the next
+            # attempt finishes, so a hang shows up as a re_asked record
+            # with nothing after it.
+            await self._emit_audit(
+                result.kind, AuditOutcome.RE_ASKED, result,
+                attempt=attempt + 1, took_ms=took_ms,
+                trace_id=trace_id, parent_id=parent_id,
+            )
+            pass_input = next_input
+            attempt += 1
+
+    async def _one_pass(
+        self,
+        input_data: dict[str, Any],
+        context: list[Any],
+        kwargs: dict[str, Any],
+        *,
+        trace_id: str,
+        parent_id: str,
+        pol: dict[str, Any],
+        card: Glia | None,
+    ) -> Signal | _Repair:
+        """One attempt at a TASK: run the Neuron, recognise, act.
+
+        Returns the reply, or a :class:`_Repair` carrying the reason and
+        the reply to send if the loop cannot fix it. The inbound gate on
+        the TASK already ran in the caller, exactly once: the input
+        arrived from outside and no attempt of ours changes what arrived.
+        The outbound gate on the reply runs in the caller too, after this
+        returns, so every reply this pass can produce passes it.
+        """
+        # Correctable tool-call outcomes, filled by _run_tool_call.
+        repairs: list[_Repair] = []
         try:
             if self._before_task_hooks:
                 input_data = await self._apply_before_task(input_data)
@@ -669,7 +1130,35 @@ class Axon(LifecycleHooks):
                 # Decorator-registered recognisers
                 # (@axon.detects_clarification, ...) run after the parser
                 # and may convert output into a marker.
-                raw_output = await self._apply_recognisers(raw_output)
+                raw_output, claimed = await self._apply_recognisers(
+                    raw_output,
+                )
+                if not claimed and self._strict_output and self._judgeable:
+                    _raise_unclaimed(raw_output)
+        except PolicyRefusal as exc:
+            # The gate refused one of the Neuron's own calls (or a reply to
+            # one), and the Neuron let the refusal propagate. It is handed
+            # back here to do what the policy asked.
+            return self._on_call_refusal(
+                exc, trace_id=trace_id, parent_id=parent_id, pol=pol,
+            )
+        except InvalidOutput as exc:
+            # Correctable, not terminal. The fallback is exactly what
+            # this Axon returned before strict mode existed.
+            return _Repair(
+                kind=AuditKind.EVAL_RETRY,
+                problem=str(exc),
+                fallback=agent_output_signal(
+                    trace_id=trace_id,
+                    parent_id=parent_id,
+                    directed=Directed(id=self.neuron_id),
+                    output=(
+                        exc.output if isinstance(exc.output, dict)
+                        else {"value": exc.output}
+                    ),
+                    meta=self._policy_meta(pol),
+                ),
+            )
         except Exception as exc:
             logger.exception("Axon %s: Neuron raised", self.neuron_id)
             return error_signal(
@@ -679,6 +1168,7 @@ class Axon(LifecycleHooks):
                 code="NEURON_EXCEPTION",
                 message=str(exc),
                 recoverable=False,
+                meta=self._policy_meta(pol),
             )
 
         # Native tool call: translate-and-act. With a serving binding the
@@ -686,9 +1176,17 @@ class Axon(LifecycleHooks):
         # carries the observation; with no bindings at all it carries the
         # translated call for the host chain to execute (pure translation).
         if native_calls:
-            return await self._dispatch_native_tool_calls(
+            reply = await self._dispatch_native_tool_calls(
                 native_calls, trace_id=trace_id, parent_id=parent_id,
+                pol=pol, repairs=repairs,
             )
+            if repairs:
+                # A refused or invalid call is the model's to correct, and
+                # the observation it would have received is the fallback.
+                first = repairs[0]
+                first.fallback = reply
+                return first
+            return reply
 
         # Error marker: a recogniser (e.g. MCP ``is_error``) can request an
         # ERROR Signal without raising. Same return-surface as a raised
@@ -701,6 +1199,7 @@ class Axon(LifecycleHooks):
                 code=raw_output.get("code", "NEURON_ERROR"),
                 message=raw_output.get("message", ""),
                 recoverable=bool(raw_output.get("recoverable", False)),
+                meta=self._policy_meta(pol),
             )
 
         if isinstance(raw_output, dict) and raw_output.get("__clarification__"):
@@ -710,6 +1209,7 @@ class Axon(LifecycleHooks):
                 directed=Directed(id=self.neuron_id),
                 question=raw_output.get("question", ""),
                 context=raw_output.get("context"),
+                meta=self._policy_meta(pol),
             )
 
         # Permission marker: same return-and-resume shape as clarification.
@@ -726,6 +1226,7 @@ class Axon(LifecycleHooks):
                 scope=raw_output.get("scope"),
                 reason=raw_output.get("reason"),
                 context=raw_output.get("context"),
+                meta=self._policy_meta(pol),
             )
 
         return agent_output_signal(
@@ -733,7 +1234,84 @@ class Axon(LifecycleHooks):
             parent_id=parent_id,
             directed=Directed(id=self.neuron_id),
             output=raw_output if isinstance(raw_output, dict) else {"value": raw_output},
+            meta=self._policy_meta(pol),
         )
+
+    # ------------------------------------------------------------------
+    # Policy plumbing (Glia)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _policy_meta(pol: dict[str, Any]) -> dict[str, Any] | None:
+        """``meta`` carrying the thin policy record, or None when there is
+        nothing to say. Thin by design: verdict, policy id, policy
+        version, direction, signal type, component and a hash. The matched content
+        stays in the component's local journal, or the audit record leaks
+        exactly what the policy was protecting."""
+        return {META_KEY: dict(pol)} if pol else None
+
+    def _policy_refusal(
+        self,
+        oc: PolicyOutcome,
+        *,
+        trace_id: str,
+        parent_id: str,
+        pol: dict[str, Any],
+    ) -> Signal:
+        """The reply a refused step would have produced anyway, with
+        ``error`` set and ``meta.glia`` attached.
+
+        Never an ERROR. An ERROR closes the Pathway unconditionally and,
+        when flagged recoverable, is re-dispatched by ``default_retry_on``
+        onto a fresh trace - which STOPs the abandoned attempt and can
+        saga-roll-back its Engram writes. A policy deny as a recoverable
+        ERROR means three guaranteed denials, three STOPs and three
+        rollbacks (GLIA_DESIGN section 12.1).
+        """
+        return mark_exempt(agent_output_signal(
+            trace_id=trace_id,
+            parent_id=parent_id,
+            directed=Directed(id=self.neuron_id),
+            output={
+                "error": oc.reason or "refused by policy",
+                "refused_by": "policy",
+                "scope": oc.scope,
+            },
+            meta=self._policy_meta(pol),
+        ))
+
+    def _policy_escalation(
+        self,
+        oc: PolicyOutcome,
+        *,
+        trace_id: str,
+        parent_id: str,
+        pol: dict[str, Any],
+        action: str,
+        context: dict[str, Any] | None = None,
+    ) -> Signal:
+        """PERMISSION instead of running.
+
+        ``escalate`` needs no new machinery: ``permission_signal`` and
+        ``respond_to_permission`` already carry a verdict back as a new
+        TASK parented to the PERMISSION, on the original trace. Until now
+        only a cooperative Neuron could open that channel by returning a
+        ``__permission__`` marker; a card lets the runtime open it.
+        """
+        ctx: dict[str, Any] = {"scope": oc.scope}
+        if oc.declared.policy_id:
+            ctx["policy_id"] = oc.declared.policy_id
+        if context:
+            ctx.update(context)
+        return mark_exempt(permission_signal(
+            trace_id=trace_id,
+            parent_id=parent_id,
+            directed=Directed(id=self.neuron_id),
+            action=action,
+            reason=oc.reason,
+            context=ctx,
+            meta=self._policy_meta(pol),
+        ))
 
 
     # ------------------------------------------------------------------
@@ -884,6 +1462,8 @@ class Axon(LifecycleHooks):
         *,
         trace_id: str,
         parent_id: str,
+        pol: dict[str, Any] | None = None,
+        repairs: list[_Repair] | None = None,
     ) -> Signal:
         """Act on the recognised tool calls and wrap the observation(s).
 
@@ -900,41 +1480,51 @@ class Axon(LifecycleHooks):
         the output payload for the Neuron/host to react to - it never
         terminates the TASK.
         """
-        if self._parallel_tools:
-            # Sequential on purpose despite the name: the provider emits
-            # these as a batch, but they are still ORDERED, and tools
-            # have side effects (a write the next call reads back).
-            # Running them in reply order is the only interleaving the
-            # model can reason about.
-            observations = [
-                await self._run_tool_call(
-                    c, trace_id=trace_id, parent_id=parent_id,
-                )
-                for c in calls
-            ]
-            out = dict(observations[0])
-            if len(observations) > 1:
-                out["calls"] = observations
-        else:
-            out = await self._run_tool_call(
-                calls[0], trace_id=trace_id, parent_id=parent_id,
-            )
-            if len(calls) > 1:
-                out["dropped_calls"] = [
-                    {"tool": c["tool"], "args": c.get("args") or {},
-                     "call_id": c.get("call_id")}
-                    for c in calls[1:]
+        pol = pol if pol is not None else {}
+        try:
+            if self._parallel_tools:
+                # Sequential on purpose despite the name: the provider
+                # emits these as a batch, but they are still ORDERED, and
+                # tools have side effects (a write the next call reads
+                # back). Running them in reply order is the only
+                # interleaving the model can reason about.
+                observations = [
+                    await self._run_tool_call(
+                        c, trace_id=trace_id, parent_id=parent_id, pol=pol,
+                        repairs=repairs,
+                    )
+                    for c in calls
                 ]
-                logger.info(
-                    "Axon %s: %d tool call(s) not run (parallel_tools=False): %s",
-                    self.neuron_id, len(calls) - 1,
-                    [c["tool"] for c in calls[1:]],
+                out = dict(observations[0])
+                if len(observations) > 1:
+                    out["calls"] = observations
+            else:
+                out = await self._run_tool_call(
+                    calls[0], trace_id=trace_id, parent_id=parent_id, pol=pol,
+                    repairs=repairs,
                 )
+        except _ToolCallEscalation as esc:
+            return self._policy_escalation(
+                esc.outcome, trace_id=trace_id, parent_id=parent_id, pol=pol,
+                action=f"call tool {esc.tool!r} from {self.neuron_id!r}",
+            )
+        if not self._parallel_tools and len(calls) > 1:
+            out["dropped_calls"] = [
+                {"tool": c["tool"], "args": c.get("args") or {},
+                 "call_id": c.get("call_id")}
+                for c in calls[1:]
+            ]
+            logger.info(
+                "Axon %s: %d tool call(s) not run (parallel_tools=False): %s",
+                self.neuron_id, len(calls) - 1,
+                [c["tool"] for c in calls[1:]],
+            )
         return agent_output_signal(
             trace_id=trace_id,
             parent_id=parent_id,
             directed=Directed(id=self.neuron_id),
             output=out,
+            meta=self._policy_meta(pol),
         )
 
     async def _run_tool_call(
@@ -943,6 +1533,8 @@ class Axon(LifecycleHooks):
         *,
         trace_id: str,
         parent_id: str,
+        pol: dict[str, Any] | None = None,
+        repairs: list[_Repair] | None = None,
     ) -> dict[str, Any]:
         """Resolve, validate and dispatch ONE call; return its observation.
 
@@ -983,9 +1575,17 @@ class Axon(LifecycleHooks):
                     "Axon %s: rejected call to %r: %s",
                     self.neuron_id, tool, problem,
                 )
+                if repairs is not None:
+                    repairs.append(_Repair(
+                        kind=AuditKind.TOOL_RETRY,
+                        problem=problem,
+                    ))
                 return out
 
         try:
+            # The gate, both ways, runs inside the client: the TOOL_CALL
+            # outbound before it is published, the TOOL_RESULT inbound
+            # before this reads it.
             outcome = await self._effector_client().call(
                 binding=binding,
                 tool=tool,
@@ -1000,6 +1600,22 @@ class Axon(LifecycleHooks):
                 parent_id=parent_id,
                 neuron=self.neuron_id,
             )
+        except PolicyRefusal as exc:
+            if pol is not None and exc.record:
+                pol.update(exc.record)
+            if exc.decision is Decision.ESCALATE:
+                raise _ToolCallEscalation(exc.outcome, tool) from None
+            # The existing validate_args shape, so every host chain reads
+            # a refusal exactly as it reads a rejected argument, and the
+            # model reads it where it reads every tool observation.
+            out["error"] = exc.reason
+            out["refused_by"] = "policy"
+            logger.info(
+                "Axon %s: policy refused %s for tool %r",
+                self.neuron_id, exc.outcome.scope, tool,
+            )
+            if exc.retry is Retry.REASK and repairs is not None:
+                repairs.append(_Repair.from_refusal(exc))
         except EffectorError as exc:
             out["error"] = f"{type(exc).__name__}: {exc}"
         except Exception as exc:
@@ -1014,6 +1630,422 @@ class Axon(LifecycleHooks):
             else:
                 out["result"] = outcome.result
         return out
+
+    @property
+    def glia(self) -> Glia | None:
+        """The mounted policy card, if any. None is the default and means
+        this Axon's gate reads nothing."""
+        return self._glia
+
+    # ------------------------------------------------------------------
+    # Correction repair
+    # ------------------------------------------------------------------
+
+    @property
+    def repair(self) -> RepairPolicy | None:
+        """The effective correction-repair policy, or None for no loop.
+
+        An explicit ``repair=`` wins; otherwise a mounted card's. With
+        neither, the loop does not exist and this Axon behaves exactly as
+        it did before it was written.
+        """
+        if self._repair is not None:
+            return self._repair
+        if self._glia is not None and self._glia.repair.max_attempts > 0:
+            return self._glia.repair
+        return None
+
+    @property
+    def _judgeable(self) -> bool:
+        """Whether anything could have claimed an output.
+
+        With no recognisers, no parser and no tool dialect there is
+        nothing that *should* have matched, so ``strict_output`` has no
+        opinion and stays silent rather than rejecting every plain
+        answer.
+        """
+        return bool(
+            self._output_parser is not None
+            or self._tools_enabled
+            or any(self._recognisers.values())
+        )
+
+    def repairs(self, fn: Callable[..., Any]) -> Callable[..., Any]:
+        """Register the builder for the next attempt's input.
+
+        ``fn(input, problem)`` returns the input to re-ask with, plus
+        ``attempt`` / ``kind`` / ``axon`` if declared as keyword
+        parameters (``kind`` is the audit category, e.g. ``GUARD_RETRY``).
+        Sync or async; handlers run in registration order and the first
+        non-None return wins.
+
+        WITHOUT one of these, the default builder merges a ``repair`` key
+        into the input, which reaches the Neuron only if something
+        downstream reads it - a ``@axon.before_task`` prompt builder, or
+        a Neuron that inspects its own input. If nothing does, the input
+        is unchanged in every way the provider can see, the loop detects
+        that and stops on the first attempt rather than spending model
+        calls on a request that cannot differ.
+        """
+        self._repair_builders.append(fn)
+        return fn
+
+    async def _build_repair_input(
+        self, input_data: dict[str, Any], req: _Repair, attempt: int,
+    ) -> dict[str, Any]:
+        for fn in self._repair_builders:
+            kwargs: dict[str, Any] = {}
+            try:
+                sig = inspect.signature(fn)
+                names = set(sig.parameters)
+                if any(
+                    p.kind is inspect.Parameter.VAR_KEYWORD
+                    for p in sig.parameters.values()
+                ):
+                    names |= {"attempt", "kind", "axon"}
+            except (ValueError, TypeError):
+                names = set()
+            if "attempt" in names:
+                kwargs["attempt"] = attempt
+            if "kind" in names:
+                kwargs["kind"] = req.kind.value
+            if "axon" in names:
+                kwargs["axon"] = self
+            try:
+                built = fn(input_data, req.problem, **kwargs)
+                if inspect.isawaitable(built):
+                    built = await built
+            except Exception:
+                logger.exception(
+                    "Axon %s: @repairs builder raised; not re-asking",
+                    self.neuron_id,
+                )
+                return input_data
+            if isinstance(built, dict):
+                return built
+            if built is not None:
+                logger.error(
+                    "Axon %s: @repairs builder returned %s; a builder "
+                    "returns a dict or None",
+                    self.neuron_id, type(built).__name__,
+                )
+                return input_data
+        return {
+            **input_data,
+            "repair": {
+                "attempt": attempt,
+                "kind": req.kind.value,
+                "problem": req.problem,
+            },
+        }
+
+    def _repair_count(self, trace_id: str) -> int:
+        return len(self._repair_counts.get(trace_id, ()))
+
+    def forget_trace(self, trace_id: str) -> None:
+        """Drop the repair records for a finished trace. Called by the
+        hosting Dendrite when it acks a STOP."""
+        self._repair_counts.pop(trace_id, None)
+
+    def repair_attempts(self, trace_id: str) -> list[dict[str, Any]]:
+        """Repair attempts recorded on ``trace_id`` so far.
+
+        Public because a STOP arriving mid-repair has to be able to put
+        what happened onto the STOPPED ack: the repair runs before
+        anything is published, so otherwise the cases most worth
+        auditing emit nothing (GLIA_DESIGN section 9.2).
+        """
+        return list(self._repair_counts.get(trace_id, ()))
+
+    def _record_repair(self, trace_id: str, record: dict[str, Any]) -> None:
+        if not trace_id:
+            return
+        bucket = self._repair_counts.get(trace_id)
+        if bucket is None:
+            if len(self._repair_counts) >= _MAX_REPAIR_TRACES:
+                self._repair_counts.pop(next(iter(self._repair_counts)), None)
+            bucket = []
+            self._repair_counts[trace_id] = bucket
+        bucket.append(record)
+
+    def _repair_fallback(
+        self,
+        req: _Repair,
+        *,
+        trace_id: str,
+        parent_id: str,
+        pol: dict[str, Any],
+    ) -> Signal:
+        if req.fallback is not None:
+            return req.fallback
+        return agent_output_signal(  # pragma: no cover - belt and braces
+            trace_id=trace_id,
+            parent_id=parent_id,
+            directed=Directed(id=self.neuron_id),
+            output={"error": req.problem},
+            meta=self._policy_meta(pol),
+        )
+
+    def _repair_exhausted_error(
+        self,
+        *,
+        trace_id: str,
+        parent_id: str,
+        pol: dict[str, Any],
+        limit: int,
+    ) -> Signal:
+        """The one legitimate ERROR in this design.
+
+        Past the limit the loop is broken, not the request, so this is
+        not a refusal wearing an ERROR's clothes. It is flagged
+        ``recoverable=False`` deliberately: ``default_retry_on`` retries
+        an ERROR only when it is recoverable, so this one is not
+        re-dispatched onto a fresh trace either (GLIA_DESIGN section
+        8.4).
+        """
+        seen = self.repair_attempts(trace_id)
+        repair = self.repair
+        cap = repair.max_recorded if repair is not None else 8
+        meta = {META_KEY: {
+            **pol,
+            F_ATTEMPT: len(seen),
+            F_ATTEMPTS: seen[-cap:] if cap > 0 else [],
+        }}
+        return mark_exempt(error_signal(
+            trace_id=trace_id,
+            parent_id=parent_id,
+            directed=Directed(id=self.neuron_id),
+            code="REPAIR_EXHAUSTED",
+            message=(
+                f"repair limit of {limit} reached on this trace; the "
+                f"correction loop is not converging"
+            ),
+            recoverable=False,
+            meta=meta,
+        ))
+
+    def _with_attempts(
+        self,
+        reply: Signal,
+        attempts: list[dict[str, Any]],
+        pol: dict[str, Any],
+    ) -> Signal:
+        """Put the attempt summary on the reply.
+
+        The repair runs before anything is published, so an observer
+        cannot see it unless the Axon puts it on the wire. The DEFAULT is
+        this summary: attempt number, trigger, outcome and duration per
+        entry, capped - the policy id, never the model's rejected output.
+        """
+        if not attempts:
+            return reply
+        repair = self.repair
+        cap = repair.max_recorded if repair is not None else 8
+        record = dict(reply.meta.get(META_KEY) or pol)
+        record[F_ATTEMPTS] = attempts[-cap:] if cap > 0 else []
+        record[F_ATTEMPT] = len(attempts)
+        reply.meta[META_KEY] = record
+        return reply
+
+    async def _emit_audit(
+        self,
+        kind: AuditKind,
+        outcome: AuditOutcome,
+        req: _Repair,
+        *,
+        attempt: int,
+        took_ms: int,
+        trace_id: str,
+        parent_id: str,
+    ) -> None:
+        """One AUDIT record for one loop event.
+
+        Emitted AT the event, not at the next attempt's start, so the
+        number of records equals the number of events: a refusal that is
+        never re-asked (``max_attempts=0``) still produces one, and so
+        does the final refusal that exhausts the loop. That is the whole
+        basis for reading the absence of any AUDIT on a trace as "nothing
+        fired".
+
+        A hang is still visible, because a ``re_asked`` record with
+        nothing after it means the attempt it announced never finished.
+
+        AUDIT is in SYNAPSE_TYPES and PATHWAY_TYPES but in none of the
+        terminal, wait or scope-terminal sets, so it resolves no
+        ``wait()``, closes no Pathway, and a terminal-scoped Pathway
+        drops it. It also counts as nothing against a trace limit.
+        """
+        await publish_audit(
+            self._dendrite,
+            kind=kind,
+            outcome=outcome,
+            trace_id=trace_id,
+            parent_id=parent_id,
+            component=self.neuron_id,
+            attempt=attempt,
+            card=self._glia,
+            direction=req.direction,
+            signal_type=req.signal_type,
+            policy_id=req.policy_id,
+            reason=req.problem,
+            digest=req.digest,
+            took_ms=took_ms,
+        )
+
+    async def _emit_guard_audit(
+        self,
+        oc: PolicyOutcome,
+        card: Glia | None,
+        *,
+        trace_id: str,
+        parent_id: str,
+    ) -> None:
+        """One GUARDED record for a gate event the loop does not own.
+
+        A refusal with no re-ask, a redaction and an escalation are not
+        re-asked anywhere, so their records go out here rather than from
+        the loop. A pass emits nothing at all, which is the point.
+
+        In ``audit`` the outcome is ``would_block``: the verdict was
+        recorded and nothing was blocked, and the record must not claim
+        an action that did not happen.
+        """
+        if not oc.declared.shapes:
+            return
+        await audit_outcome(
+            self._dendrite, oc,
+            kind=AuditKind.GUARDED,
+            outcome=outcome_for(oc.declared.decision.value, applied=oc.applied),
+            trace_id=trace_id,
+            parent_id=parent_id,
+            component=self.neuron_id,
+            card=card,
+        )
+
+    # ------------------------------------------------------------------
+    # The gate, outbound, and refusals handed back by the Neuron
+    # ------------------------------------------------------------------
+
+    async def _gate_reply(
+        self,
+        reply: Signal,
+        *,
+        trace_id: str,
+        parent_id: str,
+        pol: dict[str, Any],
+        allow_reask: bool,
+    ) -> Signal | _Repair:
+        """Read a reply leaving this Axon through the card's gate.
+
+        Every reply a pass can produce comes through here: AGENT_OUTPUT,
+        CLARIFICATION, PERMISSION and ERROR, and the AGENT_OUTPUT carrying
+        a tool observation. A deny whose policy asks to ``reask`` feeds the
+        repair loop, which writes the AUDIT record because only it knows
+        whether the refusal was re-asked or final; anything else is
+        recorded here and answered now.
+        """
+        card = self._glia
+        if card is None or is_exempt(reply):
+            return reply
+        oc = await card.check(
+            reply, direction=Direction.OUTBOUND, component=self.neuron_id,
+        )
+        if oc is None:
+            return reply
+        if oc.record:
+            pol.update(oc.record)
+        if not oc.shaped:
+            await self._emit_guard_audit(
+                oc, card, trace_id=trace_id, parent_id=parent_id,
+            )
+            return with_glia_record(reply, oc.record)
+        if oc.redacted and isinstance(oc.replacement, dict):
+            await self._emit_guard_audit(
+                oc, card, trace_id=trace_id, parent_id=parent_id,
+            )
+            return with_glia_record(
+                with_payload(reply, oc.replacement), oc.record,
+            )
+        if oc.escalated:
+            await self._emit_guard_audit(
+                oc, card, trace_id=trace_id, parent_id=parent_id,
+            )
+            # PERMISSION carrying the pending output, so the decider sees
+            # what it is deciding about.
+            return self._policy_escalation(
+                oc, trace_id=trace_id, parent_id=parent_id, pol=pol,
+                action=f"emit the output of {self.neuron_id!r}",
+                context={"pending_output": _jsonable(reply.payload)},
+            )
+        refusal = self._policy_refusal(
+            oc, trace_id=trace_id, parent_id=parent_id, pol=pol,
+        )
+        retry = allowed_retry(
+            oc.retry, Direction.OUTBOUND, reply.type, can_reask=allow_reask,
+        )
+        if retry is Retry.REASK:
+            return _Repair.from_refusal(PolicyRefusal(oc), fallback=refusal)
+        await self._emit_guard_audit(
+            oc, card, trace_id=trace_id, parent_id=parent_id,
+        )
+        return refusal
+
+    def _on_call_refusal(
+        self,
+        exc: PolicyRefusal,
+        *,
+        trace_id: str,
+        parent_id: str,
+        pol: dict[str, Any],
+    ) -> Signal | _Repair:
+        """A refusal of one of the Neuron's own calls, handed back."""
+        if exc.record:
+            pol.update(exc.record)
+        oc = exc.outcome
+        if exc.decision is Decision.ESCALATE:
+            return self._policy_escalation(
+                oc, trace_id=trace_id, parent_id=parent_id, pol=pol,
+                action=(
+                    f"let {self.neuron_id!r} send "
+                    f"{oc.signal_type.value}"
+                ),
+            )
+        refusal = self._policy_refusal(
+            oc, trace_id=trace_id, parent_id=parent_id, pol=pol,
+        )
+        if exc.retry is Retry.REASK:
+            return _Repair.from_refusal(exc, fallback=refusal)
+        return refusal
+
+    async def _final_fallback(
+        self,
+        req: _Repair,
+        *,
+        trace_id: str,
+        parent_id: str,
+        pol: dict[str, Any],
+    ) -> Signal:
+        """The reply sent when the loop cannot fix it, through the gate.
+
+        A policy refusal is gate-generated and passes unread. Anything
+        else (an unclaimed output, a tool observation) is the Neuron's
+        own and is read like any other reply, with no re-ask left.
+        """
+        reply = self._repair_fallback(
+            req, trace_id=trace_id, parent_id=parent_id, pol=pol,
+        )
+        gated = await self._gate_reply(
+            reply, trace_id=trace_id, parent_id=parent_id, pol=pol,
+            allow_reask=False,
+        )
+        assert isinstance(gated, Signal)
+        return gated
+
+    @property
+    def strict_output(self) -> bool:
+        """Whether an unclaimed output raises ``InvalidOutput`` instead of
+        passing through as the answer."""
+        return self._strict_output
 
     @property
     def effector_bindings(self) -> dict[str, EffectorBinding]:

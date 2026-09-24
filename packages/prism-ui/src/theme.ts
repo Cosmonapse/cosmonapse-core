@@ -66,6 +66,11 @@ type Palette = {
   /** Receptor - the listening edge. The only free hue left once neuron and
    *  engram took violet, effector amber and synapse cyan. */
   receptor: string;
+  /** Glia - the gold layer on any component carrying a policy card, and the
+   *  colour of the AUDIT records those cards emit. Metallic gold rather than
+   *  warn yellow or effector amber, so a carded Effector still reads as two
+   *  things: an amber triangle inside a gold layer. */
+  glia: string;
   synapse: string;
   scrollThumb: string;
   scrollThumbHover: string;
@@ -84,6 +89,7 @@ type Palette = {
   engramRgb: string;
   effectorRgb: string;
   receptorRgb: string;
+  gliaRgb: string;
   dangerRgb: string;
 };
 
@@ -122,6 +128,7 @@ const DARK: Palette = {
   effector: "#f59e0b",
   neuron: "#8b5cf6",
   receptor: "#a3e635",
+  glia: "#d4af37",
   synapse: "#22d3ee",
   scrollThumb: "#1e2433",
   scrollThumbHover: "#2a3146",
@@ -136,6 +143,7 @@ const DARK: Palette = {
   engramRgb: "167,139,250",
   effectorRgb: "245,158,11",
   receptorRgb: "163,230,53",
+  gliaRgb: "212,175,55",
   dangerRgb: "248,113,113",
 };
 
@@ -183,6 +191,7 @@ const LIGHT: Palette = {
   effector: "#b45309",
   neuron: "#6d28d9",
   receptor: "#4d7c0f",
+  glia: "#a67c00",
   synapse: "#0e7490",
   scrollThumb: "#cbd5e1",
   scrollThumbHover: "#94a3b8",
@@ -197,6 +206,7 @@ const LIGHT: Palette = {
   engramRgb: "109,40,217",
   effectorRgb: "180,83,9",
   receptorRgb: "77,124,15",
+  gliaRgb: "166,124,0",
   dangerRgb: "192,38,38",
 };
 
@@ -218,7 +228,9 @@ const DARK_TYPE_COLOR: Record<string, string> = {
   BID: "#c084fc",
   TASK_AWARDED: "#a855f7",
   TASK_DECLINED: "#7c3aed",
-  THOUGHT_DELTA: "#64748b",
+  // Glia gold, the same hue as the layer on a carded component, so an
+  // audit particle visibly comes from the gold-layered node.
+  AUDIT: "#d4af37",
   PLAN: "#94a3b8",
   // Effector (tools act) - kept in sync with "effectorColor" in
   // PrismCanvas.tsx, the same way RECALL/RECALLED match "engramColor".
@@ -243,7 +255,7 @@ const DARK_TYPE_COLOR: Record<string, string> = {
 
 /**
  * Same hue for every type, darkened until it holds up on white. The two
- * deliberately quiet types (HEARTBEAT, THOUGHT_DELTA) stay low-contrast in
+ * deliberately quiet types (HEARTBEAT) stay low-contrast in
  * both themes  -  they are background noise by design.
  */
 const LIGHT_TYPE_COLOR: Record<string, string> = {
@@ -259,7 +271,7 @@ const LIGHT_TYPE_COLOR: Record<string, string> = {
   BID: "#9333ea",
   TASK_AWARDED: "#7e22ce",
   TASK_DECLINED: "#5b21b6",
-  THOUGHT_DELTA: "#a3b1c2",
+  AUDIT: "#a67c00",
   PLAN: "#64748b",
   TOOL_CALL: "#b45309",
   TOOL_RESULT: "#b45309",

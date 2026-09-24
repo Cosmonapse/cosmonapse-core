@@ -61,7 +61,19 @@ from typing import TYPE_CHECKING, Any
 
 from cosmonapse._hooks import LifecycleHooks
 from cosmonapse.effector.schema import ToolSchema
-from cosmonapse.envelope import SignalType
+from cosmonapse.envelope import Directed, Signal, SignalType, tool_result_signal
+from cosmonapse.glia import (
+    F_ATTEMPT,
+    F_ATTEMPTS,
+    META_KEY,
+    AuditKind,
+    AuditOutcome,
+    Glia,
+    PolicyOutcome,
+    publish_audit,
+    run_with_transient_retry,
+)
+from cosmonapse.glia.base import serve_gated
 
 if TYPE_CHECKING:
     from cosmonapse.dendrite import Dendrite
@@ -301,6 +313,18 @@ class Effector(ABC):
     # ``Axon.dendrite`` and ``Engram._dendrite`` / ``Engram.dendrite``.
     _dendrite: Dendrite | None = None
 
+    # The Glia card, or None. A CLASS-LEVEL default because this ABC has
+    # no ``__init__`` - ``Effector.serve(glia=...)`` and
+    # ``Dendrite.attach_effector(..., glia=...)`` set it per instance,
+    # and every hand-rolled subclass inherits the None without changing a
+    # line. ``handle`` goes straight to the backend when it is None.
+    _glia: Glia | None = None
+
+    @property
+    def glia(self) -> Glia | None:
+        """The mounted policy card, if any."""
+        return self._glia
+
     @property
     def dendrite(self) -> Dendrite | None:
         """The hosting Dendrite, once attached - see ``_dendrite`` above."""
@@ -366,6 +390,148 @@ class Effector(ABC):
         Dendrite maps a raised exception onto TOOL_RESULT ``error``
         anyway, so the parent TASK is never terminated by a tool."""
 
+    async def handle(self, signal: Signal) -> Signal | None:
+        """Service one TOOL_CALL and return the TOOL_RESULT to publish.
+
+        None when this Effector does not serve the tool, so the call may
+        be answered by another host. The Dendrite routes and publishes;
+        everything between is here, which is what lets the card's gate
+        read the whole signal both ways: the TOOL_CALL arriving and the
+        TOOL_RESULT leaving.
+
+        Concrete on the ABC, because ``invoke`` is an ``@abstractmethod``
+        and the gate therefore cannot be wrapped inside it. With no card
+        this is ``invoke`` plus the envelope, so a hand-rolled subclass
+        needs no changes.
+
+        The Effector refuses for itself whatever the caller claimed to
+        be, which is what makes it hold against a prompt-injected or buggy
+        Neuron reaching ``axon.dendrite``. Every failure answers
+        TOOL_RESULT with ``error``, never an ERROR signal, so a tool never
+        terminates the parent TASK.
+        """
+        if not await self.can_serve(signal.payload.get("tool", "")):
+            return None
+        return await serve_gated(
+            self._glia, signal,
+            component=self.effector_id,
+            dendrite=self._dendrite,
+            run=self._service,
+            refuse=self._refusal,
+        )
+
+    def _attribution(self) -> Directed:
+        # Attributed to the Effector that answered, not the host
+        # Dendrite, so observers (Prism) classify it correctly.
+        return Directed(id=self.effector_id, type=self.effector_kind)
+
+    def _refusal(self, request: Signal, oc: PolicyOutcome) -> Signal:
+        return tool_result_signal(
+            trace_id=request.trace_id,
+            parent_id=request.id,
+            tool=request.payload.get("tool", ""),
+            error=oc.reason or "refused by policy",
+            call_id=request.payload.get("call_id"),
+            directed=self._attribution(),
+        )
+
+    async def _service(self, request: Signal) -> Signal:
+        """Run the call, with transient retry when the card asks for it,
+        and wrap the outcome. Never raises."""
+        tool = request.payload.get("tool", "")
+        args = request.payload.get("args") or {}
+        call_id = request.payload.get("call_id")
+        deadline_ms = request.payload.get("deadline_ms")
+
+        def _call() -> Any:
+            return self.invoke(
+                tool, args, call_id=call_id, deadline_ms=deadline_ms,
+                trace_id=request.trace_id,
+            )
+
+        record: dict[str, Any] | None = None
+        repair = None if self._glia is None else self._glia.repair
+        try:
+            if repair is None or repair.transient_attempts <= 0:
+                outcome = await _call()
+            else:
+                # Transient repair: the input is identical and the hope is
+                # that the world changed. A policy refusal never comes
+                # here; it is the gate's business, outside this call.
+                try:
+                    outcome, tries = await run_with_transient_retry(
+                        _call, repair,
+                        label=f"Effector {self.effector_id}.invoke",
+                    )
+                except Exception:
+                    await self._emit_transient_audit(
+                        AuditOutcome.EXHAUSTED, repair.transient_attempts + 1,
+                        trace_id=request.trace_id, parent_id=request.id,
+                    )
+                    raise
+                if tries:
+                    record = {F_ATTEMPTS: tries, F_ATTEMPT: len(tries)}
+                    await self._emit_transient_audit(
+                        AuditOutcome.RECOVERED, len(tries),
+                        trace_id=request.trace_id, parent_id=request.id,
+                        took_ms=outcome.took_ms,
+                    )
+        except Exception as exc:
+            logger.exception(
+                "Effector %s.invoke raised: %s", self.effector_id, exc,
+            )
+            return tool_result_signal(
+                trace_id=request.trace_id,
+                parent_id=request.id,
+                tool=tool,
+                error=f"effector_exception: {exc}",
+                call_id=call_id,
+                directed=self._attribution(),
+            )
+        return tool_result_signal(
+            trace_id=request.trace_id,
+            parent_id=request.id,
+            tool=outcome.tool or tool,
+            result=outcome.result,
+            error=outcome.error,
+            call_id=outcome.call_id or call_id,
+            directed=self._attribution(),
+            meta=None if record is None else {META_KEY: record},
+        )
+
+    async def _emit_transient_audit(
+        self,
+        outcome: AuditOutcome,
+        attempt: int,
+        *,
+        trace_id: str | None,
+        parent_id: str | None,
+        took_ms: int | None = None,
+    ) -> None:
+        """One TRANSIENT_RETRY record: the reliability audit.
+
+        Distinct from GUARD_RETRY on purpose. A transient retry says the
+        backend faulted and an identical request was tried again; a guard
+        retry says a policy refused. Rolling them together would make a
+        flaky connection read as a compliance event.
+        """
+        if not trace_id or not parent_id:
+            # No originating signal id to parent the record to. Better no
+            # record than one hung off a fabricated parent, which would
+            # put a phantom edge in an observer's lineage graph.
+            return
+        await publish_audit(
+            self._dendrite,
+            kind=AuditKind.TRANSIENT_RETRY,
+            outcome=outcome,
+            trace_id=trace_id,
+            parent_id=parent_id,
+            component=self.effector_id,
+            attempt=attempt,
+            card=self._glia,
+            took_ms=took_ms,
+        )
+
     # ------------------------------------------------------------------
     # Protocol-hook Effectors
     # ------------------------------------------------------------------
@@ -377,6 +543,7 @@ class Effector(ABC):
         effector_id: str,
         effector_kind: str = "effector",
         version: str | None = None,
+        glia: Glia | None = None,
     ) -> _ServedEffector:
         """Build an Effector from the one protocol hook that matters.
 
@@ -409,6 +576,7 @@ class Effector(ABC):
             effector_id=effector_id,
             effector_kind=effector_kind,
             version=version,
+            glia=glia,
         )
 
 
@@ -429,12 +597,14 @@ class _ServedEffector(Effector, LifecycleHooks):
         effector_id: str,
         effector_kind: str,
         version: str | None,
+        glia: Glia | None = None,
     ) -> None:
         LifecycleHooks.__init__(self)
         self.effector_id = effector_id
         self.effector_kind = effector_kind
         self.capabilities = []
         self.version = version
+        self._glia = glia
         # TOOL_CALL handlers, tried in registration order.
         self._call_handlers: list[tuple[Callable[..., Any], frozenset[str]]] = []
 

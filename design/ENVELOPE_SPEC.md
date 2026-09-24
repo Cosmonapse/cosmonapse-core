@@ -76,7 +76,7 @@ The agent-side tool. Its complete job:
 6. Never touch the Synapse  -  it hands the Signal back to the Dendrite to publish.
 
 The Axon's permitted output set (`AXON_TYPES`) is exactly:
-`AGENT_OUTPUT`, `CLARIFICATION`, `PERMISSION`, `ERROR`, plus the three participant-lifecycle types `REGISTER`, `DEREGISTER`, `HEARTBEAT`. The lifecycle types describe the Axon's *own participant identity* (id, kind, capabilities); the Axon owns that metadata but the **Dendrite is what actually publishes them onto the Synapse** (§7.6). The Axon never produces workflow or routing envelopes (`TASK`, `FINAL`, `THOUGHT_DELTA`, `TASK_OFFER`, …).
+`AGENT_OUTPUT`, `CLARIFICATION`, `PERMISSION`, `ERROR`, plus the three participant-lifecycle types `REGISTER`, `DEREGISTER`, `HEARTBEAT`. The lifecycle types describe the Axon's *own participant identity* (id, kind, capabilities); the Axon owns that metadata but the **Dendrite is what actually publishes them onto the Synapse** (§7.6). The Axon never produces workflow or routing envelopes (`TASK`, `FINAL`, `AUDIT`, `TASK_OFFER`, …) - an Axon's repair loop *triggers* an `AUDIT` but the hosting Dendrite publishes it, exactly as it does `REGISTER`.
 
 ### 3.3 Dendrite
 
@@ -103,10 +103,11 @@ All envelopes are serialised as **UTF-8 encoded JSON objects**. Compact (no unne
   "id":        "evt_01JVBCDEF1234567890ABCDEF",
   "trace_id":  "trc_01JVBCDEF0000000000000000",
   "parent_id": "evt_01JVBCDEF0000000000000001",
-  "type":      "THOUGHT_DELTA",
+  "type":      "AUDIT",
   "directed":  { "id": "claude-debug", "type": null, "capabilities": [] },
   "ts":        "2026-05-16T14:22:01.391Z",
-  "payload":   { "delta": "reading the traceback...", "seq": 1 },
+  "payload":   { "kind": "GUARD_RETRY", "domain": "security",
+                 "outcome": "re_asked", "attempt": 1 },
   "meta":      { "model": "claude-sonnet-4-6", "tokens": { "out": 12 } }
 }
 ```
@@ -373,19 +374,56 @@ Producers emit this for losing bidders after picking a winner (informational); w
 
 All cognition events are produced by an orchestrating **Dendrite**. They are optional. A Dendrite that simply maps TASK -> FINAL with no intermediate events is fully compliant.
 
-#### `THOUGHT_DELTA`
+#### `AUDIT`
+
+Added after 1.0. An `AUDIT` is a **record, not an instruction**: nothing
+waits on it, nothing routes on it, and dropping one changes no
+behaviour. It exists so a compliance consumer can subscribe to
+`cosmonapse.<ns>.AUDIT` and nothing else, instead of decoding every
+signal in the namespace to filter for `meta.glia`. The authoritative
+verdict still rides the terminal reply's `meta.glia`; this is the
+addressable copy.
+
+Emitted at the event, one per event, so the absence of any `AUDIT` on a
+trace means nothing fired rather than nothing was recorded. It counts as
+nothing against a trace limit, which is what keeps a limit from
+suppressing its own audit trail.
 
 ```json
 {
-  "type": "THOUGHT_DELTA",
-  "payload": { "delta": "the NPE comes from a null id...", "seq": 3 }
+  "type": "AUDIT",
+  "payload": {
+    "kind": "GUARD_RETRY", "domain": "security", "outcome": "re_asked",
+    "attempt": 1, "component": "triage",
+    "direction": "outbound", "signal": "AGENT_OUTPUT",
+    "policy_id": "no-policy-number", "policy_version": "4",
+    "card_id": "claims-2026-09", "reason": "the draft must not quote a policy number",
+    "hash": "f990b5f06322a274", "took_ms": 812
+  }
 }
 ```
 
-| Payload field | Required | Description |
+| Payload field    | Required | Description |
 |---|---|---|
-| `delta`       | yes      | A chunk of streaming reasoning text. |
-| `seq`         | no       | Monotonic chunk sequence number within the stream. |
+| `kind`           | yes      | `GUARD_RETRY` \| `GUARDED` \| `EVAL_RETRY` \| `TOOL_RETRY` \| `TRANSIENT_RETRY` \| `LIMIT_REFUSED` \| `DEADLINE_ABANDONED`. `GUARDED`, `LIMIT_REFUSED` and `DEADLINE_ABANDONED` are not retries and are deliberately not named as such. |
+| `domain`         | yes      | The domain the kind rolls up to: `security`, `eval`, `tool`, `reliability`, `governance`. Carried so a consumer reading only this subject needs no second lookup. |
+| `outcome`        | yes      | `re_asked` \| `resent` \| `recovered` \| `exhausted` \| `uncorrectable` \| `refused` \| `redacted` \| `escalated` \| `would_block`. |
+| `attempt`        | yes      | Which attempt this record is about, from 1. |
+| `component`      | no       | The participant the record is about (neuron_id, effector_id, engram_id). |
+| `direction`      | no       | For `GUARD_RETRY` / `GUARDED`: `inbound` or `outbound`, which way the signal was crossing the component's Glia gate. |
+| `signal`         | no       | For `GUARD_RETRY` / `GUARDED`: the type of the signal the gate read. |
+| `policy_id`      | no       | The rule that fired. |
+| `policy_version` | no       | The card's policy artifact version, so a record is attributable to a policy version. |
+| `card_id`        | no       | The card that was mounted. |
+| `reason`         | no       | The policy's own author-written text. Never quotes what matched. |
+| `hash`           | no       | Digest of the matched content, joining this record to the component's local journal line. **The matched content itself never rides here.** |
+| `took_ms`        | no       | How long the attempt took. |
+
+**Compatibility.** A peer on an SDK that predates `AUDIT` logs one
+warning per record and drops it: every Synapse adapter wraps
+`Signal.decode` and continues, so nothing crashes and no subscription
+dies. An audit record can nonetheless go missing in a mixed-version
+namespace, which is exactly why the verdict is also on the reply.
 
 #### `PLAN`
 
@@ -863,10 +901,13 @@ Routers and dashboards built with the SDK use the channel client's subject resol
   "id":        "evt_01JVXAMPLE0000000000000005",
   "trace_id":  "trc_01JVXAMPLE0000000000000002",
   "parent_id": "evt_01JVXAMPLE0000000000000002",
-  "type":      "THOUGHT_DELTA",
+  "type":      "AUDIT",
   "directed":  { "id": "claude-debug" },
   "ts":        "2026-05-16T14:22:02.110Z",
-  "payload":   { "delta": "The null pointer comes from an unchecked repo.find().", "seq": 3 },
+  "payload":   { "kind": "GUARD_RETRY", "domain": "security", "outcome": "re_asked",
+                 "attempt": 1, "component": "claude-debug",
+                 "direction": "outbound", "signal": "AGENT_OUTPUT",
+                 "policy_id": "no-secrets", "policy_version": "4", "hash": "f990b5f06322a274" },
   "meta":      { "model": "claude-sonnet-4-6", "tokens": { "out": 18 }, "cost_micro_usd": 44 }
 }
 ```

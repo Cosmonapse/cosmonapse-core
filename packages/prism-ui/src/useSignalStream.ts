@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { participantKind, receptorRef } from "./types";
+import { gliaOf, participantKind, receptorRef } from "./types";
 import type { NeuronView, Signal, SignalType } from "./types";
 
 export interface SynapseTarget {
@@ -57,7 +57,7 @@ export function useSignalStream(
     setNeurons((prev) => {
       const next = new Map<string, NeuronView>();
       for (const [id, n] of prev) {
-        next.set(id, { ...n, count: 0, lastType: undefined, lastTs: undefined });
+        next.set(id, { ...n, count: 0, audits: 0, lastType: undefined, lastTs: undefined });
       }
       return next;
     });
@@ -112,18 +112,40 @@ export function useSignalStream(
           capabilities: [],
           firstSeen: sig.ts,
         };
+        // An AUDIT is a record ABOUT this participant, published by its
+        // host Dendrite, not work it did - so it is counted, but it does not
+        // become the node's last type and recolour it.
+        const isAudit = sig.type === "AUDIT";
         const updated: NeuronView = {
           ...ex,
           count: ex.count + 1,
           kind: kind ?? ex.kind,
-          lastType: sig.type as SignalType,
+          lastType: isAudit ? ex.lastType : (sig.type as SignalType),
           lastTs: sig.ts,
         };
+        if (isAudit) {
+          updated.audits = (ex.audits ?? 0) + 1;
+          // Only a card emits an AUDIT with card_id, so this is evidence of
+          // one when the REGISTER predates this connection. REGISTER still
+          // wins: it is only filled in here when nothing better is known.
+          const cid = sig.payload?.card_id;
+          if (!ex.glia && typeof cid === "string" && cid) {
+            const pv = sig.payload?.policy_version;
+            updated.glia = {
+              card_id: cid,
+              policy_version: typeof pv === "string" ? pv : undefined,
+              inferred: true,
+            };
+          }
+        }
         if (sig.type === "REGISTER") {
           const caps = sig.payload?.capabilities;
           if (Array.isArray(caps)) updated.capabilities = caps as string[];
           const ver = sig.payload?.version;
           if (typeof ver === "string") updated.version = ver;
+          // Authoritative both ways: a re-REGISTER without meta.glia means
+          // the card was taken off, so the layer comes off with it.
+          updated.glia = gliaOf(sig) ?? undefined;
           updated.deregistered = false;
         }
         if (sig.type === "DEREGISTER") updated.deregistered = true;

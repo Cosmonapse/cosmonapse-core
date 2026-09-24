@@ -280,13 +280,14 @@ def _own_for(kind: str, shape: str) -> list[dict[str, Any]]:
 _HOST_GROUPS: list[tuple[str, list[str]]] = [
     ("Task flow", [
         "on_task_signal", "on_agent_output", "on_final", "on_plan",
-        "on_thought_delta", "on_critique", "on_error_signal",
+        "on_critique", "on_error_signal",
     ]),
     ("Asking the human", [
         "on_clarification", "on_clarification_answer",
         "on_permission", "on_permission_decision", "on_escalation",
     ]),
     ("Tools", ["on_tool_call", "on_tool_result"]),
+    ("Policy and audit", ["on_audit"]),
     ("Memory", [
         "on_recall_signal", "on_recalled", "on_imprint_signal",
         "on_imprinted", "on_memory_append", "on_context_sync",
@@ -305,7 +306,10 @@ _HOST_BLURBS: dict[str, str] = {
     "on_agent_output": "A Neuron produced output - the usual place to chain one into the next.",
     "on_final": "A workflow reached its conclusion.",
     "on_plan": "A Neuron published its plan.",
-    "on_thought_delta": "A streaming chunk of a Neuron's reasoning.",
+    "on_audit": (
+        "One policy or repair event, for auditing. Read payload['audit'] "
+        "to route it: security, eval, tool, reliability or governance."
+    ),
     "on_critique": "A critique of another participant's output.",
     "on_error_signal": "Something failed somewhere on the bus.",
     "on_clarification": "A Neuron is asking a question it needs answered.",

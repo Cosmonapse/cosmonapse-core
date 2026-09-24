@@ -38,7 +38,7 @@ from collections import defaultdict, deque
 from collections.abc import AsyncIterator, Callable
 from typing import TYPE_CHECKING, Any
 
-from cosmonapse.envelope import Signal, SignalType
+from cosmonapse.envelope import SignalType
 from cosmonapse.receptor.api import ApiReceptor, sse
 from cosmonapse.receptor.base import (
     DispatchMode,
@@ -169,10 +169,15 @@ class ChatReceptor(ApiReceptor):
     ) -> AsyncIterator[str]:
         """The same turn as SSE - deltas as they arrive, then the reply.
 
-        THOUGHT_DELTA frames stream through as ``event: delta``; the
-        terminal Signal arrives as ``event: reply``. A Neuron that does not
-        stream simply produces one ``reply`` frame, and the page renders
-        the same either way.
+        The terminal Signal arrives as ``event: reply``. Anything else on
+        the trace arrives as ``event: signal``, so a page can ignore it or
+        render it as it likes.
+
+        Note for anything that used to read ``event: delta``: there is no
+        longer a streaming-text signal type. AUDIT records reach the page
+        as ``event: signal`` like any other non-terminal signal, which is
+        deliberate - a policy refusal is an operator's record, not
+        something to render into an end user's chat window.
         """
         reply = ""
         try:
@@ -180,9 +185,7 @@ class ChatReceptor(ApiReceptor):
                 {self._input_key: message, "session": session},
                 timeout_s=timeout_s, context_ref=session, **overrides,
             ):
-                if sig.type is SignalType.THOUGHT_DELTA:
-                    yield sse("delta", {"text": _delta_text(sig)})
-                elif sig.type is SignalType.ERROR:
+                if sig.type is SignalType.ERROR:
                     yield sse("error", {"message": (sig.payload or {}).get(
                         "message", "task failed")})
                 elif sig.type in (SignalType.AGENT_OUTPUT, SignalType.FINAL,
@@ -290,14 +293,6 @@ class ChatReceptor(ApiReceptor):
             path=self.path,
             voice="true" if self.voice else "false",
         )
-
-
-def _delta_text(sig: Signal) -> str:
-    p = sig.payload or {}
-    for key in ("delta", "text", "content", "chunk"):
-        if key in p:
-            return str(p[key])
-    return ""
 
 
 def _escape(text: str) -> str:
@@ -478,9 +473,8 @@ _PAGE = """<!doctype html>
           if (!data) continue;
           var payload;
           try {{ payload = JSON.parse(data); }} catch (_) {{ continue; }}
-          if (ev === "delta") {{ out.textContent += payload.text || ""; }}
-          else if (ev === "reply") {{ out.textContent = payload.text || out.textContent;
-                                      spoken = out.textContent; }}
+          if (ev === "reply") {{ out.textContent = payload.text || out.textContent;
+                                 spoken = out.textContent; }}
           else if (ev === "error") {{ out.parentElement.className = "turn err";
                                       out.textContent = payload.message || "failed"; }}
           log.scrollTop = log.scrollHeight;

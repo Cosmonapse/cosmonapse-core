@@ -21,6 +21,12 @@ Dendrite, not here:
 * Map a deadline timeout to :class:`EffectorTimeout` and a Pathway
   closed by the parent TASK's terminal event (or Dendrite shutdown) to
   :class:`EffectorCancelled`.
+
+When the call is made from inside an Axon's TASK and that Axon carries a
+Glia card, the TOOL_CALL passes the Axon's gate outbound before it is
+published and the TOOL_RESULT passes it inbound before the caller sees
+it. A violation raises :class:`cosmonapse.glia.PolicyRefusal`; a
+``retry: resend`` policy on the TOOL_RESULT sends the call again.
 """
 
 from __future__ import annotations
@@ -35,6 +41,7 @@ from cosmonapse.effector.base import (
     ToolOutcome,
 )
 from cosmonapse.envelope import Directed, Signal, SignalType, tool_call_signal
+from cosmonapse.glia.base import CallerGate, current_caller_gate
 from cosmonapse.pathway import PathwayClosedError
 
 if TYPE_CHECKING:
@@ -70,6 +77,7 @@ class EffectorClient:
         parent_id: str,
         neuron: str | None = None,
         meta: dict[str, Any] | None = None,
+        gate: CallerGate | None = None,
     ) -> ToolOutcome:
         """Emit TOOL_CALL, await the matching TOOL_RESULT, return.
 
@@ -78,6 +86,8 @@ class EffectorClient:
         the target Effector, not the producer). With no ``deadline_ms``
         (and none on the binding) the call waits until the trace
         terminates - callers that must not hang pass a deadline.
+
+        ``gate`` defaults to the calling TASK's Axon gate, if any.
         """
         if binding is not None:
             effector_id = effector_id or binding.directed_id
@@ -85,25 +95,41 @@ class EffectorClient:
             if deadline_ms is None:
                 deadline_ms = binding.default_deadline_ms
 
-        sig = tool_call_signal(
-            trace_id=trace_id,
-            parent_id=parent_id,
-            directed=Directed(id=effector_id, type=effector_kind),
-            tool=tool,
-            args=args or {},
-            call_id=call_id,
-            meta=meta or {},
-        )
+        gate = gate or current_caller_gate()
+        deadline_s = (deadline_ms / 1000.0) if deadline_ms else None
+        resent = 0
+        while True:
+            sig = tool_call_signal(
+                trace_id=trace_id,
+                parent_id=parent_id,
+                directed=Directed(id=effector_id, type=effector_kind),
+                tool=tool,
+                args=args or {},
+                call_id=call_id,
+                meta=meta or {},
+            )
+            if gate is not None:
+                sig = await gate.outbound(sig)
+            recv = await self._round_trip(sig, trace_id, deadline_s)
+            if gate is not None:
+                checked = await gate.inbound(recv, resent=resent)
+                if checked is None:
+                    resent += 1
+                    continue
+                recv = checked
+            return _outcome_from(recv, fallback_tool=tool)
 
+    async def _round_trip(
+        self, sig: Signal, trace_id: str, deadline_s: float | None,
+    ) -> Signal:
         # Open the op-Pathway BEFORE publishing so an inline (in-memory)
         # TOOL_RESULT is buffered, never lost. The Dendrite routes
         # TOOL_RESULT by parent_id == sig.id back to this Pathway.
         pw = self._dendrite._open_op_pathway(op_id=sig.id, trace_id=trace_id)
-        deadline_s = (deadline_ms / 1000.0) if deadline_ms else None
         try:
             await self._dendrite._publish(sig)
             try:
-                recv = await pw.wait_for(
+                return await pw.wait_for(
                     SignalType.TOOL_RESULT, timeout_s=deadline_s,
                 )
             except asyncio.TimeoutError:
@@ -114,7 +140,6 @@ class EffectorClient:
                 raise EffectorCancelled(
                     "trace terminated while TOOL_CALL was in flight"
                 ) from None
-            return _outcome_from(recv, fallback_tool=tool)
         finally:
             await pw.close()
 

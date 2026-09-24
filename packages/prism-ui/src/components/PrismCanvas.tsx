@@ -8,7 +8,7 @@ import {
   useState,
 } from "react";
 import { C, MONO, colorFor } from "../theme";
-import { AXON_TYPES, SYNAPSE_NODE, TARGET_TYPES, receptorLabel, receptorRef } from "../types";
+import { AXON_TYPES, SYNAPSE_NODE, TARGET_TYPES, gliaEnabled, receptorLabel, receptorRef } from "../types";
 import type { NeuronView, ParticipantKind, Signal } from "../types";
 import { brainGeometry } from "../brainLayout";
 import type { BrainLayout, Point } from "../brainLayout";
@@ -107,6 +107,17 @@ export const PrismCanvas = forwardRef<PrismCanvasHandle, Props>(function PrismCa
         pulse(SYNAPSE_NODE);
         flash(`${rxid}::${SYNAPSE_NODE}`);
         setParticles((p) => [...p, { id: pid, from: rxid, to: SYNAPSE_NODE, color }]);
+
+      } else if (nid && sig.type === "AUDIT") {
+        // A Glia record about this component, going out on the synapse.
+        // Drawn as a gold component → synapse leg, and deliberately NOT
+        // buffered like the AXON_TYPES below: an AUDIT answers nothing, so
+        // pairing it with the next reply on the trace would draw a journey
+        // that never happened.
+        pulse(nid);
+        pulse(SYNAPSE_NODE);
+        flash(`${nid}::${SYNAPSE_NODE}`);
+        setParticles((p) => [...p, { id: pid, from: nid, to: SYNAPSE_NODE, color }]);
 
       } else if (nid && AXON_TYPES.has(sig.type)) {
         // neuron → synapse leg: buffer for potential pairing
@@ -227,6 +238,7 @@ export const PrismCanvas = forwardRef<PrismCanvasHandle, Props>(function PrismCa
         return (
           <NeuronNode key={ne.id} x={p.x} y={p.y} color={color} pulse={pulses.has(ne.id)}
             kind={ne.kind}
+            glia={gliaEnabled(ne)}
             label={shortLabel(ne)}
             labelAbove={geo.labelAbove(ne.id)}
             sublabel={
@@ -380,8 +392,8 @@ function SynapseBar({ bar, pulse, label, sublabel }: {
 // kind="engram"    →  diamond  (Engram memory backend - Engrams remember)
 // kind="effector"  →  triangle (Effector tool backend - Effectors act)
 // kind="receptor"  →  cup      (the listening edge - Receptors listen)
-function NeuronNode({ x, y, color, pulse, kind = "neuron", label, sublabel, labelAbove, onHover, onLeave }: {
-  x: number; y: number; color: string; pulse: boolean; kind?: ParticipantKind;
+function NeuronNode({ x, y, color, pulse, kind = "neuron", glia = false, label, sublabel, labelAbove, onHover, onLeave }: {
+  x: number; y: number; color: string; pulse: boolean; kind?: ParticipantKind; glia?: boolean;
   label?: string; sublabel?: string; labelAbove?: boolean; onHover?: () => void; onLeave?: () => void;
 }) {
   const R = 18;
@@ -392,6 +404,8 @@ function NeuronNode({ x, y, color, pulse, kind = "neuron", label, sublabel, labe
   // matches the color of the traffic it dominates.
   const effectorColor = C.effector;
   const receptorColor = C.receptor;
+  // Receptors never draw the layer: they are caller-side, never REGISTER,
+  // and take no card, so `glia` is always false for them.
   const nodeColor =
     kind === "engram" ? engramColor :
     kind === "effector" ? effectorColor :
@@ -467,6 +481,7 @@ function NeuronNode({ x, y, color, pulse, kind = "neuron", label, sublabel, labe
         {/* Outer ring triangle */}
         <polygon points={tri(R * 1.55)} fill="none" stroke={nodeColor} strokeOpacity={pulse ? 0.45 : 0.2} strokeWidth="0.8"
           style={{ transition: "stroke-opacity 0.4s" }} />
+        {glia && <GliaLayer kind="effector" R={R} />}
         {/* Body */}
         <polygon points={tri(R * 1.22)} fill={C.bg} stroke={nodeColor} strokeWidth="1.5"
           style={{ filter: `drop-shadow(0 0 ${glowStr}px ${nodeColor})`, transition: "filter 0.4s" }} />
@@ -506,6 +521,7 @@ function NeuronNode({ x, y, color, pulse, kind = "neuron", label, sublabel, labe
         <polygon points={`0,${-D * 1.4} ${D * 1.4},0 0,${D * 1.4} ${-D * 1.4},0`}
           fill="none" stroke={nodeColor} strokeOpacity={pulse ? 0.45 : 0.2} strokeWidth="0.8"
           style={{ transition: "stroke-opacity 0.4s" }} />
+        {glia && <GliaLayer kind="engram" R={R} />}
         {/* Body */}
         <polygon points={pts} fill={C.bg} stroke={nodeColor} strokeWidth="1.5"
           style={{ filter: `drop-shadow(0 0 ${glowStr}px ${nodeColor})`, transition: "filter 0.4s" }} />
@@ -538,12 +554,43 @@ function NeuronNode({ x, y, color, pulse, kind = "neuron", label, sublabel, labe
         </circle>
       )}
       <circle r={R * 1.35} fill="none" stroke={color} strokeOpacity={pulse ? 0.45 : 0.2} strokeWidth="0.8" style={{ transition: "stroke-opacity 0.4s" }} />
+      {glia && <GliaLayer kind="neuron" R={R} />}
       <circle r={R} fill={C.bg} stroke={color} strokeWidth="1.5" style={{ filter: `drop-shadow(0 0 ${glowStr}px ${color})`, transition: "filter 0.4s" }} />
       <circle r={R * 0.6} fill={color} fillOpacity="0.12" />
       <circle r={R * 0.32} fill={C.accent3} fillOpacity={pulse ? 0.95 : 0.75} filter="url(#glow-soft)" style={{ transition: "fill-opacity 0.3s" }}>
         <animate attributeName="r" values={`${R * 0.28};${R * 0.38};${R * 0.28}`} dur="2.4s" repeatCount="indefinite" />
       </circle>
       <NodeLabel ext={R} label={label} sublabel={sublabel} subColor={C.textFaint} above={labelAbove} />
+    </g>
+  );
+}
+
+// ── glia layer ────────────────────────────────────────────────────────────
+// A gold shell hugging the body of any component that carries an enabled
+// Glia card: the card wraps the component, so the layer wraps the shape. It
+// sits between the body and the faint outer ring, follows the silhouette
+// exactly, and never changes the kind colour inside it, so a carded
+// Effector is still an amber triangle - inside a gold layer.
+// Kept geometrically identical to GliaLayer in genesis-ui's CanvasNode.tsx,
+// so a component carries the same layer from the design canvas to this one.
+function GliaLayer({ kind, R }: { kind: ParticipantKind; R: number }) {
+  const gold = C.glia;
+  const shape = (strokeWidth: number, strokeOpacity: number, filter?: string) => {
+    const common = { fill: "none", stroke: gold, strokeWidth, strokeOpacity, filter };
+    if (kind === "engram") {
+      const D = R * 1.22 * 1.2;
+      return <polygon points={`0,${-D} ${D},0 0,${D} ${-D},0`} {...common} />;
+    }
+    if (kind === "effector") {
+      const r = R * 1.48;
+      return <polygon points={`0,${-r} ${r * 0.8660254},${r * 0.5} ${-r * 0.8660254},${r * 0.5}`} {...common} />;
+    }
+    return <circle r={R * 1.17} {...common} />;
+  };
+  return (
+    <g style={{ pointerEvents: "none" }}>
+      {shape(6, 0.28, "url(#blur-sm)")}
+      {shape(2, 0.95)}
     </g>
   );
 }

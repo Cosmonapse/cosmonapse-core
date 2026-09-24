@@ -19,7 +19,7 @@
 // keeps every step of a multi-agent run on ONE trace, so "the trace's current
 // worker" would credit the whole run to whoever spoke first. Fallbacks, in
 // order: the trace's latest TASK target, then the neuron the trace's cognition
-// signals (AGENT_OUTPUT / PLAN / THOUGHT_DELTA / FINAL) are attributed to. A
+// signals (AGENT_OUTPUT / PLAN / FINAL) are attributed to. A
 // request whose sender cannot be established contributes node activity but no
 // edge.
 //
@@ -131,7 +131,11 @@ const normalize = (s: string): string =>
 
 // Cognition signals whose directed.id is the emitting neuron — used to infer
 // a trace's worker when it carries no TASK.
-const COGNITION = new Set<Signal["type"]>(["AGENT_OUTPUT", "PLAN", "THOUGHT_DELTA", "FINAL"]);
+// AUDIT is deliberately NOT here. It is an audit record ABOUT a
+// component, published by whichever Dendrite hosts it, so using it to
+// infer a trace's worker would attribute the trace to the recorder
+// rather than to the neuron that did the work.
+const COGNITION = new Set<Signal["type"]>(["AGENT_OUTPUT", "PLAN", "FINAL"]);
 
 function buildRunGraph(
   sigs: Signal[],

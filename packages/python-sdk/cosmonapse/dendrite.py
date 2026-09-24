@@ -49,6 +49,7 @@ from cosmonapse.envelope import (
     Signal,
     SignalType,
     ambient_trace,
+    audit_signal,
     bid_signal,
     clarification_answer_signal,
     consensus_signal,
@@ -60,12 +61,10 @@ from cosmonapse.envelope import (
     escalation_signal,
     final_signal,
     heartbeat_signal,
-    imprinted_signal,
     memory_append_signal,
     new_trace_id,
     permission_decision_signal,
     plan_signal,
-    recalled_signal,
     register_signal,
     stop_signal,
     stopped_signal,
@@ -73,9 +72,20 @@ from cosmonapse.envelope import (
     task_declined_signal,
     task_offer_signal,
     task_signal,
-    thought_delta_signal,
     tool_call_signal,
     tool_result_signal,
+)
+from cosmonapse.glia import (
+    F_ATTEMPT,
+    F_ATTEMPTS,
+    META_KEY,
+    AuditKind,
+    AuditOutcome,
+    Glia,
+    TraceCounter,
+    caller_gate,
+    publish_audit,
+    register_meta,
 )
 from cosmonapse.pathway import PATHWAY_TYPES, Pathway, PathwayClosedError
 from cosmonapse.retry import RetryStrategy
@@ -92,8 +102,41 @@ class DendriteProtocolError(ValueError):
     """Raised when an emit violates the protocol (e.g. emitting an AXON-only type)."""
 
 
+class TraceLimitExceeded(DendriteProtocolError):
+    """A trace is over one of its Dendrite-side action limits.
+
+    Deliberately an exception rather than a signal type: the caller is
+    in-process (a Neuron reaching ``axon.dendrite``, an EffectorClient,
+    a Receptor), and the Axon already turns a raised exception from a
+    tool dispatch into ``error`` on the observation, which is the one
+    channel a model reliably reads.
+    """
+
+
 # Back-compat aliases.
 CortexProtocolError = DendriteProtocolError
+
+
+def _limit_kind(signal_type: SignalType) -> str:
+    """Which counter a signal counts against.
+
+    Management types keep their own trace_id space and are not workflow
+    actions, so they count as nothing.
+    """
+    if signal_type is SignalType.TOOL_CALL:
+        return "tool_call"
+    if signal_type is SignalType.IMPRINT:
+        return "imprint"
+    if signal_type in {
+        SignalType.REGISTER, SignalType.DEREGISTER, SignalType.HEARTBEAT,
+        SignalType.DISCOVER,
+        # A AUDIT is an audit record about an action, not an action. If it
+        # counted, a trace near its limit would spend its remaining budget
+        # on records of having reached the limit.
+        SignalType.AUDIT,
+    }:
+        return "none"
+    return "action"
 
 
 class Dendrite(LifecycleHooks):
@@ -111,6 +154,7 @@ class Dendrite(LifecycleHooks):
         role: str = "orchestrator",
         auto_bid: bool = True,
         stale_after_s: float | None = None,
+        glia: Glia | None = None,
     ) -> None:
         """``auto_bid``: when True (default), a Dendrite hosting Axons
         answers TASK_OFFERs out of the box  -  if no user ``on_task_offer``
@@ -220,6 +264,27 @@ class Dendrite(LifecycleHooks):
         self._engram_registrations: dict[str, Directed] = {}
         self._engram_reg_kind_index: dict[str, set[str]] = {}
 
+        # The Dendrite's own Glia card. A card sees only its own
+        # component, so trace TOTALS live here rather than on a
+        # participant's card: this Dendrite already receives the whole
+        # trace's traffic. None means no counting and no subscription.
+        self._glia = glia
+        if glia is not None and glia.has_policies:
+            # A Dendrite has no policy role: it routes and publishes. Its
+            # card is read for trace limits only, so policies on it would
+            # be reported as enforced and never run.
+            logger.warning(
+                "Dendrite: card %r carries policies, which a Dendrite never "
+                "evaluates. Mount it on the Axon, Effector or Engram whose "
+                "signals it should gate; the Dendrite reads its card for "
+                "trace limits only.", glia.card_id,
+            )
+        self._trace_counter: TraceCounter | None = (
+            TraceCounter(glia.limits)
+            if glia is not None and glia.limits.active
+            else None
+        )
+
     # ------------------------------------------------------------------
     # Properties
     # ------------------------------------------------------------------
@@ -227,6 +292,18 @@ class Dendrite(LifecycleHooks):
     @property
     def synapse(self) -> Synapse:
         return self._synapse
+
+    @property
+    def glia(self) -> Glia | None:
+        """This Dendrite's own card, if any. Read for trace-wide limits
+        only; components carry the cards that gate their signals."""
+        return self._glia
+
+    @property
+    def trace_counter(self) -> TraceCounter | None:
+        """The per-trace action counter, or None when no card asked for
+        limits. Readable for telemetry."""
+        return self._trace_counter
 
     @property
     def registry_store(self) -> RegistryStore | None:
@@ -298,7 +375,7 @@ class Dendrite(LifecycleHooks):
     # Attachment
     # ------------------------------------------------------------------
 
-    def attach_axon(self, axon: Axon) -> None:
+    def attach_axon(self, axon: Axon, *, glia: Glia | None = None) -> None:
         """Attach an Axon to a *stopped* Dendrite.
 
         Raises ``RuntimeError`` if the Dendrite is running  -  a running
@@ -306,6 +383,11 @@ class Dendrite(LifecycleHooks):
         queue-group refresh, REGISTER emission): use
         ``await dendrite.add_axon(axon)`` instead, which works in both
         states.
+
+        ``glia`` mounts a policy card on the Axon at attach time, for
+        deployments that hand out cards where components are wired rather
+        than where they are constructed. A card passed to ``Axon(...)``
+        stays unless this one replaces it.
         """
         if self._running:
             raise RuntimeError(
@@ -313,17 +395,23 @@ class Dendrite(LifecycleHooks):
                 "TASKs (no subscription / REGISTER is set up after "
                 "start). Use `await dendrite.add_axon(axon)` instead."
             )
-        self._attach_axon_record(axon)
+        self._attach_axon_record(axon, glia=glia)
 
-    def _attach_axon_record(self, axon: Axon) -> None:
+    def _attach_axon_record(
+        self, axon: Axon, *, glia: Glia | None = None,
+    ) -> None:
         if axon.neuron_id in self._axons:
             raise ValueError(
                 f"Dendrite already has an Axon for neuron_id={axon.neuron_id!r}"
             )
         self._axons[axon.neuron_id] = axon
+        if glia is not None:
+            axon._glia = glia
         axon.attach_to(self)
 
-    async def add_axon(self, axon: Axon) -> None:
+    async def add_axon(
+        self, axon: Axon, *, glia: Glia | None = None,
+    ) -> None:
         """Attach an Axon; if the Dendrite is running, activate it live.
 
         Live activation mirrors what ``start()`` does for axons attached
@@ -333,7 +421,7 @@ class Dendrite(LifecycleHooks):
         registry store, emit REGISTER, and fire the Axon's on_connect
         hooks.
         """
-        self._attach_axon_record(axon)
+        self._attach_axon_record(axon, glia=glia)
         if not self._running:
             return
         if self._task_sub is None:
@@ -373,7 +461,9 @@ class Dendrite(LifecycleHooks):
                 queue_group=qgroup,
             )
 
-    def attach_engram(self, engram: Engram) -> None:
+    def attach_engram(
+        self, engram: Engram, *, glia: Glia | None = None,
+    ) -> None:
         """Mount an Engram on this Dendrite.
 
         After attachment, the Dendrite subscribes to RECALL/IMPRINT
@@ -397,6 +487,8 @@ class Dendrite(LifecycleHooks):
             engram.engram_id
         )
         engram._dendrite = self
+        if glia is not None:
+            engram._glia = glia
 
     async def detach_engram(self, engram_id: str) -> None:
         """Remove a hosted Engram. Closes its backend if the Dendrite
@@ -426,7 +518,9 @@ class Dendrite(LifecycleHooks):
     def engrams(self) -> dict[str, Engram]:
         return dict(self._engrams)
 
-    def attach_effector(self, effector: Effector) -> None:
+    def attach_effector(
+        self, effector: Effector, *, glia: Glia | None = None,
+    ) -> None:
         """Mount an Effector on this Dendrite.
 
         After attachment, the Dendrite subscribes to TOOL_CALL signals
@@ -450,6 +544,8 @@ class Dendrite(LifecycleHooks):
             effector.effector_kind, []
         ).append(effector.effector_id)
         effector._dendrite = self
+        if glia is not None:
+            effector._glia = glia
 
     async def detach_effector(self, effector_id: str) -> None:
         """Remove a hosted Effector. Closes its backend."""
@@ -774,9 +870,16 @@ class Dendrite(LifecycleHooks):
             neuron=neuron, capability=capability, trace_id=trace_id,
         ))
 
-    def on_thought_delta(self, fn: SignalHandler | None = None, *, neuron: str | None = None, capability: str | None = None, trace_id: str | None = None) -> Any:
+    def on_audit(self, fn: SignalHandler | None = None, *, neuron: str | None = None, capability: str | None = None, trace_id: str | None = None) -> Any:
+        """Handle AUDIT records: one per policy or repair event.
+
+        The audit seam. Filter by ``neuron=`` for one component, or read
+        ``payload["audit"]`` to route a record to the security, eval, tool
+        or reliability review. A AUDIT is a record and never an
+        instruction, so a handler here observes and never has to answer.
+        """
         return self._decorator_or_call(fn, self._on(
-            SignalType.THOUGHT_DELTA,
+            SignalType.AUDIT,
             neuron=neuron, capability=capability, trace_id=trace_id,
         ))
 
@@ -947,7 +1050,7 @@ class Dendrite(LifecycleHooks):
         SignalType.FINAL,
         SignalType.ERROR,
         SignalType.PLAN,
-        SignalType.THOUGHT_DELTA,
+        SignalType.AUDIT,
         SignalType.TOOL_CALL,
         SignalType.TOOL_RESULT,
         SignalType.MEMORY_APPEND,
@@ -1181,6 +1284,17 @@ class Dendrite(LifecycleHooks):
         # Every started Dendrite listens for STOP so it can cancel its share
         # of any trace it participates in.
         await self._ensure_inbound_sub(SignalType.STOP)
+
+        # Trace-limit mode ``trace`` counts everything SEEN, so it needs
+        # the broadcast subscription. Mode ``component`` counts only what
+        # this Dendrite emitted and needs no subscription at all, which
+        # is why it is the default: the common runaway is one component
+        # spinning, and that is exact without listening to anyone.
+        if (
+            self._trace_counter is not None
+            and self._trace_counter.limits.mode == "trace"
+        ):
+            await self._ensure_pathway_subs()
 
         self._running = True
 
@@ -2081,18 +2195,53 @@ class Dendrite(LifecycleHooks):
         await self.emit(sig)
         return sig
 
-    async def emit_thought_delta(self, *, trace_id: str, parent_id: str, delta: str,
-                                 seq: int | None = None, neuron: str | None = None, meta: dict[str, Any] | None = None) -> Signal:
-        sig = thought_delta_signal(
+    async def emit_audit(
+        self, *, trace_id: str, parent_id: str, kind: str, domain: str,
+        outcome: str, attempt: int = 1, component: str | None = None,
+        direction: str | None = None, signal: str | None = None,
+        policy_id: str | None = None,
+        policy_version: str | None = None, card_id: str | None = None,
+        reason: str | None = None, hash: str | None = None,
+        took_ms: int | None = None, neuron: str | None = None,
+        meta: dict[str, Any] | None = None,
+    ) -> Signal:
+        """Publish one AUDIT audit record on this trace.
+
+        Deliberately on the private ``_publish`` path rather than through
+        ``emit()``, for two reasons. A LIMIT_REFUSED record reports the
+        very trace limit that ``emit()`` checks, so routing it through
+        that check would have the limit suppress its own audit trail. And
+        an audit record is not a workflow action, so it must not consume
+        the trace's action budget either: ``_limit_kind`` counts AUDIT as
+        nothing.
+
+        Attributed to the component the record is about, not the host
+        Dendrite, so an observer classifies it against that component's
+        own REGISTER.
+        """
+        sig = audit_signal(
             trace_id=trace_id, parent_id=parent_id,
-            directed=Directed(id=neuron or self.dendrite_id),
-            delta=delta, seq=seq, meta=meta,
+            directed=Directed(id=neuron or component or self.dendrite_id),
+            kind=kind, domain=domain, outcome=outcome, attempt=attempt,
+            component=component, direction=direction, signal=signal,
+            policy_id=policy_id,
+            policy_version=policy_version, card_id=card_id, reason=reason,
+            hash=hash, took_ms=took_ms, meta=meta,
         )
-        await self.emit(sig)
+        await self._publish(sig)
         return sig
 
     async def emit_tool_call(self, *, trace_id: str, parent_id: str, tool: str, args: dict[str, Any],
                              call_id: str | None = None, neuron: str | None = None, meta: dict[str, Any] | None = None) -> Signal:
+        """Emit a TOOL_CALL directly.
+
+        Known and accepted: TOOL_CALL is not in ``_ROLE_GATED_TYPES``, and
+        this path has no Axon in it, so no Axon's Glia gate reads it. The
+        serving Effector's gate still does, because a carded Effector
+        refuses for itself whatever the caller claimed to be. The
+        callee-side gates are the security boundary; an Axon's gate is the
+        developer-experience one. See design/GLIA_DESIGN.md section 17.
+        """
         sig = tool_call_signal(
             trace_id=trace_id, parent_id=parent_id,
             directed=Directed(id=neuron or self.dendrite_id),
@@ -2488,6 +2637,11 @@ class Dendrite(LifecycleHooks):
         """
         if signal.type in self._ROLE_GATED_TYPES:
             self._require_orchestrator(f"emit({signal.type.value})")
+        # The trace-limit check sits on the initiation funnel, not on
+        # _publish: a reply (including a refusal, and the STOPPED ack)
+        # must always get out, or a Dendrite over its limit goes silent
+        # and every caller times out instead of being told.
+        self._check_trace_limit(signal)
         if signal.type not in SYNAPSE_TYPES:
             raise DendriteProtocolError(
                 f"Dendrite refuses to emit {signal.type.value!r}: "
@@ -2497,7 +2651,105 @@ class Dendrite(LifecycleHooks):
         await self._publish(signal)
 
     async def _publish(self, signal: Signal) -> None:
+        # BOTH modes count on the way out, which is what makes the limit
+        # bound a burst: counting only what arrives left a tight loop
+        # with no await in between clearing every pre-check while the
+        # count was still zero, because a Synapse delivers asynchronously.
+        # ``trace`` mode additionally counts what it sees arrive, to pick
+        # up peers; the signal id deduplicates its own loopback.
+        counter = self._trace_counter
+        if counter is not None:
+            counter.count(
+                signal.trace_id, _limit_kind(signal.type),
+                signal_id=signal.id,
+            )
         await self._synapse.publish(self._subject(signal.type), signal)
+
+    # ------------------------------------------------------------------
+    # Trace-wide limits  -  the Dendrite's job, not a card's
+    # ------------------------------------------------------------------
+    # A card sees only its own component. Trace totals belong here,
+    # because this Dendrite already receives the whole trace's traffic.
+    # Enforcement is a local refusal or stop_trace, which already does
+    # cooperative cancellation with saga rollback.
+
+    def _spawn_limit_audit(
+        self, signal: Signal, *, name: str, seen: int, cap: int,
+    ) -> None:
+        """Publish a LIMIT_REFUSED record without blocking the refusal.
+
+        ``_check_trace_limit`` is called from a synchronous guard on the
+        emit path, so the record is spawned as a tracked task rather than
+        awaited: the caller gets its refusal immediately and the audit
+        record lands a tick later. Tracked, so an untracked task cannot be
+        collected before it runs and swallow its own exception.
+        """
+        counter = self._trace_counter
+        card = self._glia
+        if card is not None and not card.repair.emit_audit:
+            return
+        task = asyncio.create_task(publish_audit(
+            self,
+            kind=AuditKind.LIMIT_REFUSED,
+            outcome=AuditOutcome.REFUSED,
+            trace_id=signal.trace_id,
+            parent_id=signal.parent_id or signal.id,
+            component=self.dendrite_id,
+            attempt=seen,
+            card=card,
+            reason=(
+                f"trace limit {name}={cap} reached in "
+                f"{counter.limits.mode if counter else 'component'} mode; "
+                f"refused {signal.type.value}"
+            ),
+        ))
+        self._pending_sub_tasks.add(task)
+        task.add_done_callback(self._pending_sub_tasks.discard)
+
+    def _check_trace_limit(self, signal: Signal) -> None:
+        counter = self._trace_counter
+        if counter is None:
+            return
+        over = counter.over(signal.trace_id)
+        if over is None:
+            return
+        name, seen, cap = over
+        if (
+            counter.limits.on_exceed == "stop_trace"
+            and counter.mark_refused(signal.trace_id)
+        ):
+            # Latched, so the whole workflow is asked to stop once rather
+            # than on every subsequent action.
+            if self._role == "orchestrator":
+                # Tracked, so an untracked task can't be collected
+                # before it runs and swallow its own exception.
+                trace_id = signal.trace_id
+                reason = f"trace limit {name}={cap} exceeded"
+
+                async def _stop_over_limit() -> None:
+                    await self.stop_trace(trace_id, reason=reason)
+
+                task = asyncio.create_task(_stop_over_limit())
+                self._pending_sub_tasks.add(task)
+                task.add_done_callback(self._pending_sub_tasks.discard)
+            else:
+                logger.warning(
+                    "Dendrite %s: trace limit %s=%d exceeded on %s and "
+                    "on_exceed='stop_trace', but a worker-role Dendrite "
+                    "may not emit STOP; refusing locally only.",
+                    self.dendrite_id, name, cap, signal.trace_id,
+                )
+        # The governance audit record. Emitted before the raise, and
+        # deliberately NOT through emit(): the limit this reports is the
+        # one emit() checks, so routing the record through that check
+        # would have the limit suppress its own audit trail.
+        self._spawn_limit_audit(signal, name=name, seen=seen, cap=cap)
+        raise TraceLimitExceeded(
+            f"trace {signal.trace_id} has reached its {name} limit "
+            f"({seen} of {cap}); refusing {signal.type.value}. This limit "
+            f"is set by the Dendrite's Glia card, not by a "
+            f"participant's."
+        )
 
     async def subscribe(
         self,
@@ -2570,6 +2822,10 @@ class Dendrite(LifecycleHooks):
         matching group, and quietly answering out of it would break the
         once-only guarantee capability routing exists to give.
         """
+        counter = self._trace_counter
+        if counter is not None and counter.limits.mode == "trace":
+            counter.count(task.trace_id, "action", signal_id=task.id)
+
         target = task.directed.id if task.directed else None
         axon: Axon | None = None
 
@@ -2722,18 +2978,34 @@ class Dendrite(LifecycleHooks):
                 )
 
         # 5. Ack only if this Dendrite had a stake in the trace, so idle
-        #    peers that received the broadcast stay quiet.
+        #    peers that received the broadcast stay quiet. The ack carries
+        #    any repair attempts made on the trace: the repair loop runs
+        #    before anything is published, so a STOP arriving mid-repair
+        #    would otherwise emit nothing about the case most worth
+        #    auditing (GLIA_DESIGN section 9.2).
         if did_work:
+            attempts: list[dict[str, Any]] = []
+            for ax in self._axons.values():
+                attempts.extend(ax.repair_attempts(trace_id))
             try:
                 await self._publish(stopped_signal(
                     trace_id=trace_id, parent_id=signal.id,
                     node=self._namespace, rolled_back=rollback,
                     cancelled=cancelled, compensated=compensated,
+                    meta=(
+                        {META_KEY: {F_ATTEMPTS: attempts,
+                                    F_ATTEMPT: len(attempts)}}
+                        if attempts else None
+                    ),
                 ))
             except Exception as exc:
                 logger.exception(
                     "Dendrite: STOPPED publish failed for %s: %s", trace_id, exc,
                 )
+        for ax in self._axons.values():
+            ax.forget_trace(trace_id)
+        if self._trace_counter is not None:
+            self._trace_counter.forget(trace_id)
 
     async def emit_stop(
         self, *, trace_id: str, rollback: bool = False,
@@ -2832,6 +3104,12 @@ class Dendrite(LifecycleHooks):
         without reading the source.
         """
         neuron_kind = getattr(axon, "neuron_kind", "neuron") or "neuron"
+        meta: dict[str, Any] = {}
+        if getattr(axon, "catch_all", False):
+            meta["catch_all"] = True
+        card = register_meta(getattr(axon, "glia", None))
+        if card is not None:
+            meta[META_KEY] = card
         await self._publish(register_signal(
             directed=Directed(
                 id=axon.neuron_id,
@@ -2841,7 +3119,7 @@ class Dendrite(LifecycleHooks):
             capabilities=axon.capabilities,
             version=axon.version,
             role="neuron",
-            meta={"catch_all": True} if getattr(axon, "catch_all", False) else None,
+            meta=meta or None,
         ))
 
     async def _emit_engram_register(self, engram: Engram) -> None:
@@ -2853,6 +3131,7 @@ class Dendrite(LifecycleHooks):
         registration rather than a Neuron.
         """
         caps = list(getattr(engram, "capabilities", []) or [])
+        card = register_meta(getattr(engram, "glia", None))
         await self._publish(register_signal(
             directed=Directed(
                 id=engram.engram_id,
@@ -2863,6 +3142,7 @@ class Dendrite(LifecycleHooks):
             version=getattr(engram, "version", None),
             engram=True,
             role="engram",
+            meta=None if card is None else {META_KEY: card},
         ))
 
     async def _emit_effector_register(self, effector: Effector) -> None:
@@ -2877,6 +3157,7 @@ class Dendrite(LifecycleHooks):
         act).
         """
         caps = list(getattr(effector, "capabilities", []) or [])
+        card = register_meta(getattr(effector, "glia", None))
         await self._publish(register_signal(
             directed=Directed(
                 id=effector.effector_id,
@@ -2886,6 +3167,7 @@ class Dendrite(LifecycleHooks):
             capabilities=caps,
             version=getattr(effector, "version", None),
             role="effector",
+            meta=None if card is None else {META_KEY: card},
         ))
 
     async def _emit_deregister(self, axon: Axon, *, reason: str | None) -> None:
@@ -2988,6 +3270,31 @@ class Dendrite(LifecycleHooks):
                     )
 
     async def _dispatch_inbound(self, signal: Signal) -> None:
+        # Nothing this Dendrite does on delivery is a call made by an Axon.
+        # On an in-process synapse a signal is delivered inside its
+        # publisher's own call, so without this a handler that calls
+        # recall / imprint / call_tool would be read by the publishing
+        # Axon's gate as if that Axon had sent it.
+        with caller_gate(None):
+            await self._dispatch_inbound_inner(signal)
+
+    async def _dispatch_inbound_inner(self, signal: Signal) -> None:
+        # ``trace`` mode: also count everything seen, so a peer's traffic
+        # on the trace counts too. Still approximate for a PEER's actions
+        # - two Dendrites can each check and act before either sees the
+        # other, so it is soft by at most one action per concurrent actor,
+        # which is why the mode is NOT called exact. This Dendrite's OWN
+        # actions are exact, because _publish counted them on the way out
+        # and the signal id keeps the loopback from counting twice.
+        # TASK is not in PATHWAY_TYPES and so never arrives here; it is
+        # counted in _on_task instead.
+        counter = self._trace_counter
+        if counter is not None and counter.limits.mode == "trace":
+            counter.count(
+                signal.trace_id, _limit_kind(signal.type),
+                signal_id=signal.id,
+            )
+
         if signal.type == SignalType.DISCOVER:
             await self._handle_discover(signal)
             return
@@ -3276,99 +3583,34 @@ class Dendrite(LifecycleHooks):
         return []
 
     async def _on_recall(self, signal: Signal) -> None:
-        targets = self._resolve_engram_targets(signal)
-        if not targets:
-            return
-        query = signal.payload.get("query") or {}
-        filters = signal.payload.get("filters")
-        context_ref = signal.payload.get("context_ref")
-        deadline_ms = signal.payload.get("deadline_ms")
-        min_confidence = signal.payload.get("min_confidence")
-        for engram in targets:
-            try:
-                if not await engram.can_serve(query):
-                    continue
-                hits = await engram.recall(
-                    query,
-                    filters=filters,
-                    context_ref=context_ref,
-                    deadline_ms=deadline_ms,
-                    min_confidence=min_confidence,
-                )
-            except Exception as exc:
-                logger.exception(
-                    "Dendrite: Engram %s.recall raised: %s",
-                    engram.engram_id, exc,
-                )
-                continue
-            reply = recalled_signal(
-                trace_id=signal.trace_id,
-                parent_id=signal.id,
-                engram_id=engram.engram_id,
-                hits=[
-                    {"id": h.id, "entry": h.entry, "score": h.score}
-                    for h in hits
-                ],
-                # Attribute the reply to the Engram that answered, not the host
-                # Dendrite, so observers (Prism) classify it by the Engram's own
-                # REGISTER instead of inventing a node for the host id.
-                directed=Directed(id=engram.engram_id, type=engram.engram_kind),
-            )
-            try:
-                await self._publish(reply)
-            except Exception as exc:
-                logger.exception(
-                    "Dendrite: Engram %s RECALLED publish failed: %s",
-                    engram.engram_id, exc,
-                )
+        """Route a RECALL to the hosted Engrams it addresses and publish
+        each reply. Servicing, and the Engram's policy gate, live in
+        ``Engram.handle``: the Dendrite routes and publishes, and has no
+        policy role."""
+        await self._service_engrams(signal, "recall")
 
     async def _on_imprint(self, signal: Signal) -> None:
-        targets = self._resolve_engram_targets(signal)
-        if not targets:
-            return
-        op = signal.payload.get("op", "")
-        entry = signal.payload.get("entry") or {}
-        merge_key = signal.payload.get("merge_key")
-        for engram in targets:
+        """Route an IMPRINT; see ``_on_recall``."""
+        await self._service_engrams(signal, "imprint")
+
+    async def _service_engrams(self, signal: Signal, what: str) -> None:
+        for engram in self._resolve_engram_targets(signal):
             try:
-                receipt = await engram.imprint(
-                    op, entry, merge_key=merge_key, imprint_id=signal.id,
-                    trace_id=signal.trace_id,
-                )
+                reply = await engram.handle(signal)
             except Exception as exc:
                 logger.exception(
-                    "Dendrite: Engram %s.imprint raised: %s",
-                    engram.engram_id, exc,
+                    "Dendrite: Engram %s.%s raised: %s",
+                    engram.engram_id, what, exc,
                 )
-                receipt = None
-                err_msg = f"engram_exception: {exc}"
-                reply = imprinted_signal(
-                    trace_id=signal.trace_id,
-                    parent_id=signal.id,
-                    engram_id=engram.engram_id,
-                    op=op,
-                    error=err_msg,
-                    directed=Directed(id=engram.engram_id, type=engram.engram_kind),
-                )
-            else:
-                assert receipt is not None
-                reply = imprinted_signal(
-                    trace_id=signal.trace_id,
-                    parent_id=signal.id,
-                    engram_id=receipt.engram_id or engram.engram_id,
-                    op=receipt.op,
-                    id=receipt.id,
-                    version=receipt.version,
-                    took_ms=receipt.took_ms,
-                    error=receipt.error,
-                    directed=Directed(id=engram.engram_id, type=engram.engram_kind),
-                )
+                continue
+            if reply is None:
+                continue
             try:
                 await self._publish(reply)
             except Exception as exc:
                 logger.exception(
-                    "Dendrite: Engram %s IMPRINTED publish failed: %s",
-                    engram.engram_id, exc,
+                    "Dendrite: Engram %s %s publish failed: %s",
+                    engram.engram_id, reply.type.value, exc,
                 )
 
     # ------------------------------------------------------------------
@@ -3399,59 +3641,36 @@ class Dendrite(LifecycleHooks):
         return []
 
     async def _on_tool_call(self, signal: Signal) -> None:
-        """Service a TOOL_CALL against hosted Effectors.
+        """Route a TOOL_CALL to the hosted Effectors it addresses and
+        publish each TOOL_RESULT.
 
-        Every failure mode (a can_serve miss aside) answers with a
-        TOOL_RESULT carrying ``error`` rather than an ERROR signal, so a
-        misbehaving tool never terminates the parent TASK. The reply is
-        attributed to the Effector that answered (directed.id/type), not
-        the host Dendrite, so observers (Prism) classify it correctly.
+        Servicing, and the Effector's policy gate, live in
+        ``Effector.handle``: the Dendrite routes and publishes, and has no
+        policy role. Every failure answers TOOL_RESULT with ``error``
+        rather than an ERROR signal, so a misbehaving tool never
+        terminates the parent TASK.
         """
-        targets = self._resolve_effector_targets(signal)
-        if not targets:
-            return
-        tool = signal.payload.get("tool", "")
-        args = signal.payload.get("args") or {}
-        call_id = signal.payload.get("call_id")
-        for effector in targets:
+        for effector in self._resolve_effector_targets(signal):
             try:
-                if not await effector.can_serve(tool):
-                    continue
-                outcome = await effector.invoke(
-                    tool, args,
-                    call_id=call_id,
-                    deadline_ms=signal.payload.get("deadline_ms"),
-                    trace_id=signal.trace_id,
-                )
+                reply = await effector.handle(signal)
             except Exception as exc:
                 logger.exception(
-                    "Dendrite: Effector %s.invoke raised: %s",
+                    "Dendrite: Effector %s raised: %s",
                     effector.effector_id, exc,
                 )
                 reply = tool_result_signal(
                     trace_id=signal.trace_id,
                     parent_id=signal.id,
-                    tool=tool,
+                    tool=signal.payload.get("tool", ""),
                     error=f"effector_exception: {exc}",
-                    call_id=call_id,
+                    call_id=signal.payload.get("call_id"),
                     directed=Directed(
                         id=effector.effector_id,
                         type=effector.effector_kind,
                     ),
                 )
-            else:
-                reply = tool_result_signal(
-                    trace_id=signal.trace_id,
-                    parent_id=signal.id,
-                    tool=outcome.tool or tool,
-                    result=outcome.result,
-                    error=outcome.error,
-                    call_id=outcome.call_id or call_id,
-                    directed=Directed(
-                        id=effector.effector_id,
-                        type=effector.effector_kind,
-                    ),
-                )
+            if reply is None:
+                continue
             try:
                 await self._publish(reply)
             except Exception as exc:

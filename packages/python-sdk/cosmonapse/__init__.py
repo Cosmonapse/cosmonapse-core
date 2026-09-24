@@ -61,7 +61,7 @@ the group. Addressed TASKs continue to broadcast on
 
 Cognition surface
 -----------------
-Every cognition signal type (PLAN, THOUGHT_DELTA, TOOL_CALL,
+Every cognition signal type (PLAN, AUDIT, TOOL_CALL,
 TOOL_RESULT, MEMORY_APPEND, CRITIQUE, ESCALATION, CONSENSUS,
 CONTEXT_SYNC) has a matching ``emit_*`` method and ``on_*`` decorator
 on Dendrite. Decorators accept optional filter kwargs - ``neuron=``,
@@ -111,6 +111,7 @@ from cosmonapse.axon import (
     COSMO_INTENT_SYSTEM_PROMPT,
     Axon,
     ContextFetcher,
+    InvalidOutput,
     NeuronFn,
 )
 from cosmonapse.dendrite import (
@@ -118,6 +119,7 @@ from cosmonapse.dendrite import (
     CortexProtocolError,
     Dendrite,
     DendriteProtocolError,
+    TraceLimitExceeded,
 )
 from cosmonapse.effector import (
     TOOL_STANDARDS,
@@ -162,6 +164,7 @@ from cosmonapse.envelope import (
     Signal,
     SignalType,
     agent_output_signal,
+    audit_signal,
     bid_signal,
     clarification_answer_signal,
     clarification_signal,
@@ -191,9 +194,27 @@ from cosmonapse.envelope import (
     stopped_signal,
     task_offer_signal,
     task_signal,
-    thought_delta_signal,
     tool_call_signal,
     tool_result_signal,
+)
+from cosmonapse.glia import (
+    AuditKind,
+    AuditOutcome,
+    Decision,
+    Direction,
+    Glia,
+    Journal,
+    Mode,
+    PolicyArtifact,
+    PolicyError,
+    PolicyOutcome,
+    PolicyRefusal,
+    PolicyRule,
+    RepairPolicy,
+    Retry,
+    SignalView,
+    TraceLimits,
+    Verdict,
 )
 from cosmonapse.neuron import STANDARD_MCP_SERVERS, Neuron
 from cosmonapse.pathway import PATHWAY_TYPES, Pathway, PathwayClosedError
@@ -263,7 +284,7 @@ __all__ = [  # noqa: RUF022
     "critique_signal",
     "discover_signal",
     "plan_signal",
-    "thought_delta_signal",
+    "audit_signal",
     "tool_call_signal",
     "tool_result_signal",
     "escalation_signal",
@@ -282,6 +303,26 @@ __all__ = [  # noqa: RUF022
     "Pathway",
     "PathwayClosedError",
     "PATHWAY_TYPES",
+    # Glia  -  the two-way policy gate on each component
+    "Glia",
+    "InvalidOutput",
+    "TraceLimitExceeded",
+    "Verdict",
+    "Decision",
+    "Direction",
+    "Retry",
+    "SignalView",
+    "Mode",
+    "PolicyOutcome",
+    "PolicyRefusal",
+    "PolicyError",
+    "PolicyArtifact",
+    "PolicyRule",
+    "RepairPolicy",
+    "AuditKind",
+    "AuditOutcome",
+    "TraceLimits",
+    "Journal",
     "NeuronRecord",
     "Synapse",
     "MemorySynapse",
