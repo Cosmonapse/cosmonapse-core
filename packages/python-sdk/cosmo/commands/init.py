@@ -14,6 +14,8 @@ Scaffold a runnable Cosmonapse project in the **standard package skeleton**
         tools.py
       receptors/       Receptor modules - each exposes RECEPTOR (unbound)
         terminal.py
+      glia/            Glia cards - each module exposes CARD (a policy gate)
+        policies.py
       brain.py         the only entry - who hosts what, and `python brain.py`
       README.md
 
@@ -30,12 +32,14 @@ working Axon + Dendrite round-trip AND a tool call in ONE process
 (in-process MemorySynapse) straight after `pip install cosmonapse`;
 SYNAPSE_URL swaps the transport. It grows without restructuring: new Axon
 modules go under neurons/, new memory under engram/, new tool families
-under effector/, new interfaces under receptors/, wiring changes stay in
+under effector/, new interfaces under receptors/, new policy cards under
+glia/, wiring changes stay in
 brain.py, entries stay thin. Each node is its own Dendrite, so splitting one
 into its own process is a thin entry over its builder - see the README.
 
 Four primitives, four folders: Neurons think (neurons/), Engrams remember
-(engram/), Effectors act (effector/), Receptors listen (receptors/).
+(engram/), Effectors act (effector/), Receptors listen (receptors/). A fifth
+folder, glia/, holds the policy cards that gate them.
 """
 
 from __future__ import annotations
@@ -250,8 +254,68 @@ async def ping():
 
 @RECEPTOR.on_result
 def render(sig):
-    """Terminal Signal -> what the terminal prints."""
-    return sig.payload["output"]["message"]
+    """Terminal Signal -> what the terminal prints.
+
+    A card that refuses the TASK answers with {"error": ..., "refused_by":
+    "policy"} in place of the Neuron's output, so read that shape first.
+    """
+    out = sig.payload["output"]
+    if "error" in out:
+        return f"refused: {out['error']}"
+    return out["message"]
+'''
+
+
+_GLIA_INIT_PY = '''"""Glia cards - each module exposes a CARD (cosmonapse.glia.Glia).
+
+A card is a two-way policy gate mounted on one component: an Axon, an
+Effector or an Engram. It reads every signal entering and leaving that
+component and allows, denies, redacts or escalates it. Modules here declare
+*what the policies are*; brain.py decides which component carries which card
+(`node.attach_axon(hello.AXON, glia=policies.CARD)`), the same split every
+other folder follows. A Receptor is caller-side and takes no card.
+"""
+'''
+
+
+_GLIA_POLICIES_PY = '''"""policies - a Glia card: the policies one component carries.
+
+brain.py mounts this card on the hello Axon. It is mounted and inert:
+the mode is ``off``, so no gate reads anything until the deployment asks.
+Turn it on without touching code through the environment:
+
+    COSMONAPSE_POLICY_MODE=audit python brain.py     # record, never block
+    COSMONAPSE_POLICY_MODE=enforce python brain.py   # apply verdicts
+
+Run ``audit`` first. A violation then emits an AUDIT record marked
+``would_block`` and nothing is refused, which is how you find out what
+``enforce`` would have done before it does it.
+
+A handler reads a frozen SignalView and returns a Verdict, or None to fall
+through to the next handler. Scope it with ``direction`` (inbound,
+outbound, both) and ``types`` (signal types, default all). ``retry`` says
+what a deny does next: ``none`` refuses now, ``reask`` re-runs the Neuron
+with the refusal as correction, ``resend`` repeats the request behind a
+TOOL_RESULT or RECALLED reply.
+
+Policies can also live in a file rather than code - ``Glia.load("x.card")``
+- and both are evaluated, the file first. See design/GLIA_DESIGN.md.
+"""
+from cosmonapse.glia import Glia, SignalView, Verdict
+
+CARD = Glia(
+    card_id="policies",
+    mode="off",           # off | audit | enforce; COSMONAPSE_POLICY_MODE wins
+)
+
+
+@CARD.on_signal(direction="inbound", types=["TASK"])
+def bounded_name(sig: SignalView) -> Verdict | None:
+    """Refuse a TASK whose name is unreasonably long, before hello runs."""
+    name = (sig.payload.get("input") or {}).get("name", "")
+    if isinstance(name, str) and len(name) > 64:
+        return Verdict.deny("name is longer than 64 characters")
+    return None
 '''
 
 
@@ -263,8 +327,9 @@ _BRAIN_PY = '''"""__PROJECT__ brain - the system. `python brain.py` runs it.
     python brain.py --send greet        # one-shot   -> dispatch_task
 
 Modules under neurons/, engram/, effector/ and receptors/ declare *behaviour*
-(Axons / Engrams / Effectors / Receptors + hooks); this file owns *deployment*
-(which node hosts what, roles, ids, and which interfaces are exposed).
+(Axons / Engrams / Effectors / Receptors + hooks), and glia/ declares policy
+cards; this file owns *deployment* (which node hosts what, roles, ids, which
+component carries which card, and which interfaces are exposed).
 
 One node, one Dendrite
 ----------------------
@@ -309,18 +374,23 @@ from cosmonapse import (Dendrite, MemoryRegistryStore, MemorySynapse,
 from config import NAMESPACE, SYNAPSE_URL
 from effector import tools
 from engram import store
+from glia import policies
 from neurons import hello
 from receptors import terminal
 
 
 def build_hello(synapse) -> Dendrite:
     """The Neuron that thinks. role="worker": replies to TASKs, never
-    dispatches - a Neuron deciding what work exists is how you get a loop."""
+    dispatches - a Neuron deciding what work exists is how you get a loop.
+
+    It carries the glia/policies.py card, mounted at attach time. The card's
+    mode is off, so this changes nothing until COSMONAPSE_POLICY_MODE says so.
+    """
     node = Dendrite(
         synapse=synapse, namespace=NAMESPACE,
         dendrite_id="hello-node", role="worker",
     )
-    node.attach_axon(hello.AXON)
+    node.attach_axon(hello.AXON, glia=policies.CARD)
     return node
 
 
@@ -431,12 +501,16 @@ __PROJECT__/
     tools.py
   receptors/       Receptor modules - each exposes RECEPTOR (built unbound)
     terminal.py
+  glia/            Glia cards - each module exposes CARD (a policy gate)
+    policies.py
   brain.py         the only entry - who hosts what, and `python brain.py`
 ```
 
 One of each primitive: Neurons think, Engrams remember, Effectors act,
 Receptors listen. `store.py` is attached and idle - nothing recalls from it
 yet, so it is a place to grow into rather than a dependency to unpick.
+`policies.py` is the same: a Glia card mounted on `hello` with its mode
+`off`, so it gates nothing until you set `COSMONAPSE_POLICY_MODE`.
 
 Every cosmonapse-example follows this same layout, so anything you learn
 there drops straight in here.
@@ -580,6 +654,13 @@ cosmo prism --tail --url=cosmo://127.0.0.1:7070 --namespace=__NAMESPACE__
   `dendrite.imprint` directly - see cosmonapse-examples/06 and /15. Swap
   `InMemoryEngram` for `SqliteEngram` or `PostgresEngram`, same constructor
   shape, when the memory should outlive the process.
+- Policy? `glia/policies.py` is a Glia card already mounted on `hello` in
+  `brain.py` (`attach_axon(hello.AXON, glia=policies.CARD)`), mode `off`.
+  Add a handler with `@CARD.on_signal(direction=..., types=[...])`, run
+  with `COSMONAPSE_POLICY_MODE=audit` to see what it would refuse, then
+  `enforce`. A card can go on an Effector or Engram too
+  (`attach_effector(..., glia=CARD)`); a Receptor takes none. See
+  design/GLIA_DESIGN.md in cosmonapse-core.
 '''
 
 
@@ -593,6 +674,8 @@ _FILES = {
     "engram/store.py": _ENGRAM_STORE_PY,
     "receptors/__init__.py": _RECEPTORS_INIT_PY,
     "receptors/terminal.py": _RECEPTORS_TERMINAL_PY,
+    "glia/__init__.py": _GLIA_INIT_PY,
+    "glia/policies.py": _GLIA_POLICIES_PY,
     "brain.py": _BRAIN_PY,
     "README.md": _README_MD,
 }
@@ -654,8 +737,8 @@ def init(name: str, namespace: str, force: bool) -> None:
     """Scaffold a standard-skeleton Cosmonapse project in ./NAME.
 
     \b
-    Creates: config.py, neurons/, engram/, effector/, receptors/, brain.py,
-    README.md
+    Creates: config.py, neurons/, engram/, effector/, receptors/, glia/,
+    brain.py, README.md
     \b
     Examples:
       cosmo init

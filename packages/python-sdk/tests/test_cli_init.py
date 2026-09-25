@@ -30,6 +30,20 @@ def test_init_into_empty_dir_succeeds(tmp_path: Path) -> None:
         assert Path("demo/config.py").is_file()
         assert Path("demo/neurons/hello.py").is_file()
         assert Path("demo/receptors/terminal.py").is_file()
+        assert Path("demo/glia/__init__.py").is_file()
+        assert Path("demo/glia/policies.py").is_file()
+
+
+def test_init_mounts_the_glia_card_on_hello(tmp_path: Path) -> None:
+    """glia/policies.py is attached in brain.py, not just written to disk."""
+    runner = CliRunner()
+    with runner.isolated_filesystem(temp_dir=tmp_path):
+        assert runner.invoke(init, ["demo"]).exit_code == 0
+        brain = Path("demo/brain.py").read_text(encoding="utf-8")
+        assert "from glia import policies" in brain
+        assert "attach_axon(hello.AXON, glia=policies.CARD)" in brain
+        card = Path("demo/glia/policies.py").read_text(encoding="utf-8")
+        assert 'mode="off"' in card
 
 
 def test_init_lists_every_file_it_wrote(tmp_path: Path) -> None:
