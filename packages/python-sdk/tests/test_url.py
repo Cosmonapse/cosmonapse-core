@@ -10,11 +10,23 @@ import pytest
 
 from cosmonapse._url import synapse_from_url
 from cosmonapse.synapse.dev import DevSynapse
+from cosmonapse.synapse.kafka import KafkaSynapse
+from cosmonapse.synapse.nats import NatsSynapse
 
 
 def test_cosmo_scheme_builds_dev_synapse():
     synapse = synapse_from_url("cosmo://127.0.0.1:7070")
     assert isinstance(synapse, DevSynapse)
+
+
+def test_nats_scheme_builds_nats_synapse():
+    synapse = synapse_from_url("nats://127.0.0.1:4222")
+    assert isinstance(synapse, NatsSynapse)
+
+
+def test_kafka_scheme_builds_kafka_synapse():
+    synapse = synapse_from_url("kafka://127.0.0.1:9092")
+    assert isinstance(synapse, KafkaSynapse)
 
 
 def test_memory_scheme_is_rejected():
