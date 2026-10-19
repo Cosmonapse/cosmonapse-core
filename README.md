@@ -231,7 +231,7 @@ The transport is pluggable because Cosmonapse is a protocol, not a runtime. The 
 
 | Transport | Best for | Connect |
 | --- | --- | --- |
-| In-memory | Unit tests and single-process apps | `connect_synapse("memory://")` |
+| In-memory | Unit tests and single-process apps | `MemorySynapse()` (constructed directly - no URL, since a URL would be ambiguous across processes) |
 | TCP broker | Local multi-process development | `connect_synapse("cosmo://127.0.0.1:7070")` |
 | NATS | Production, low-latency fan-out | `pip install "cosmonapse[nats]"` |
 | Kafka | Production, durable and replayable | `pip install "cosmonapse[kafka]"` |
