@@ -1,7 +1,8 @@
 # Contributing to Cosmonapse
 
-Thanks for your interest in contributing! Cosmonapse is an early-stage
-(v0.0.1) project and feedback, bug reports, and pull requests are all welcome.
+Thanks for your interest in contributing! Cosmonapse is an early-stage,
+pre-1.0 project. The public API can still change between minor releases.
+Feedback, bug reports, and pull requests are all welcome.
 
 ## Development setup
 
@@ -49,6 +50,19 @@ plain `pytest` run is green with zero external services.
 2. Add or update tests for your change.
 3. Make sure `pytest`, `ruff`, and `mypy` pass.
 4. Keep commits focused and write a clear description.
+
+## AI-assisted contributions
+
+AI-assisted contributions are welcome. Most of the core was written with
+Claude Code and reviewed by hand, and the same standard applies to outside
+changes.
+
+- Say in the PR description if you used AI tools, and which ones.
+- You must understand and be able to explain every line you submit.
+  "The model wrote it" is not an answer in review.
+- Issues and PR descriptions should be written by you, not generated.
+- AI-assisted PRs go through the same checks as any other: tests added or
+  updated, and `pytest`, `ruff`, and `mypy` passing.
 
 ## Reporting bugs
 
