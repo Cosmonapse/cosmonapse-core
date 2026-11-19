@@ -28,11 +28,11 @@ The fastest path is init -> scaffold -> code:
 ```bash
 cosmo init my-app -n demo
 cd my-app
-python demo.py     # one process, in-process bus - no setup
+python brain.py    # one process, in-process bus - no setup
 ```
 
 `cosmo init` writes the standard skeleton every example follows - `config.py`,
-`neurons/`, `effector/`, `brain.py`, `demo.py`. Then you code: new Neuron
+`neurons/`, `effector/`, `brain.py`. Then you code: new Neuron
 modules under `neurons/`, tool families under `effector/`, wiring in
 `brain.py`. Or wire everything by hand:
 
@@ -201,8 +201,8 @@ Requires `httpx` (`pip install httpx`).
 |---|---|
 | `MemorySynapse` | tests, single-process |
 | `DevSynapse` | multi-process dev on one host (`cosmo synapse start memory`) |
-| `NatsSynapse` | production default (`pip install cosmonapse`) |
-| `KafkaSynapse` | durable audit log (`pip install cosmonapse`) |
+| `NatsSynapse` | production default (`pip install "cosmonapse[nats]"`) |
+| `KafkaSynapse` | durable audit log (`pip install "cosmonapse[kafka]"`) |
 
 URL factory:
 
@@ -235,7 +235,7 @@ rebuilt from `REGISTER` / `HEARTBEAT` / `DEREGISTER` Signals. Pass one as
 |---|---|
 | `MemoryRegistryStore` | tests, ephemeral orchestrators |
 | `SqliteRegistryStore` | single-process production, zero extra deps |
-| `PostgresRegistryStore` | multi-process / multi-host (`pip install cosmonapse`) |
+| `PostgresRegistryStore` | multi-process / multi-host (`pip install "cosmonapse[postgres]"`) |
 
 ---
 
@@ -305,7 +305,7 @@ worker.attach_axon(Axon(
 ```
 
 Backends: `InMemoryEngram` (tests), `SqliteEngram` (single-host durable),
-`PostgresEngram` (`pip install cosmonapse`). See the
+`PostgresEngram` (`pip install "cosmonapse[postgres]"`). See the
 `06-engram-integration` and `11-rag` examples.
 
 ---
@@ -346,4 +346,4 @@ retry / STOP / saga-rollback. Start with `01-quickstart`.
 
 ## License
 
-MIT (c) 2026 Aqib Khan
+[Apache-2.0](../../LICENSE) (c) 2026 Aqib Khan
